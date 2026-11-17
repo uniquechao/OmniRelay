@@ -6,7 +6,7 @@
 
 OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自托管架构。成员在群里 @ Bot 或发起私聊，就能查询项目任务、交办事项、查看当前风险。
 
-**当前处于交互原型与架构设计阶段。** 工作台、飞书登录和 Bot 卡片可以离线体验，演示数据随仓库提供。
+仓库提供可离线体验的工作台和 Bot 卡片原型，以及支持飞书登录、用户与角色管理、组织目录同步的 Go 后端。
 
 ![OmniRelay 工作台示例，展示项目进展、关键任务和阻塞事项](design/prototype/omni-relay-workbench-preview.png)
 
@@ -25,6 +25,10 @@ OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自�
 - [飞书登录演示](design/prototype/omni-relay-workbench.html#/login) · 体验模拟授权流程。
 - [飞书 Bot 卡片](design/prototype/omni-relay-feishu-prototype.html) · 试用任务查询、任务分派和项目简报三种交互。
 - [色彩系统](design/prototype/omni-relay-color-system.html) · 查看浅色、深色主题及设计色值。
+
+## 运行后端
+
+飞书登录使用服务端会话，账号开通和授权变更可审计。组织目录按飞书应用授权范围同步。构建、配置和接口说明见 [后端运行说明](docs/backend.md)。
 
 ## 系统架构
 
@@ -85,7 +89,7 @@ deploy/k8s/            Kubernetes 部署
 tests/                 契约测试、集成测试和样例
 ```
 
-[原型与设计索引](design/README.md)汇总可体验页面和设计资料。其余工程目录为后续实现预留。
+[原型与设计索引](design/README.md)汇总可体验页面和设计资料。
 
 ## 参与讨论
 
