@@ -2,23 +2,20 @@
 
 <img src="design/prototype/omni-relay-logo-bicolor.png" alt="OmniRelay Logo" width="280">
 
-**在飞书里查项目进度、分派任务、看每日简报。**
+**群里问进度，群里交办任务，关键变化每天汇总。**
 
-OmniRelay 是一个面向小型团队和组织的飞书项目助手。它把群聊里的项目问题和任务交办接到正式项目系统，让成员在原会话里看到进度、负责人、截止时间和操作回执。首期以 **500 人以内的单飞书组织、自托管部署**为目标。
+OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自托管架构。成员在群里 @ Bot 或发起私聊，就能查询项目任务、交办事项、查看当前风险。
 
-**当前处于交互原型与架构设计阶段。** 仓库提供可离线体验的演示和技术设计。真实飞书接入、Agent 后端和部署清单会随实现补齐。
+**当前处于交互原型与架构设计阶段。** 工作台、飞书登录和 Bot 卡片可以离线体验，演示数据随仓库提供。
 
 ![OmniRelay 工作台示例，展示项目进展、关键任务和阻塞事项](design/prototype/omni-relay-workbench-preview.png)
 
-## 想解决的场景
+## 产品特性
 
-| 在飞书里的需求 | OmniRelay 的设计 |
-| --- | --- |
-| 「这个项目今天还有哪些任务卡住了？」 | 查询你有权限查看的共享任务，返回负责人、日期、状态和来源。群内回复同时遵循该群的公开范围 |
-| 「建个联调任务，分给王宁。」 | 核验项目和成员，明确交办后创建任务并返回正式编号 |
-| 「每天让项目群知道哪些事要优先处理。」 | 汇总重要任务、风险和变更，可先预览，再按项目计划发布 |
-
-工作台还规划了飞书登录、部门与人员同步、角色权限和运行审计，方便团队管理接入范围及排查任务和消息状态。
+- **一句话查进度。** 在飞书问「今天还有哪些任务卡住了？」，查看任务状态、负责人、截止时间和来源。群内回复遵循该群的公开范围。
+- **交办后有回执。** 在原会话里把任务分给同项目成员。正式写入成功后返回任务编号，发送结果单独记录，方便核对。
+- **每天只看项目重点。** 群简报汇总重要任务、风险和关键变更，支持预览后按项目定时发布。
+- **权限和运行状态看得见。** 工作台集中呈现飞书登录、组织同步、项目角色、运行记录和审计。Agent 工具调用按工作授权约束。
 
 ## 体验原型
 
@@ -29,9 +26,48 @@ OmniRelay 是一个面向小型团队和组织的飞书项目助手。它把群�
 - [飞书 Bot 卡片](design/prototype/omni-relay-feishu-prototype.html) · 试用任务查询、任务分派和项目简报三种交互。
 - [色彩系统](design/prototype/omni-relay-color-system.html) · 查看浅色、深色主题及设计色值。
 
-## 计划架构
+## 系统架构
 
-**Go** 承担飞书接入、权限校验、工作编排和消息交付。**DeepSeek Harness（DSH）** 在独立运行环境里执行 Agent，通过受限工具访问业务。**PostgreSQL** 保存工作队列、账号、运行记录和回执。首期业务数据对接 **OmniGrid Business API**，部署目标为 **Kubernetes**。
+### 整体拓扑
+
+```mermaid
+flowchart TB
+    Chat["飞书群聊与私聊"]
+    Web["Web 工作台"]
+    PG[("PostgreSQL<br/>账号、队列与回执")]
+    Business["OmniGrid Business API<br/>正式项目与任务"]
+
+    subgraph K8s["Kubernetes 应用层"]
+        Go["OmniRelay Go 服务<br/>飞书接入、权限、编排与交付"]
+        DSH["DeepSeek Harness<br/>独立 Agent 运行时"]
+    end
+
+    Chat <-->|"消息与卡片"| Go
+    Web <-->|"登录与管理"| Go
+    Go -->|"执行请求"| DSH
+    DSH -->|"受限工具回调"| Go
+    Go <-->|"保存状态"| PG
+    Go <-->|"按成员与项目范围访问"| Business
+```
+
+### 从飞书交办到正式任务
+
+```mermaid
+sequenceDiagram
+    participant F as 飞书
+    participant G as OmniRelay Go
+    participant D as DeepSeek Harness
+    participant B as OmniGrid
+
+    F->>G: 投递成员的派单消息
+    G->>G: 去重入队，核验成员和项目
+    G->>D: 运行分派 Agent
+    D->>G: 调用受限派单工具
+    G->>B: 按实际发起人提交任务
+    B-->>G: 返回正式任务编号和回执
+    G->>G: 保存工作结果与待发回复
+    G-->>F: 回复原会话
+```
 
 [模块设计](design/specs/omni-relay-module-design.md) · [Go 服务设计](design/specs/omni-relay-go-service-design.md) · [Kubernetes 部署设计](design/specs/omni-relay-k8s-deployment-design.md) · [UI 规范](design/specs/omni-relay-ui-standards.md)
 
@@ -51,28 +87,23 @@ tests/                 契约测试、集成测试和样例
 
 [原型与设计索引](design/README.md)汇总可体验页面和设计资料。其余工程目录为后续实现预留。
 
-## 路线图
+## 参与讨论
 
-1. 在测试飞书群验证 Bot、Go、DSH 和 PostgreSQL 的只读链路。
-2. 接入飞书登录、通讯录同步和正式任务数据，验证成员与项目权限。
-3. 实现任务分派、操作回执与故障恢复。
-4. 支持每日简报预览和定时发布，完成 Kubernetes 部署与恢复验证。
-
-欢迎对交互原型、权限模型和业务接口提出反馈。
+欢迎分享团队在飞书中查进度、派任务和发简报的实际流程，也欢迎对原型、权限模型和业务接口提出反馈。
 
 ## 开源项目与致谢
 
 **DeepSeek** 为 OmniRelay 的 Agent 运行与编排设计提供了两个重要参考。
 
-| 项目仓库 | 在 OmniRelay 中的用途 |
-| --- | --- |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 计划接入的独立 Agent 运行时 |
-| [DeepSeek SuperAgent 研究原型](https://github.com/deepseek-ai/dsh-superagent-prototype) | 工作编排、授权与执行恢复的设计参考 |
-| [飞书 Go SDK](https://github.com/larksuite/oapi-sdk-go) | 计划用于 Go 服务的飞书消息与 Bot 接入 |
-| [PostgreSQL 源码镜像](https://github.com/postgres/postgres) · [官方 Logo](https://www.postgresql.org/media/img/about/press/elephant.png) | 计划用于工作队列和运行账本 |
-| [Kubernetes](https://github.com/kubernetes/kubernetes) · [官方 Logo](https://github.com/cncf/artwork/tree/main/projects/kubernetes) | 计划部署平台 |
+| 项目标识 | 项目仓库 | 在 OmniRelay 中的用途 |
+| :---: | --- | --- |
+| [官方原图](https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg) | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 架构采用的独立 Agent 运行时 |
+| [官方原图](https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg) | [DeepSeek SuperAgent 研究原型](https://github.com/deepseek-ai/dsh-superagent-prototype) | 工作编排、授权与执行恢复的设计参考 |
+| <a href="https://github.com/larksuite"><img src="https://avatars.githubusercontent.com/u/54944174?v=4" alt="Lark 官方 GitHub 组织头像" height="30"></a> | [飞书 Go SDK](https://github.com/larksuite/oapi-sdk-go) | 飞书消息与 Bot 接入的 SDK 选型 |
+| <a href="https://www.postgresql.org/media/img/about/press/elephant.png"><img src="https://www.postgresql.org/media/img/about/press/elephant.png" alt="PostgreSQL 官方 Logo" height="30"></a> | [PostgreSQL 源码镜像](https://github.com/postgres/postgres) | 工作队列和运行账本的数据库选型 |
+| <a href="https://github.com/cncf/artwork/tree/main/projects/kubernetes"><img src="https://raw.githubusercontent.com/cncf/artwork/main/projects/kubernetes/icon/color/kubernetes-icon-color.svg" alt="Kubernetes 官方 Logo" height="30"></a> | [Kubernetes](https://github.com/kubernetes/kubernetes) | 部署架构所用的容器编排平台 |
 
-[DeepSeek 官方 Logo](https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg) · [品牌素材使用指引](https://github.com/deepseek-ai/awesome-deepseek-integration/blob/main/docs/_logo%20svg/guidelines.md)
+[DeepSeek 品牌素材使用指引](https://github.com/deepseek-ai/awesome-deepseek-integration/blob/main/docs/_logo%20svg/guidelines.md)
 
 当前原型带有 [Quill](https://github.com/slab/quill)、[markdown-it](https://github.com/markdown-it/markdown-it) 和 [highlight.js](https://github.com/highlightjs/highlight.js) 的浏览器分发文件。
 
