@@ -1,0 +1,149 @@
+/* Shared interaction states. Page styles supply geometry only. */
+:where(a, button, select, input, textarea, [contenteditable], [tabindex], summary):focus-visible {
+  outline: 2px solid var(--or-focus);
+  outline-offset: 2px;
+}
+:where(input[type="radio"],input[type="checkbox"]) { accent-color: var(--or-primary); }
+:is(.button,.btn) {
+  --control-fill: var(--or-secondary-fill);
+  --control-ink: var(--or-secondary-ink);
+  --control-edge: var(--or-secondary-edge);
+  --control-hover: var(--or-secondary-hover);
+  --control-pressed: var(--or-secondary-pressed);
+  background: var(--control-fill);
+  color: var(--control-ink);
+  border-color: var(--control-edge);
+  transition: background-color 110ms, border-color 110ms, color 110ms;
+}
+:is(.button,.btn).primary {
+  --control-fill: var(--or-primary);
+  --control-ink: var(--or-on-primary);
+  --control-edge: transparent;
+  --control-hover: var(--or-primary-hover);
+  --control-pressed: var(--or-primary-pressed);
+}
+:is(.button,.btn):is(.neutral,.dialog-secondary) {
+  --control-fill: var(--or-surface);
+  --control-ink: var(--or-text);
+  --control-edge: var(--or-control-border);
+  --control-hover: var(--or-hover-bg);
+  --control-pressed: var(--or-pressed-bg);
+}
+:is(.button,.btn):is(.info,.success,.warning,.dialog-confirm-warning,.danger,.dialog-confirm-danger) {
+  --control-fill: var(--control-accent);
+  --control-ink: var(--control-accent-ink,var(--or-on-primary));
+  --control-edge: transparent;
+  --control-hover: color-mix(in srgb,var(--control-accent) 88%,var(--or-action-mix));
+  --control-pressed: color-mix(in srgb,var(--control-accent) 75%,var(--or-action-mix));
+}
+:is(.button,.btn).info { --control-accent: var(--or-info-action); }
+:is(.button,.btn).success { --control-accent: var(--or-success-action); }
+:is(.button,.btn):is(.warning,.dialog-confirm-warning) { --control-accent: var(--or-warning-action); }
+:is(.button,.btn):is(.danger,.dialog-confirm-danger) {
+  --control-accent: var(--or-danger-action);
+  --control-accent-ink: var(--or-on-danger-action);
+  --control-hover: var(--or-danger-hover);
+  --control-pressed: var(--or-danger-pressed);
+}
+:is(.button,.btn).dialog-secondary { --control-edge: var(--or-border); }
+:where(.button,.btn):not(:disabled,[aria-disabled="true"]):hover { background: var(--control-hover); }
+:where(.button,.btn):not(:disabled,[aria-disabled="true"]):active { background: var(--control-pressed); }
+:is(.button,.btn):disabled, :is(input,select,textarea):disabled {
+  background: var(--or-disabled-bg);
+  color: var(--or-disabled-text);
+  border-color: var(--or-border);
+  cursor: default;
+}
+:is(input:not([type=checkbox],[type=radio],[type=hidden]),select,textarea):focus:not(:disabled) {
+  border-color: var(--field-focus, var(--or-focus));
+}
+:is(input,select,textarea)[aria-invalid="true"] {
+  --field-focus: var(--or-danger-text);
+  border-color: var(--or-danger-text);
+  outline-color: var(--or-danger-text);
+}
+:where([data-theme-choice]) { transition: background-color 110ms, color 110ms; }
+:where(.theme-switch,[data-theme-controls]) [data-theme-choice]:hover { background: var(--or-hover-bg); }
+:where(.theme-switch,[data-theme-controls]) [data-theme-choice][aria-pressed="true"] {
+  background: var(--or-selected-bg); color: var(--or-link); font-weight: 650;
+}
+.toast-region {
+  position: absolute; z-index: 5; inset: 12px 0 auto;
+  width: min(480px, calc(100% - 24px)); display: grid; gap: 7px; margin-inline: auto;
+  pointer-events: none;
+}
+.toast-region--fixed { position: fixed; }
+.toast {
+  --tip-bg: var(--or-progress-bg); --tip-text: var(--or-progress-text);
+  pointer-events: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 9px; padding: 7px 8px 7px 11px;
+  background: var(--tip-bg); color: var(--tip-text);
+  border: 1px solid color-mix(in srgb,var(--tip-text) 24%,transparent);
+  border-inline-start: 3px solid var(--tip-text); border-radius: 7px;
+  box-shadow: var(--or-shadow-toast); overflow-wrap: anywhere;
+}
+.toast strong { font-size: .8125rem; white-space: nowrap; }
+.toast[data-level="success"] { --tip-bg: var(--or-success-bg); --tip-text: var(--or-success-text); }
+.toast[data-level="warning"] { --tip-bg: var(--or-warning-bg); --tip-text: var(--or-warning-text); }
+.toast[data-level="error"] { --tip-bg: var(--or-danger-bg); --tip-text: var(--or-danger-text); }
+.toast button { background: transparent; color: inherit; border: 1px solid transparent; border-radius: 4px; padding: 2px 7px; line-height: 1.25; font-size: 1rem; }
+.toast button:hover { border-color: currentColor; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.or-dialog {
+  --dialog-accent-bg: var(--or-selected-bg); --dialog-accent-text: var(--or-link);
+  width: min(490px, calc(100% - 28px)); max-height: min(680px,calc(100dvh - 28px));
+  overflow: auto; padding: 0; border: 1px solid var(--or-border); border-radius: 12px;
+  background: var(--or-surface); color: var(--or-text); box-shadow: var(--or-shadow-modal);
+}
+.or-dialog[data-variant="confirm"]:not(.or-drawer) { width: min(418px, calc(100% - 28px)); }
+.or-dialog[data-variant="detail"]:not(.or-drawer) { width: min(510px, calc(100% - 28px)); }
+.or-dialog[data-tone="info"] { --dialog-accent-bg: var(--or-progress-bg); --dialog-accent-text: var(--or-progress-text); }
+.or-dialog[data-tone="warning"] { --dialog-accent-bg: var(--or-warning-bg); --dialog-accent-text: var(--or-warning-text); }
+.or-dialog[data-tone="danger"] { --dialog-accent-bg: var(--or-danger-bg); --dialog-accent-text: var(--or-danger-text); }
+.or-dialog::backdrop { background: var(--or-backdrop); }
+.dialog-form { display: flex; flex-direction: column; max-height: min(678px,calc(100dvh - 30px)); }
+.dialog-head {
+  display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: start; gap: 10px;
+  padding: 17px 18px 15px; border-bottom: 1px solid var(--or-border); flex: none;
+}
+.dialog-symbol { display: grid; place-items: center; min-width: 38px; min-height: 38px; border-radius: 8px; background: var(--dialog-accent-bg); color: var(--dialog-accent-text); }
+.dialog-symbol .icon { width: 19px; height: 19px; }
+.dialog-close .icon { width: 17px; height: 17px; }
+.symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+.dialog-heading h2 { margin: 1px 0 0; font-size: 1.125rem; line-height: 1.35; }
+.dialog-heading p { font-size: .8125rem; color: var(--or-text-secondary); margin-top: 3px; overflow-wrap: anywhere; }
+.dialog-close {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--or-text-secondary);
+}
+.dialog-close:hover { background: var(--or-hover-bg); color: var(--or-text); }
+.dialog-body { overflow: auto; overscroll-behavior: contain; min-height: 0; padding: 16px 18px; display: grid; gap: 10px; }
+.dialog-body .facts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.dialog-body .facts > div { display: block; }
+.dialog-body .field input:focus { border-color: var(--or-focus); outline: 0; box-shadow: 0 0 0 3px var(--or-focus-halo); }
+.dialog-body .field input[aria-invalid="true"] { border-color: var(--or-danger-text); }
+.dialog-body .field input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px color-mix(in srgb,var(--or-danger-text) 20%,transparent); }
+.dialog-record { display: grid; gap: 10px; padding: 11px; border: 1px solid var(--or-border); border-radius: 7px; background: var(--or-canvas); }
+.dialog-record strong { font-size: .9375rem; overflow-wrap: anywhere; }
+.dialog-note { color: var(--or-text-secondary); overflow-wrap: anywhere; }
+.dialog-footer {
+  display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 7px; padding: 10px 18px;
+  border-top: 1px solid var(--or-border); background: var(--or-canvas); flex: none;
+}
+.dialog-footer .button { min-height: 34px; padding-inline: 12px; }
+@media (max-width: 520px) {
+  .dialog-head, .dialog-body, .dialog-footer { padding-inline: 13px; }
+}
+@media (forced-colors: active) {
+  .dialog-body .field input:focus { outline: 2px solid Highlight; outline-offset: 2px; }
+}
+
+@media (pointer: coarse) { .dialog-footer .button, .dialog-close { min-height: 44px; } .dialog-close { width: 44px; } }
+@media (prefers-reduced-motion: reduce) {
+  :where(.button,.btn,[data-theme-choice]) { transition: none; }
+}
+@media (forced-colors: active) {
+  :where(a, button, select, input, textarea, [contenteditable], [tabindex], summary):focus-visible { outline-color: Highlight; }
+  :where(input,select,textarea)[aria-invalid="true"] { border-color: Mark; }
+  .toast { border-color: Highlight; }
+}

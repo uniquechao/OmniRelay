@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniRelay 色彩系统</title>
+<link rel="stylesheet" href="omni-relay-colors.css">
+<script src="omni-relay-theme.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--or-text); background: var(--or-canvas); font: 400 15px/1.55 "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+a { color: var(--or-link); }
+button { font: inherit; color: inherit; cursor: pointer; }
+h1, h2, h3, p, figure { margin: 0; }
+.wrap { width: min(1120px, calc(100% - 64px)); margin-inline: auto; }
+.top { border-bottom: 1px solid var(--or-border); background: var(--or-surface); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; min-height: 68px; gap: 14px; }
+.logo { display: block; width: clamp(130px, 22vw, 171px); height: auto; background: var(--or-brand-plate); border-radius: 6px; }
+.switch { display: flex; gap: 3px; padding: 4px; background: var(--or-surface-muted); border-radius: 10px; }
+.switch button { border: 0; border-radius: 7px; background: transparent; padding: 6px 12px; min-height: 34px; color: var(--or-text-secondary); white-space: nowrap; }
+.title { padding-block: 42px 27px; }
+.title h1 { font-size: clamp(32px, 6vw, 57px); line-height: 1.07; letter-spacing: -.05em; }
+.title p, .group-head p { color: var(--or-text-secondary); margin-top: 9px; }
+.brand { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.brand-main { display: flex; width: 100%; min-height: 156px; flex-direction: column; align-items: start; justify-content: end; padding: 18px 20px; border: 0; border-radius: 13px; text-align: left; }
+.brand-main b { font-size: clamp(20px, 4vw, 32px); letter-spacing: -.035em; }
+.brand-main span { font-size: .87rem; }
+.brand-main code { margin-top: 9px; }
+.indigo { background: var(--or-brand-indigo); color: var(--or-on-brand-indigo); }
+.teal { background: var(--or-brand-teal); color: var(--or-on-brand-teal); }
+.ramp { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); margin-top: 8px; border-radius: 7px; overflow: hidden; }
+.ramp button { min-width: 0; height: 39px; padding: 0; border: 0; display: grid; place-items: center; font-size: .68rem; }
+.ramp button:focus-visible { outline-offset: -3px; outline-color: currentColor; }
+.group { padding-block: 30px; border-bottom: 1px solid var(--or-border); }
+.group-head { margin-bottom: 15px; }
+.group-head h2 { font-size: 1.38rem; letter-spacing: -.025em; }
+.group-head p { margin-top: 3px; font-size: .88rem; }
+.chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr)); gap: 10px; }
+.swatch { display: grid; align-content: start; gap: 4px; min-width: 0; border: 1px solid var(--or-border); border-radius: 9px; background: var(--or-surface); padding: 7px 7px 10px; text-align: left; transition: border-color 140ms; }
+.swatch:hover, .example:hover { border-color: var(--or-control-border); background: var(--or-hover-bg); }
+.swatch:active, .example:active { background: var(--or-pressed-bg); }
+.sample { height: 31px; border-radius: 5px; border: 1px solid var(--or-border); }
+.swatch b, .swatch code { margin-inline: 4px; }
+.swatch b { font-size: .83rem; }
+code { font: .76rem/1.35 "IBM Plex Mono", ui-monospace, Menlo, monospace; white-space: nowrap; }
+.swatch code, .example-code, .legend code { color: var(--or-text-muted); }
+.state-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 148px), 1fr)); gap: 10px; }
+.example { display: grid; justify-items: start; gap: 8px; border: 1px solid var(--or-border); background: var(--or-surface); border-radius: 9px; padding: 10px; text-align: left; min-width: 0; }
+.example-code { white-space: normal; }
+.badge { display: inline-flex; align-items: center; gap: 6px; width: fit-content; min-width: 0; font-size: .78rem; line-height: 1.35; font-weight: 650; border-radius: 6px; padding: 4px 7px; color: var(--or-badge-text); background: var(--or-badge-bg); }
+.badge i { font-style: normal; }
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr)); gap: 10px; margin-bottom: 10px; }
+.legend .swatch code { margin-top: 2px; }
+.previews { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.preview { min-width: 0; border: 1px solid var(--or-border); background: var(--or-surface); border-radius: 12px; padding: 18px; }
+.preview-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; }
+.preview-head h3 { font-size: 1.04rem; }
+.preview-head span, .row small, .sample-note { color: var(--or-text-muted); font-size: .8rem; }
+.agent { margin-bottom: 10px; padding: 10px 12px; color: var(--or-agent-text); background: var(--or-agent-bg); border-radius: 7px; font-size: .87rem; }
+.row { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--or-border); font-size: .87rem; }
+.row:last-child { border-bottom: 0; }
+.row small { display: block; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 10px; }
+.button { border: 1px solid; border-radius: 6px; padding: 6px 9px; min-height: 34px; font: inherit; font-size: .83rem; font-weight: 650; }
+.filter { width: 100%; padding: 8px 10px; border: 1px solid var(--or-control-border); border-radius: 7px; background: var(--or-surface); color: var(--or-text); font: inherit; font-size: .83rem; }
+.filter::placeholder { color: var(--or-text-muted); }
+.selected { border-radius: 6px; border-bottom: 0; background: var(--or-selected-bg); color: var(--or-link); padding: 8px 10px; margin-top: 10px; }
+.chart { display: grid; gap: 8px; margin-top: 13px; }
+.bar-row { display: grid; grid-template-columns: 43px minmax(0, 1fr) 34px; gap: 9px; align-items: center; color: var(--or-text-secondary); font-size: .83rem; }
+.track { display: block; height: 8px; border-radius: 4px; background: var(--or-surface-muted); }
+.bar { display: block; border-radius: inherit; height: 100%; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; padding-block: 18px 34px; color: var(--or-text-secondary); font-size: .85rem; }
+@media (max-width: 640px) {
+  .wrap { width: calc(100% - 28px); }
+  .top .wrap { min-height: 58px; }
+  .title { padding-block: 28px 20px; }
+  .brand, .previews { grid-template-columns: 1fr; }
+  .brand-main { min-height: 105px; padding: 12px 15px; }
+  .group { padding-block: 22px; }
+}
+@media (pointer: coarse) {
+  .switch button, .ramp button { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+</style>
+<link rel="stylesheet" href="omni-relay-interactions.css">
+</head>
+<body>
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="nav-logs" viewBox="0 0 24 24"><path d="M5 3.5h10l4 4v13H5zM15 3.5v4h4M8.5 11h7M8.5 15h7M8.5 18h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="action-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+</svg>
+<header class="top">
+  <div class="wrap">
+    <img class="logo" src="omni-relay-logo-bicolor.png" alt="OmniRelay" width="2172" height="724">
+    <div class="switch" data-theme-controls role="group" aria-label="配色主题">
+      <button type="button" data-theme-choice="light" aria-pressed="true">浅色</button>
+      <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
+    </div>
+  </div>
+</header>
+<main class="wrap">
+  <div class="title">
+    <h1>色彩系统</h1>
+    <p>亮靛蓝用于主操作，青绿用于 Agent 提示。点击色板复制 HEX。</p>
+  </div>
+  <section class="brand" aria-label="品牌色">
+    <div>
+      <button class="brand-main indigo" type="button" data-copy="--or-brand-indigo">
+        <b>亮靛蓝</b>
+        <span>Omni · 品牌主色</span>
+        <code data-value="--or-brand-indigo">#6553F4</code>
+      </button>
+      <div class="ramp" data-ramp="indigo" aria-label="亮靛蓝色阶"></div>
+    </div>
+    <div>
+      <button class="brand-main teal" type="button" data-copy="--or-brand-teal">
+        <b>青绿</b>
+        <span>Relay · 品牌辅助色</span>
+        <code data-value="--or-brand-teal">#00A69A</code>
+      </button>
+      <div class="ramp" data-ramp="teal" aria-label="青绿色阶"></div>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head">
+      <h2>界面基础色</h2>
+      <p>用冷灰区分页面、容器和分隔线，保留清晰的文字层级。</p>
+    </div>
+    <div class="chips" id="neutrals"></div>
+  </section>
+
+  <section class="group">
+    <div class="group-head">
+      <h2>交互色</h2>
+      <p>主操作用靛蓝实底，次要操作用淡靛蓝底，取消用中性底。信息、成功、确认和危险操作使用对应的实色。</p>
+    </div>
+    <div class="chips" id="interaction"></div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2>侧栏色</h2><p>工作台侧栏保持深底，使用固定的导航色值。</p></div>
+    <div class="chips" id="rail-colors"></div>
+  </section>
+
+  <section class="group">
+    <div class="group-head">
+      <h2>状态色</h2>
+      <p>重要性和风险分别显示。标签保留文字与符号，每组色值按背景、文字顺序排列。</p>
+    </div>
+    <div class="state-grid" id="states"></div>
+  </section>
+
+  <section class="group">
+    <div class="group-head">
+      <h2>数据色</h2>
+      <p>多系列按固定顺序分配颜色。进度和风险仍沿用对应状态色。</p>
+    </div>
+    <div class="legend" id="data-colors"></div>
+    <div class="chart" role="img" aria-label="示例：产品 12 项，研发 17 项，测试 8 项，交付 10 项，运营 5 项">
+      <div class="bar-row" aria-hidden="true"><span>产品</span><span class="track"><span class="bar" style="width:60%;background:var(--or-chart-1)"></span></span><span>12 项</span></div>
+      <div class="bar-row" aria-hidden="true"><span>研发</span><span class="track"><span class="bar" style="width:85%;background:var(--or-chart-2)"></span></span><span>17 项</span></div>
+      <div class="bar-row" aria-hidden="true"><span>测试</span><span class="track"><span class="bar" style="width:40%;background:var(--or-chart-3)"></span></span><span>8 项</span></div>
+      <div class="bar-row" aria-hidden="true"><span>交付</span><span class="track"><span class="bar" style="width:50%;background:var(--or-chart-4)"></span></span><span>10 项</span></div>
+      <div class="bar-row" aria-hidden="true"><span>运营</span><span class="track"><span class="bar" style="width:25%;background:var(--or-chart-5)"></span></span><span>5 项</span></div>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head">
+      <h2>人员头像色</h2>
+      <p>采用品牌深色阶与数据色，搭配白字。按人员 ID 固定分色，浅色和深色主题使用同一套色值。</p>
+    </div>
+    <div class="chips" id="avatar-colors"></div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2>界面示例</h2></div>
+    <div class="previews">
+      <article class="preview">
+        <div class="preview-head"><h3>项目群重点简报</h3><span>示例</span></div>
+        <p class="agent"><b>Agent 摘要</b> · 验收计划取决于测试环境恢复时间。</p>
+        <div class="row"><div>支付联调<small>负责人 王宁 · 周五截止</small></div><span class="badge" style="--or-badge-bg:var(--or-important-bg);--or-badge-text:var(--or-important-text)"><i aria-hidden="true">◆</i>重要</span></div>
+        <div class="row"><div>测试环境恢复</div><span class="badge" style="--or-badge-bg:var(--or-danger-bg);--or-badge-text:var(--or-danger-text)"><i aria-hidden="true">×</i>已阻塞</span></div>
+        <div class="row"><div>权限方案评审</div><span class="badge" style="--or-badge-bg:var(--or-success-bg);--or-badge-text:var(--or-success-text)"><i aria-hidden="true">✓</i>已完成</span></div>
+      </article>
+      <article class="preview">
+        <div class="preview-head"><h3>任务分派</h3><span>示例</span></div>
+        <label class="sample-note" for="person">负责人输入框</label>
+        <input class="filter" id="person" type="text" placeholder="输入内容预览焦点与文字">
+        <div class="row selected"><span>王宁 · 已选</span><span aria-hidden="true">✓</span></div>
+        <div class="actions">
+          <button class="button primary" type="button" id="demo-submit">创建并分派</button>
+        <button class="button neutral" type="button" id="demo-reset">取消</button>
+          <button class="button" type="button" disabled>暂不可提交</button>
+        </div>
+      </article>
+    </div>
+  </section>
+  <footer class="foot"><a href="omni-relay-colors.css" download>下载 CSS 色彩变量</a></footer>
+</main>
+<div class="toast-region toast-region--fixed" id="toast-region" aria-label="浮动提示"></div>
+<div class="sr-only" id="toast-status" role="status" aria-live="polite"></div>
+<div class="sr-only" id="toast-urgent" role="alert"></div>
+<script src="omni-relay-ui.js"></script>
+<script>
+const root = document.documentElement;
+const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900];
+const color = (token) => getComputedStyle(root).getPropertyValue(token).trim();
+
+const swatchGroups = {
+  neutrals: [
+    ['页面背景', 'canvas'], ['内容容器', 'surface'], ['次级容器', 'surface-muted'],
+    ['分隔线', 'border'], ['控件边界', 'control-border'], ['主要文字', 'text'],
+    ['次级文字', 'text-secondary'], ['辅助文字', 'text-muted']
+  ],
+  interaction: [
+    ['主按钮', 'primary'], ['主按钮悬停', 'primary-hover'], ['主按钮按下', 'primary-pressed'], ['按钮文字', 'on-primary'],
+    ['链接', 'link'], ['键盘焦点', 'focus'], ['选中背景', 'selected-bg'],
+    ['选中边框', 'selected-edge'], ['控件悬停', 'hover-bg'], ['控件按下', 'pressed-bg'],
+    ['次按钮', 'secondary-fill'], ['次按钮文字', 'secondary-ink'], ['次按钮悬停', 'secondary-hover'], ['次按钮按下', 'secondary-pressed'],
+    ['信息操作', 'info-action'], ['成功操作', 'success-action'], ['确认操作', 'warning-action'], ['危险操作', 'danger-action'],
+    ['禁用背景', 'disabled-bg'], ['禁用文字', 'disabled-text']
+  ],
+  'rail-colors': [
+    ['侧栏背景', 'rail'], ['侧栏文字', 'rail-text'], ['辅助文字', 'rail-muted'], ['分隔线', 'rail-edge'],
+    ['菜单悬停', 'rail-hover'], ['菜单按下', 'rail-pressed'], ['当前菜单', 'rail-active'], ['当前图标与焦点', 'rail-accent']
+  ],
+  'data-colors': [['系列 1', 'chart-1'], ['系列 2', 'chart-2'], ['系列 3', 'chart-3'], ['系列 4', 'chart-4'], ['系列 5', 'chart-5']],
+  'avatar-colors': [
+    ['深靛蓝', 'avatar-indigo'], ['深青绿', 'avatar-teal'], ['蓝色', 'avatar-blue'],
+    ['琥珀色', 'avatar-amber'], ['梅紫色', 'avatar-plum'], ['头像文字', 'avatar-foreground']
+  ]
+};
+
+const states = [
+  ['待开始', '○', 'pending'], ['进行中', '↻', 'progress'], ['已完成', '✓', 'success'],
+  ['重要', '◆', 'important'], ['有风险', '!', 'warning'], ['已阻塞 / 错误', '×', 'danger'],
+  ['Agent 提示', '✦', 'agent']
+];
+
+for (const [group, entries] of Object.entries(swatchGroups)) {
+  document.getElementById(group).innerHTML = entries.map(([label, name]) => {
+    const token = '--or-' + name;
+    return `<button type="button" class="swatch" data-copy="${token}">
+      <span class="sample" style="background:var(${token})" aria-hidden="true"></span>
+      <b>${label}</b><code data-value="${token}"></code>
+    </button>`;
+  }).join('');
+}
+
+document.getElementById('states').innerHTML = states.map(([label, symbol, name]) => {
+  const bg = `--or-${name}-bg`;
+  const text = `--or-${name}-text`;
+  return `<button type="button" class="example" data-copy="${bg} ${text}">
+    <span class="badge" style="--or-badge-bg:var(${bg});--or-badge-text:var(${text})"><i aria-hidden="true">${symbol}</i>${label}</span>
+    <code class="example-code"><span data-value="${bg}"></span> · <span data-value="${text}"></span></code>
+  </button>`;
+}).join('');
+
+for (const ramp of document.querySelectorAll('[data-ramp]')) {
+  ramp.innerHTML = shades.map((shade) => {
+    const token = `--or-${ramp.dataset.ramp}-${shade}`;
+    const foreground = shade < (ramp.dataset.ramp === 'indigo' ? 500 : 600) ? '--or-swatch-dark-ink' : '--or-swatch-light-ink';
+    return `<button type="button" style="background:var(${token});color:var(${foreground})" data-copy="${token}" data-shade="${shade}">${shade}</button>`;
+  }).join('');
+}
+
+function renderSwatches() {
+  for (const field of document.querySelectorAll('[data-value]')) field.textContent = color(field.dataset.value);
+  for (const button of document.querySelectorAll('[data-shade]')) {
+    const value = color(button.dataset.copy);
+    button.title = value;
+    button.setAttribute('aria-label', `色阶 ${button.dataset.shade}，复制 ${value}`);
+  }
+}
+
+document.addEventListener(OmniRelayTheme.eventType, renderSwatches);
+
+async function copyColors(button) {
+  const values = button.dataset.copy.split(' ').map(color).join(' ');
+  try {
+    await navigator.clipboard.writeText(values);
+    OmniRelayUI.toast('success', '已复制 ' + values);
+  } catch {
+    const dialog = OmniRelayUI.openDialog({
+      title:'复制色值',
+      body:'<label for="manual-color">色值</label><input class="filter" id="manual-color" readonly value="' + OmniRelayUI.escape(values) + '">',
+      restoreFocus:() => button
+    });
+    const field = dialog.querySelector('input');
+    field.focus();
+    field.select();
+  }
+}
+
+for (const button of document.querySelectorAll('[data-copy]')) button.addEventListener('click', () => copyColors(button));
+
+document.getElementById('demo-submit').addEventListener('click', () => OmniRelayUI.toast('success', '示例任务已分派'));
+document.getElementById('demo-reset').addEventListener('click', () => {
+  const field = document.getElementById('person');
+  field.value = '';
+  field.focus();
+});
+renderSwatches();
+</script>
+</body>
+</html>

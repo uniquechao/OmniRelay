@@ -1,0 +1,181 @@
+/* OmniRelay · brand scales and role-based theme tokens */
+:root {
+  --or-indigo-50: #F5F3FF;
+  --or-indigo-100: #ECE8FF;
+  --or-indigo-200: #D9D2FF;
+  --or-indigo-300: #BEB2FF;
+  --or-indigo-400: #9C8BFA;
+  --or-indigo-500: #6553F4;
+  --or-indigo-600: #5746D9;
+  --or-indigo-700: #4533BC;
+  --or-indigo-800: #36288F;
+  --or-indigo-900: #261C64;
+
+  --or-teal-50: #E9FAF7;
+  --or-teal-100: #D0F4EE;
+  --or-teal-200: #9DE8DD;
+  --or-teal-300: #65D9CB;
+  --or-teal-400: #32C6B7;
+  --or-teal-500: #00A69A;
+  --or-teal-600: #007F75;
+  --or-teal-700: #006C65;
+  --or-teal-800: #00514C;
+  --or-teal-900: #003D39;
+
+  --or-brand-indigo: var(--or-indigo-500);
+  --or-brand-teal: var(--or-teal-500);
+  --or-on-brand-indigo: #FFFFFF;
+  --or-on-brand-teal: #002B29;
+  --or-swatch-dark-ink: #161B33;
+  --or-swatch-light-ink: #FFFFFF;
+
+  --or-dark-canvas: #101220;
+  --or-dark-surface: #191D30;
+  --or-dark-muted: #232840;
+  --or-dark-border: #343C56;
+  --or-dark-text: #F2F3FB;
+  --or-dark-secondary: #C1C9E0;
+  --or-dark-selected: #312657;
+  --or-rail: var(--or-dark-surface);
+  --or-rail-raised: var(--or-dark-muted);
+  --or-rail-text: var(--or-dark-text);
+  --or-rail-muted: var(--or-dark-secondary);
+  --or-rail-edge: var(--or-dark-border);
+  --or-rail-hover: var(--or-dark-muted);
+  --or-rail-active: var(--or-dark-selected);
+  --or-rail-pressed: var(--or-indigo-900);
+  --or-rail-accent: var(--or-teal-300);
+  --or-brand-plate: var(--or-indigo-50);
+  --or-shadow-popup: 0 7px 21px color-mix(in srgb,var(--or-dark-canvas) 20%,transparent);
+  --or-shadow-toast: 0 5px 16px color-mix(in srgb,var(--or-dark-canvas) 17%,transparent);
+  --or-shadow-modal: 0 20px 60px color-mix(in srgb,var(--or-dark-canvas) 25%,transparent);
+  --or-shadow-drawer: -12px 0 45px color-mix(in srgb,var(--or-dark-canvas) 20%,transparent);
+  --or-backdrop: color-mix(in srgb,var(--or-dark-canvas) 40%,transparent);
+  --or-focus-halo: color-mix(in srgb,var(--or-focus) 20%,transparent);
+
+  --or-data-amber: #A05E0A;
+  --or-data-blue: #2672B8;
+  --or-data-plum: #A94689;
+  --or-avatar-indigo: var(--or-indigo-700);
+  --or-avatar-teal: var(--or-teal-700);
+  --or-avatar-amber: var(--or-data-amber);
+  --or-avatar-blue: var(--or-data-blue);
+  --or-avatar-plum: var(--or-data-plum);
+  --or-avatar-foreground: #FFFFFF;
+}
+
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --or-canvas: #F5F6FB;
+  --or-surface: #FFFFFF;
+  --or-surface-muted: #EDEFF7;
+  --or-border: #DDE1EE;
+  --or-control-border: #848DA7;
+  --or-text: #161B33;
+  --or-text-secondary: #4D5873;
+  --or-text-muted: #606B87;
+  --or-disabled-bg: #EBEDF4;
+  --or-disabled-text: #626B80;
+
+  --or-primary: var(--or-indigo-600);
+  --or-primary-hover: var(--or-indigo-700);
+  --or-primary-pressed: var(--or-indigo-800);
+  --or-on-primary: #FFFFFF;
+  --or-link: var(--or-indigo-700);
+  --or-focus: var(--or-indigo-600);
+  --or-selected-bg: var(--or-indigo-50);
+  --or-selected-edge: var(--or-indigo-400);
+  --or-hover-bg: var(--or-surface-muted);
+  --or-pressed-bg: var(--or-indigo-100);
+  --or-secondary-fill: var(--or-indigo-100);
+  --or-secondary-ink: var(--or-indigo-800);
+  --or-secondary-edge: var(--or-indigo-300);
+  --or-secondary-hover: var(--or-indigo-200);
+  --or-secondary-pressed: var(--or-indigo-300);
+  --or-agent-bg: var(--or-teal-50);
+  --or-agent-text: var(--or-teal-700);
+
+  --or-pending-bg: #ECEEF5;
+  --or-pending-text: #48536C;
+  --or-progress-bg: #E8F2FF;
+  --or-progress-text: #1750A0;
+  --or-important-bg: #EFEAFF;
+  --or-important-text: #5A36A8;
+  --or-success-bg: #E7F6EC;
+  --or-success-text: #21613B;
+  --or-warning-bg: #FFF2D9;
+  --or-warning-text: #7D4A04;
+  --or-danger-bg: #FDE9EE;
+  --or-danger-text: #A42547;
+  --or-danger-action: var(--or-danger-text);
+  --or-info-action: var(--or-data-blue);
+  --or-success-action: var(--or-success-text);
+  --or-warning-action: var(--or-data-amber);
+  --or-on-danger-action: var(--or-on-primary);
+  --or-action-mix: var(--or-dark-canvas);
+  --or-danger-hover: color-mix(in srgb,var(--or-danger-action) 86%,var(--or-dark-canvas));
+  --or-danger-pressed: color-mix(in srgb,var(--or-danger-action) 72%,var(--or-dark-canvas));
+
+  --or-chart-1: #644BDC;
+  --or-chart-2: #008579;
+  --or-chart-3: var(--or-data-amber);
+  --or-chart-4: var(--or-data-blue);
+  --or-chart-5: var(--or-data-plum);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --or-canvas: var(--or-dark-canvas);
+  --or-surface: var(--or-dark-surface);
+  --or-surface-muted: var(--or-dark-muted);
+  --or-border: var(--or-dark-border);
+  --or-control-border: #7D88A8;
+  --or-text: var(--or-dark-text);
+  --or-text-secondary: var(--or-dark-secondary);
+  --or-text-muted: #A6B0CC;
+  --or-disabled-bg: #282D43;
+  --or-disabled-text: #A2ABC4;
+
+  --or-primary: #A99BFF;
+  --or-primary-hover: #C2B8FF;
+  --or-primary-pressed: var(--or-indigo-200);
+  --or-on-primary: #1B143C;
+  --or-link: #B9ADFF;
+  --or-focus: #B9ADFF;
+  --or-selected-bg: var(--or-dark-selected);
+  --or-selected-edge: var(--or-indigo-500);
+  --or-hover-bg: var(--or-surface-muted);
+  --or-pressed-bg: #3C306A;
+  --or-secondary-fill: var(--or-selected-bg);
+  --or-secondary-ink: var(--or-link);
+  --or-secondary-edge: var(--or-selected-edge);
+  --or-secondary-hover: var(--or-pressed-bg);
+  --or-secondary-pressed: var(--or-indigo-800);
+  --or-agent-bg: #153633;
+  --or-agent-text: #77E0D1;
+
+  --or-pending-bg: #2B3349;
+  --or-pending-text: #C8D0E5;
+  --or-progress-bg: #1D3457;
+  --or-progress-text: #A5CCFF;
+  --or-important-bg: #382957;
+  --or-important-text: #DBC4FF;
+  --or-success-bg: #1B3B31;
+  --or-success-text: #9CE5B5;
+  --or-warning-bg: #47351F;
+  --or-warning-text: #FFD289;
+  --or-danger-bg: #492739;
+  --or-danger-text: #FFB5C5;
+  --or-info-action: var(--or-chart-4);
+  --or-warning-action: var(--or-chart-3);
+  --or-action-mix: var(--or-swatch-light-ink);
+  --or-on-danger-action: var(--or-dark-canvas);
+  --or-danger-hover: color-mix(in srgb,var(--or-danger-action) 82%,white);
+  --or-danger-pressed: color-mix(in srgb,var(--or-danger-action) 65%,white);
+
+  --or-chart-1: #AD9BFF;
+  --or-chart-2: #4DD8CA;
+  --or-chart-3: #F0B45F;
+  --or-chart-4: #79B8FD;
+  --or-chart-5: #EC95CE;
+}

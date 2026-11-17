@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniRelay · 项目工作台原型</title>
+<link rel="icon" href="omni-relay-avatar.png">
+<link rel="stylesheet" href="omni-relay-colors.css">
+<script src="omni-relay-theme.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--or-canvas); color: var(--or-text); font: .875rem/1.5 "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+button, input, select { color: inherit; font: inherit; }
+h1, h2, h3, p, dl, dd, ul { margin: 0; }
+a { color: var(--or-link); }
+button, select { cursor: pointer; }
+[hidden] { display: none !important; }
+.symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { width: 17px; height: 17px; flex: none; }
+.shell { display: grid; grid-template-columns: 166px minmax(0, 1fr); min-height: 100dvh; }
+.rail { position: sticky; top: 0; height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; background: var(--or-rail); color: var(--or-rail-text); padding: 12px 10px; }
+.rail :focus-visible { outline-color: var(--or-rail-accent); }
+.brand { display: grid; place-items: center; width: 132px; height: 41px; margin: 0 auto; border-radius: 6px; background: var(--or-brand-plate); }
+.brand img { display: block; width: 118px; height: auto; }
+.brand .compact-logo { display: none; }
+.rail-caption { color: var(--or-rail-muted); margin: 0 8px 5px; font-size: .75rem; }
+.nav { display: grid; gap: 3px; }
+.nav a, .rail-foot a { display: flex; align-items: center; gap: 8px; min-height: 35px; padding: 5px 8px; border-radius: 6px; text-decoration: none; color: inherit; overflow-wrap: anywhere; transition: background-color 110ms; }
+.nav a:hover, .rail-foot a:hover { background: var(--or-rail-hover); }
+.nav a[aria-current] { color: var(--or-rail-text); background: var(--or-rail-active); font-weight: 650; }
+.nav a[aria-current] .icon { color: var(--or-rail-accent); }
+.nav a:active { background: var(--or-rail-pressed); }
+.rail-foot { margin-top: auto; border-top: 1px solid var(--or-rail-edge); padding-top: 8px; font-size: .8125rem; }
+.workspace { min-width: 0; }
+.top { position: sticky; z-index: 2; top: 0; min-height: 46px; padding: 5px 22px; background: var(--or-surface); border-bottom: 1px solid var(--or-border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.crumb, .top-tools { display: flex; align-items: center; min-width: 0; flex-wrap: wrap; gap: 5px 8px; font-size: .75rem; color: var(--or-text-muted); }
+.crumb a { color: var(--or-text-secondary); text-decoration: none; }
+.crumb a:hover { text-decoration: underline; }
+.crumb [aria-current] { color: var(--or-text); font-weight: 650; overflow-wrap: anywhere; }
+.top-tools button { min-height: 28px; padding: 2px 8px; }
+.sample { display: inline-block; font-size: .75rem; color: var(--or-text-secondary); padding: 2px 6px; background: var(--or-surface-muted); border-radius: 4px; }
+.mobile-nav { display: none; }
+.page { max-width: 1560px; margin-inline: auto; padding: 21px 22px 30px; }
+.head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-bottom: 15px; }
+.project-title { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; gap: 7px 10px; }
+h1 { font-size: 1.625rem; line-height: 1.25; letter-spacing: -.035em; overflow-wrap: anywhere; }
+h2 { font-size: 1.0625rem; line-height: 1.35; overflow-wrap: anywhere; }
+.kind, .chip { display: inline-flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; padding: 2px 6px; border-radius: 4px; font-size: .75rem; line-height: 1.4; }
+.kind { background: var(--or-selected-bg); color: var(--or-link); font-weight: 650; }
+.chip { background: var(--or-pending-bg); color: var(--or-pending-text); }
+.chip::before { content: ""; flex: none; inline-size: 5px; block-size: 5px; border-radius: 50%; background: currentColor; }
+.chip[data-tone="progress"] { background: var(--or-progress-bg); color: var(--or-progress-text); }
+.chip[data-tone="success"] { background: var(--or-success-bg); color: var(--or-success-text); }
+.chip[data-tone="danger"] { background: var(--or-danger-bg); color: var(--or-danger-text); }
+.chip[data-tone="warning"] { background: var(--or-warning-bg); color: var(--or-warning-text); }
+.chip[data-tone="important"] { background: var(--or-important-bg); color: var(--or-important-text); }
+.button, .select, .search { min-height: 32px; padding: 5px 9px; border: 1px solid; border-radius: 6px; }
+.select, .search { border-color: var(--or-control-border); background: var(--or-surface); color: var(--or-text); }
+.button { display: inline-flex; align-items: center; text-decoration: none; justify-content: center; font-weight: 600; font-size: .8125rem; }
+.tabs { display: flex; gap: 11px; overflow-x: auto; border-bottom: 1px solid var(--or-border); margin-bottom: 14px; }
+.tabs button { position: relative; display: flex; flex: none; align-items: center; justify-content: center; min-height: 38px; background: none; border: 0; border-bottom: 2px solid transparent; padding: 5px 4px; color: var(--or-text-secondary); transition: background-color 110ms; }
+.tabs button:hover { background: var(--or-hover-bg); }
+.tabs button:active { background: var(--or-pressed-bg); }
+.tabs [aria-selected="true"] { background: var(--or-selected-bg); border-bottom-color: var(--or-primary); color: var(--or-link); font-weight: 700; }
+.tabs button:focus-visible { outline-offset: -3px; }
+.stack { display: grid; gap: 14px; min-width: 0; }
+.panel { min-width: 0; padding: 15px 16px; border: 1px solid var(--or-border); border-radius: 8px; background: var(--or-surface); }
+.section-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 7px 12px; margin-bottom: 10px; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px 20px; }
+.facts dt { color: var(--or-text-muted); font-size: .75rem; margin-bottom: 2px; }
+.facts dd { font-weight: 600; overflow-wrap: anywhere; }
+.context { margin-top: 11px; background: var(--or-agent-bg); color: var(--or-agent-text); padding: 8px 10px; border-radius: 5px; overflow-wrap: anywhere; }
+.context b { margin-inline-end: 8px; }
+.aux, .date { color: var(--or-text-secondary); }
+.aux { font-size: .8125rem; }
+.date { font-variant-numeric: tabular-nums; }
+.table-box { min-width: 0; overflow-x: auto; border-radius: 7px; border: 1px solid var(--or-border); background: var(--or-surface); }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: .8125rem; }
+th, td { min-height: 42px; padding: 8px 10px; height: 42px; border-bottom: 1px solid var(--or-border); overflow-wrap: anywhere; }
+th { background: var(--or-surface-muted); color: var(--or-text-secondary); font-size: .75rem; height: 34px; }
+tbody tr:last-child td { border-bottom: 0; }
+td a { font-weight: 650; text-decoration: none; }
+td a:hover { text-decoration: underline; }
+.attention { padding-inline-start: 0; list-style: none; }
+.attention li { display: grid; grid-template-columns: max-content minmax(0, 1fr); padding: 8px 0; align-items: baseline; gap: 4px 9px; overflow-wrap: anywhere; }
+.attention li + li { border-top: 1px solid var(--or-border); }
+.attention li:last-child { padding-bottom: 0; }
+.attention strong { display: block; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 11px; }
+.toolbar label { font-size: .8125rem; }
+.select, .search { max-width: 100%; }
+.search { width: min(220px, 100%); }
+.search::placeholder { color: var(--or-text-muted); }
+.empty { padding: 14px; color: var(--or-text-secondary); }
+@media (max-width: 850px) {
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .secondary { display: none; }
+}
+@media (max-width: 720px) {
+  .shell { grid-template-columns: 52px minmax(0, 1fr); }
+  .rail { padding: 10px 5px; }
+  .brand { width: 35px; height: 35px; }
+  .brand .wide-logo, .rail-caption, .nav a span, .rail-foot a span { display: none; }
+  .brand .compact-logo { display: block; width: 32px; }
+  .nav a, .rail-foot a { justify-content: center; min-height: 42px; padding: 5px; }
+  .top, .page { padding-inline: 14px; }
+}
+@media (max-width: 520px) {
+  .shell { display: block; }
+  .rail { display: none; }
+  .mobile-nav { display: flex; min-width: 0; align-items: center; gap: 6px; }
+  .mobile-nav img { width: 29px; height: 29px; object-fit: contain; }
+  .mobile-nav select { min-height: 32px; width: auto; max-width: 100%; padding: 3px 4px; }
+  .top { top: auto; position: relative; padding-block: 6px; }
+  .crumb { flex-basis: 100%; order: 3; }
+  .page { padding-block: 14px 24px; }
+  .head { margin-bottom: 9px; }
+  .facts { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .facts > div { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-items: baseline; }
+  .panel { padding: 11px; }
+  .tabs { gap: 6px; }
+  td, th { padding-inline: 7px; }
+}
+@media (pointer: coarse) {
+  .nav a, .rail-foot a, .brand, .tabs button, .button, .select, .search, .mobile-nav select, .top-tools button { min-height: 44px; }
+  td a { display: inline-flex; align-items: center; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { transition: none !important; }
+}
+</style>
+<link rel="stylesheet" href="omni-relay-ui.css">
+<link rel="stylesheet" href="vendor/quill-snow-2.0.3.css">
+<link rel="stylesheet" href="omni-relay-content.css">
+<link rel="stylesheet" href="omni-relay-interactions.css">
+<link rel="stylesheet" href="omni-relay-system.css">
+</head>
+<body>
+<!-- Navigation symbols from the existing OmniGrid icon sprite. -->
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="nav-system" viewBox="0 0 24 24"><path d="m12 3 7 3v5c0 4.7-3.2 8-7 10-3.8-2-7-5.3-7-10V6l7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-workbench" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v9h13v-9M9.5 19v-5h5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-projects" viewBox="0 0 24 24"><path d="M3.5 7.5h17v11h-17zM3.5 7.5 6 4.5h5l2 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-logs" viewBox="0 0 24 24"><path d="M5 3.5h10l4 4v13H5zM15 3.5v4h4M8.5 11h7M8.5 15h7M8.5 18h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-settings" viewBox="0 0 24 24"><path d="M9.7 3.8 10.4 2h3.2l.7 1.8 2 .8 1.8-.8 2.2 2.2-.8 1.8.8 2L22 10.5v3l-1.7.7-.8 2 .8 1.8-2.2 2.2-1.8-.8-2 .8-.7 1.8h-3.2l-.7-1.8-2-.8-1.8.8L3.7 18l.8-1.8-.8-2L2 13.5v-3l1.7-.7.8-2L3.7 6l2.2-2.2 1.8.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="nav-components" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="action-expand" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="action-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="nav-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="9" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 20c0-4 2.2-6 5.5-6s5.5 2 5.5 6M14 15c3.8-.8 6.5 1.2 6.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="status-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5m0 3v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+  <symbol id="status-danger" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m9 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+</svg>
+<div class="shell">
+  <aside class="rail" id="workspace-rail">
+    <a class="brand" href="#/workbench" aria-label="OmniRelay 工作台总览">
+      <img class="wide-logo" src="omni-relay-logo-bicolor.png" width="2172" height="724" alt="">
+      <img class="compact-logo" src="omni-relay-avatar.png" width="1254" height="1254" alt="">
+    </a>
+    <div>
+      <p class="rail-caption">工作空间</p>
+      <nav class="nav" id="side-navigation" aria-label="工作台主导航">
+        <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
+        <a href="#/projects" data-nav="projects" aria-label="项目列表"><svg class="icon" aria-hidden="true"><use href="#nav-projects"/></svg><span>项目列表</span></a>
+        <a href="#/runs" data-nav="runs" aria-label="运行记录"><svg class="icon" aria-hidden="true"><use href="#nav-logs"/></svg><span>运行记录</span></a>
+        <a href="#/settings" data-nav="settings" aria-label="连接设置"><svg class="icon" aria-hidden="true"><use href="#nav-settings"/></svg><span>连接设置</span></a>
+        <details class="nav-group" id="system-nav">
+          <summary aria-label="系统管理"><svg class="icon" aria-hidden="true"><use href="#nav-system"/></svg><span>系统管理</span>
+            <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
+          </summary>
+          <div class="nav-children">
+            <a href="#/system/users" data-system="users">用户管理</a>
+            <a href="#/system/roles" data-system="roles">角色权限</a>
+            <a href="#/system/audit" data-system="audit">审计日志</a>
+          </div>
+        </details>
+        <details class="nav-group" id="developer-nav">
+          <summary aria-label="开发者"><svg class="icon" aria-hidden="true"><use href="#nav-components"/></svg><span>开发者</span>
+            <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
+          </summary>
+          <div class="nav-children">
+            <a href="#/developer/list" data-developer="list">列表页</a>
+            <a href="#/developer/form" data-developer="form">表单页</a>
+            <a href="#/developer/info" data-developer="info">信息展示页</a>
+            <a href="#/developer/components" data-developer="components">组件列表</a>
+            <a href="#/developer/layout" data-developer="layout">工作台布局说明</a>
+            <a href="#/developer/colors" data-developer="colors">色彩系统</a>
+          </div>
+        </details>
+      </nav>
+    </div>
+    <div class="rail-tools">
+      <section class="system-status" aria-labelledby="system-status-title">
+        <header><h2 id="system-status-title">系统状态</h2><span>示例</span></header>
+        <div class="system-metric">
+          <div><span>CPU</span><strong>28%</strong></div>
+          <meter min="0" max="100" value="28" aria-label="CPU 使用率" aria-valuetext="百分之 28"></meter>
+        </div>
+        <div class="system-metric">
+          <div><span>内存</span><strong>5.6 / 16 GB</strong></div>
+          <meter min="0" max="16" value="5.6" aria-label="内存用量" aria-valuetext="已用 5.6 GB，共 16 GB"></meter>
+        </div>
+        <div class="system-metric">
+          <div><span>磁盘</span><strong>68 / 256 GB</strong></div>
+          <meter min="0" max="256" value="68" aria-label="磁盘容量" aria-valuetext="已用 68 GB，共 256 GB"></meter>
+        </div>
+      </section>
+      <button class="rail-toggle" id="rail-toggle" type="button" aria-controls="side-navigation" aria-expanded="true" aria-label="收起侧栏" title="收起侧栏"><svg class="icon toggle-icon" aria-hidden="true"><use href="#action-expand"/></svg><span>收起侧栏</span></button>
+      <div class="rail-foot">
+        <button class="account-trigger" type="button" popovertarget="account-menu" aria-label="用户菜单，苏涵" title="用户菜单">
+          <span class="account-avatar" aria-hidden="true">苏</span><span class="account-trigger-name">苏涵</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+  <div class="rail-resizer" id="rail-resizer" role="separator" aria-label="调整侧栏宽度" aria-orientation="vertical" aria-controls="workspace-rail" aria-valuemin="52" aria-valuemax="166" aria-valuenow="166" tabindex="0" title="向左拖动收起，向右拖动展开"></div>
+  <div class="workspace">
+    <header class="top">
+      <div class="mobile-nav">
+        <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
+        <select class="select" id="mobile-nav" aria-label="工作台主导航">
+          <option value="workbench">工作台总览</option><option value="projects">项目列表</option>
+          <option value="runs">运行记录</option><option value="settings">连接设置</option>
+          <optgroup label="系统管理">
+            <option value="system/users">用户管理</option>
+            <option value="system/roles">角色权限</option>
+            <option value="system/audit">审计日志</option>
+          </optgroup>
+          <optgroup label="开发者">
+            <option value="developer/list">列表页</option><option value="developer/form">表单页</option>
+            <option value="developer/info">信息展示页</option><option value="developer/components">组件列表</option>
+            <option value="developer/layout">工作台布局说明</option><option value="developer/colors">色彩系统</option>
+          </optgroup>
+        </select>
+      </div>
+      <nav class="crumb" id="breadcrumb" aria-label="当前位置"></nav>
+      <div class="top-tools">
+        <span class="sample">示例数据</span>
+        <button type="button" class="button" id="theme" data-theme-toggle aria-label="切换深色主题" aria-pressed="false">深色</button>
+        <button class="account-trigger mobile-account" type="button" popovertarget="account-menu" aria-label="用户菜单，苏涵">苏</button>
+      </div>
+    </header>
+    <main class="page" id="page"></main>
+    <div class="toast-region" id="toast-region" aria-label="浮动提示"></div>
+    <div class="sr-only" id="toast-status" role="status" aria-live="polite"></div>
+    <div class="sr-only" id="toast-urgent" role="alert"></div>
+  </div>
+</div>
+<div class="account-menu" id="account-menu" popover="auto" aria-label="用户菜单">
+  <div class="account-identity"><span class="account-avatar" aria-hidden="true">苏</span><div><strong>苏涵</strong><span>系统管理员 · 飞书示例账号</span></div></div>
+  <button type="button" data-account="profile">个人信息</button>
+  <button type="button" data-account="password">修改密码</button>
+  <button type="button" data-account="logout">退出</button>
+</div>
+<main class="login-page" id="login-page" hidden aria-labelledby="login-heading">
+  <div class="login-brand" aria-hidden="true">
+    <div class="login-orbit"><span></span><span></span><img src="omni-relay-avatar.png" width="160" height="160" alt=""></div>
+  </div>
+  <section class="login-content">
+    <div class="login-top"><span class="sample">演示环境</span><button class="button neutral" type="button" data-theme-toggle>深色</button></div>
+    <div class="login-entry">
+      <div class="login-logo"><img src="omni-relay-logo-bicolor.png" width="195" height="65" alt="OmniRelay"></div>
+      <h1 id="login-heading" tabindex="-1">登录工作台</h1>
+      <p>使用你所在组织的飞书账号继续。</p>
+      <button class="button primary login-button" type="button" id="feishu-login">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M3 11.2 20.3 3a.65.65 0 0 1 .9.8l-4.6 16.5a.7.7 0 0 1-1.1.4l-4.5-3.4-2.6 2.3a.6.6 0 0 1-1-.4l.2-4.6 9.7-8.2-11.2 6-3.1-.5c-.6-.1-.6-.5 0-.7Z"/></svg>
+        使用飞书登录
+      </button>
+      <p id="login-feedback" class="login-feedback" role="status" hidden></p>
+      <p class="login-caption">使用示例账号模拟飞书授权。</p>
+    </div>
+  </section>
+</main>
+<script src="omni-relay-ui.js"></script>
+<script src="omni-relay-system.js"></script>
+<script src="vendor/quill-2.0.3.js"></script>
+<script src="vendor/markdown-it-15.0.3.min.js"></script>
+<script src="vendor/highlight-11.11.1.min.js"></script>
+<script src="omni-relay-content.js"></script>
+<script src="omni-relay-developer.js"></script>
+<script>
+const projects = {
+  beichen: {
+    name: '北辰交付项目', kind: '交付验收', status: 'progress', lead: '王宁', group: '北辰交付项目群', update: '11 月 18 日 17:50',
+    summary: '联调能否按期验收，取决于测试环境恢复时间。', latest: '验收主路径待环境恢复',
+    tasks: [
+      ['接口联调验收', '王宁', '11 月 20 日', 'progress', true],
+      ['测试环境恢复', '陈悦', '11 月 19 日', 'danger'],
+      ['验收用例确认', '赵可', '11 月 20 日', 'progress'],
+      ['灰度方案复核', '林晓', '11 月 20 日', 'pending'],
+      ['权限方案评审', '王宁', '11 月 18 日', 'success'],
+      ['回滚预案演练', '陈悦', '11 月 18 日', 'success']
+    ],
+    milestones: [4, 1, 0],
+    attention: [
+      ['danger', '测试环境尚未恢复', '陈悦跟进恢复时间，接口联调仍在等待。'],
+      ['important', '本周接口联调验收', '王宁负责，11 月 20 日截止。']
+    ],
+    brief: '11 月 18 日 · 项目每日简报'
+  },
+  qiming: {
+    name: '启明试点项目', kind: '内部试点', status: 'pending', lead: '林晓', group: '待绑定', update: '11 月 17 日 16:20',
+    summary: '', latest: '正在确定首批试点范围',
+    tasks: [
+      ['确认试点参与人员', '林晓', '11 月 20 日', 'pending'],
+      ['整理体验反馈清单', '赵可', '11 月 23 日', 'pending']
+    ],
+    milestones: [0, 1], attention: [], brief: ''
+  }
+};
+const extraProjects = [
+  ['云帆运营试点', '赵可', 'progress'], ['星河质量专项', '陈悦', 'progress'],
+  ['知行流程梳理', '林晓', 'pending'], ['青禾交付准备', '王宁', 'progress'],
+  ['远山验收演练', '陈悦', 'success'], ['海棠上线准备', '赵可', 'danger'],
+  ['山岚数据迁移', '林晓', 'progress'], ['新桥工单归档', '王宁', 'success'],
+  ['南星联调试点', '赵可', 'progress'], ['长风需求收集', '林晓', 'pending'],
+  ['栖云运营交接', '陈悦', 'pending'], ['向阳文档治理', '王宁', 'success'],
+  ['启航发布试点', '林晓', 'progress'], ['松石评审计划', '陈悦', 'pending'],
+  ['东篱回归验证', '赵可', 'progress'], ['明川项目复盘', '王宁', 'success']
+];
+const exampleProgress = { progress:'按当前节点推进', pending:'待确认启动范围', success:'已完成本期交付', danger:'等待依赖确认' };
+extraProjects.forEach(([name, lead, status], index) => {
+  projects['example-' + (index + 1)] = {
+    name, lead, status, kind:'内部示例', group:'待绑定', update:'11 月 ' + (16 - Math.floor(index / 2)) + ' 日',
+    latest:exampleProgress[status], summary:'', tasks:[], milestones:[], attention:[], brief:''
+  };
+});
+const labels = { workbench:'工作台总览', projects:'项目列表', runs:'运行记录', settings:'连接设置' };
+const tabs = { overview:'项目概览', tasks:'任务', brief:'项目简报', feishu:'飞书 Bot' };
+const statuses = { progress:'进行中', pending:'待开始', success:'已完成', danger:'已阻塞', warning:'待核对', important:'重要' };
+const page = document.getElementById('page');
+const crumbs = document.getElementById('breadcrumb');
+const mobile = document.getElementById('mobile-nav');
+const shell = document.querySelector('.shell');
+const railToggle = document.getElementById('rail-toggle');
+const railResizer = document.getElementById('rail-resizer');
+const developerNav = document.getElementById('developer-nav');
+const developerPages = OmniRelayDeveloper.pages;
+const systemNav = document.getElementById('system-nav');
+const systemPages = OmniRelaySystem.pages;
+const loginPage = document.getElementById('login-page');
+const compactRail = matchMedia('(max-width: 720px)');
+let railPreference;
+let focusAfterRoute = null;
+let signedOut = false;
+let returnRoute = '#/workbench';
+
+try { railPreference = localStorage.getItem('omni-relay.rail'); } catch {}
+function renderRail() {
+  const collapsed = railPreference === 'collapsed' || (!railPreference && compactRail.matches);
+  shell.dataset.rail = collapsed ? 'collapsed' : 'expanded';
+  const label = collapsed ? '展开侧栏' : '收起侧栏';
+  railToggle.setAttribute('aria-expanded', String(!collapsed));
+  railToggle.setAttribute('aria-label', label);
+  railToggle.title = label;
+  railToggle.querySelector('span').textContent = label;
+  railResizer.setAttribute('aria-valuenow', collapsed ? '52' : '166');
+  railResizer.setAttribute('aria-valuetext', collapsed ? '已收起，52 像素' : '已展开，166 像素');
+}
+function setRail(state) {
+  railPreference = state;
+  try { localStorage.setItem('omni-relay.rail', railPreference); } catch {}
+  renderRail();
+}
+railToggle.addEventListener('click', () => {
+  setRail(shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed');
+});
+for (const group of [systemNav, developerNav]) {
+  group.querySelector('summary').addEventListener('click', event => {
+    if (shell.dataset.rail !== 'collapsed') return;
+    event.preventDefault();
+    setRail('expanded');
+    group.open = true;
+  });
+}
+compactRail.addEventListener('change', renderRail);
+renderRail();
+
+let railDrag = null;
+function finishRailDrag(commit) {
+  if (!railDrag) return;
+  const { id, delta, state } = railDrag;
+  railDrag = null;
+  delete shell.dataset.dragging;
+  shell.style.removeProperty('--rail-drag-width');
+  if (railResizer.hasPointerCapture(id)) railResizer.releasePointerCapture(id);
+  if (commit && Math.abs(delta) >= 24) setRail(delta > 0 ? 'expanded' : 'collapsed');
+  else shell.dataset.rail = state;
+}
+railResizer.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || railDrag) return;
+  const state = shell.dataset.rail;
+  railDrag = { id:event.pointerId, start:event.clientX, delta:0, state, width:state === 'collapsed' ? 52 : 166 };
+  railResizer.focus({preventScroll:true});
+  railResizer.setPointerCapture(event.pointerId);
+  shell.dataset.dragging = '';
+});
+window.addEventListener('pointermove', event => {
+  if (railDrag?.id !== event.pointerId) return;
+  railDrag.delta = event.clientX - railDrag.start;
+  const width = Math.max(52,Math.min(166,railDrag.width + railDrag.delta));
+  shell.style.setProperty('--rail-drag-width',width + 'px');
+  shell.dataset.rail = width >= 124 ? 'expanded' : 'collapsed';
+});
+window.addEventListener('pointerup', event => {
+  if (railDrag?.id !== event.pointerId) return;
+  railDrag.delta = event.clientX - railDrag.start;
+  finishRailDrag(true);
+});
+window.addEventListener('pointercancel', event => {
+  if (railDrag?.id === event.pointerId) finishRailDrag(false);
+});
+railResizer.addEventListener('lostpointercapture', () => finishRailDrag(false));
+railResizer.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && railDrag) { finishRailDrag(false); return; }
+  const keys = { ArrowLeft:'collapsed', Home:'collapsed', ArrowRight:'expanded', End:'expanded',
+    Enter:shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed' };
+  if (Object.hasOwn(keys,event.key)) { event.preventDefault(); setRail(keys[event.key]); }
+});
+
+OmniRelayUI.mountAccount(() => {
+  OmniRelaySystem.recordLogout();
+  signedOut = true;
+  location.hash = '#/login';
+});
+OmniRelaySystem.mountLogin(loginPage, () => {
+  signedOut = false;
+  focusAfterRoute = 'heading';
+  location.hash = returnRoute;
+});
+
+const heading = (text) => '<h1 id="page-heading" tabindex="-1">' + text + '</h1>';
+const chip = (tone, label = statuses[tone]) => '<span class="chip" data-tone="' + tone + '">' + label + '</span>';
+const projectUrl = (id, tab = 'overview') => '#/projects/' + id + '/' + tab;
+const cardLink = (label) => '<a class="button" data-theme-link href="' + OmniRelayTheme.href('omni-relay-feishu-prototype.html') + '">' + label + '</a>';
+const panel = (title, body, action = '') => '<section class="panel"><header class="section-head"><h2>' + title + '</h2>' + action + '</header>' + body + '</section>';
+const empty = (message) => '<p class="empty" role="status">' + message + '</p>';
+const facts = (entries) => '<dl class="facts">' + entries.map(([label,value]) => '<div><dt>' + label + '</dt><dd>' + value + '</dd></div>').join('') + '</dl>';
+
+function table(label, cols, rows) {
+  return '<div class="table-box"><table aria-label="' + label + '"><thead><tr>' +
+    cols.map(([title, secondary]) => '<th scope="col"' + (secondary ? ' class="secondary"' : '') + '>' + title + '</th>').join('') +
+    '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map((cell, index) =>
+      '<td' + (cols[index][1] ? ' class="secondary"' : '') + '>' + cell + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+}
+
+function taskTable(items, milestone = false) {
+  const cols = [['期限'], [milestone ? '节点任务' : '任务'], ['负责人'], ['状态']];
+  const rows = items.map(([title, owner, due, status, important]) => [
+    '<span class="date">' + due + '</span>', title + (important ? ' ' + chip('important') : ''), owner, chip(status)
+  ]);
+  return items.length ? table(milestone ? '关键节点' : '共享任务', cols, rows) : empty('当前状态下没有匹配的任务。');
+}
+
+function projectOverview(project, id) {
+  const done = project.tasks.filter(task => task[3] === 'success').length;
+  const overview = facts([
+    ['负责人',project.lead], ['关联飞书群',project.group], ['示例快照',project.update],
+    ['共享任务','已完成 ' + done + ' / ' + project.tasks.length], ['进展速览',project.latest]
+  ]) + (project.summary ? '<p class="context"><b>Agent 摘要</b>' + project.summary + '</p>' : '');
+  const concerns = project.attention.map(([tone, title, description]) =>
+    '<li>' + chip(tone) + '<div><strong>' + title + '</strong><p class="aux">' + description + '</p></div></li>').join('');
+  return panel('项目概况', overview) +
+    panel('关键节点', project.milestones.length ? taskTable(project.milestones.map(index => project.tasks[index]), true) : empty('暂无关键节点。'),
+      '<a class="button" href="' + projectUrl(id, 'tasks') + '">查看全部任务</a>') +
+    panel('当前关注', concerns ? '<ul class="attention">' + concerns + '</ul>' : empty('当前没有记录的关注事项。'));
+}
+
+function projectTasks() {
+  return '<section id="standard-list"></section>';
+}
+
+function projectBrief(project) {
+  const body = project.brief ? facts([['最新简报',project.brief],['目标群',project.group],['状态',chip('success', '示例已生成')]]) :
+    empty('此项目暂无简报。');
+  return panel('项目简报', body, project.brief ? cardLink('打开卡片预览') : '');
+}
+
+function projectFeishu(project) {
+  return panel('飞书 Bot', facts([['应用名称','OmniRelay'],['项目群',project.group],['接入状态',chip('pending','原型未接入')]]))
+    + panel('消息卡片', '<p class="aux">预览群简报、任务查询和分派回执。</p>', cardLink('打开卡片预览'));
+}
+
+function renderProject(id, tab) {
+  const project = projects[id];
+  const views = { overview: projectOverview, tasks: projectTasks, brief: projectBrief, feishu: projectFeishu };
+  return '<header class="head"><div class="project-title"><span class="kind">' + project.kind + '</span>' + heading(project.name) +
+    chip(project.status) + '</div><a class="button" href="#/projects">返回项目列表</a></header>' +
+    '<div class="tabs" role="tablist" aria-label="项目工作台">' + Object.entries(tabs).map(([key,label]) =>
+      '<button type="button" id="tab-' + key + '" data-tab="' + key + '" role="tab" aria-controls="project-panel" aria-selected="' +
+      (key === tab) + '" tabindex="' + (key === tab ? '0' : '-1') + '">' + label + '</button>').join('') + '</div>' +
+    '<section class="stack" id="project-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-' + tab + '">' +
+    views[tab](project, id) + '</section>';
+}
+
+const column = (key, label, render, sort, secondary = false) => ({ key, label, render, sort, secondary });
+const stageOptions = { progress:statuses.progress, pending:statuses.pending, success:statuses.success, danger:statuses.danger };
+
+function projectListConfig(area) {
+  const rows = Object.entries(projects).map(([id, project]) => ({ id, ...project }));
+  return {
+    key: area, label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
+    search:row => [row.name, row.lead].join(' '),
+    filters:[
+      { key:'status', label:'项目阶段', options:stageOptions },
+      { key:'lead', label:'负责人', options:Object.fromEntries([...new Set(rows.map(row => row.lead))].map(name => [name,name])) }
+    ],
+    action:area === 'workbench' ? '<a class="button primary" href="#/projects">查看项目列表</a>' : '',
+    columns:[
+      column('name','项目名称', row => '<a href="' + projectUrl(row.id) + '">' + row.name + '</a>', row => row.name),
+      column('status','阶段', row => chip(row.status), row => statuses[row.status]),
+      column('latest','进展速览', row => row.latest, null, true),
+      column('lead','负责人', row => row.lead, row => row.lead)
+    ]
+  };
+}
+
+function taskListConfig(id) {
+  const rows = projects[id].tasks.map(([title,owner,due,status,important],index) => (
+    { id:String(index+1), title, owner, due, status, important }
+  ));
+  return {
+    key:'tasks-' + id, label:'共享任务', itemLabel:'任务', rows, rowLabel:row => row.title,
+    search:row => row.title + ' ' + row.owner,
+    filters:[{ key:'status', label:'任务状态', options:stageOptions }],
+    columns:[
+      column('title','任务',row => row.title + (row.important ? ' ' + chip('important') : ''),row => row.title),
+      column('due','期限',row => '<span class="date">' + row.due + '</span>',row => row.due),
+      column('owner','负责人',row => row.owner,row => row.owner),
+      column('status','任务状态',row => chip(row.status),row => statuses[row.status])
+    ]
+  };
+}
+
+function runListConfig() {
+  const rows = [
+    { id:'run-004', time:'11 月 18 日 18:00', project:'北辰交付项目', type:'每日简报', status:'success' },
+    { id:'run-003', time:'11 月 18 日 17:36', project:'北辰交付项目', type:'任务查询', status:'success' },
+    { id:'run-002', time:'11 月 18 日 16:20', project:'北辰交付项目', type:'任务分派', status:'warning' },
+    { id:'run-001', time:'11 月 17 日 16:20', project:'启明试点项目', type:'任务查询', status:'success' }
+  ];
+  return {
+    key:'runs', label:'Agent 运行记录', itemLabel:'运行记录', rows, rowLabel:row => row.project + ' ' + row.type + ' ' + row.time,
+    search:row => row.project + ' ' + row.type,
+    defaultSort:{key:'time',direction:'desc'},
+    filters:[{ key:'status', label:'运行状态', options:{success:statuses.success,warning:statuses.warning} }],
+    columns:[
+      column('time','触发时间',row => '<span class="date">' + row.time + '</span>',row => row.time),
+      column('project','项目',row => row.project,row => row.project),
+      column('type','运行类型',row => row.type,row => row.type),
+      column('status','状态',row => chip(row.status),row => statuses[row.status])
+    ]
+  };
+}
+
+const tipExamples = {
+  info:'筛选条件已更新。',
+  success:'已更新展示偏好。',
+  warning:'部分记录尚待对账。',
+  error:'运行记录读取失败，请重试。'
+};
+function showExampleTip(level) {
+  OmniRelayUI.toast(level, tipExamples[level]);
+}
+function renderGlobal(area) {
+  const title = '<header class="head">' + heading(labels[area]) + '</header>';
+  const views = {
+    workbench: () => '<section id="standard-list"></section>',
+    projects: () => '<section id="standard-list"></section>',
+    runs: () => '<section id="standard-list"></section>',
+    settings: () => panel('服务连接', facts([['业务数据源','OmniGrid Business API'],['Agent 运行环境','DeepSeek Harness'],['消息通道','飞书应用 Bot']]) +
+      '<p class="context">此工作台为本地原型，服务连接尚未接入。</p>')
+  };
+  return title + views[area]();
+}
+
+function getRoute() {
+  const [area, id, tab] = location.hash.slice(2).split('/');
+  if (area === 'login') return { area };
+  if (area === 'system') return { area, systemPage: Object.hasOwn(systemPages, id) ? id : 'users' };
+  if (!location.hash) return { area:'projects', id:'beichen', tab:'overview' };
+  if (area === 'developer') return { area, developerPage:Object.hasOwn(developerPages,id) ? id : 'list' };
+  if (area === 'projects' && Object.hasOwn(projects, id)) {
+    return { area, id, tab: Object.hasOwn(tabs, tab) ? tab : 'overview' };
+  }
+  return { area: Object.hasOwn(labels, area) ? area : 'workbench' };
+}
+
+function render() {
+  const {area,id,tab,developerPage,systemPage} = getRoute();
+  if (signedOut && area !== 'login') {
+    location.replace('#/login');
+    return;
+  }
+  const login = area === 'login';
+  shell.hidden = login;
+  loginPage.hidden = !login;
+  if (login) {
+    signedOut = true;
+    loginPage.querySelector('#login-feedback').hidden = true;
+    loginPage.querySelector('#login-heading').focus();
+    return;
+  }
+  returnRoute = location.hash || '#/projects/beichen/overview';
+  document.querySelectorAll('[data-nav]').forEach(link => {
+    if (link.dataset.nav === area) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  const nestedPage = developerPage || systemPage;
+  mobile.value = nestedPage ? area + '/' + nestedPage : area;
+  for (const [name, group, child] of [['developer', developerNav, developerPage], ['system', systemNav, systemPage]]) {
+    group.dataset.active = String(Boolean(child));
+    if (nestedPage) group.open = Boolean(child);
+    group.querySelectorAll('[data-' + name + ']').forEach(link => {
+      if (link.dataset[name] === child) link.setAttribute('aria-current','page');
+      else link.removeAttribute('aria-current');
+    });
+  }
+  if (nestedPage) {
+    const section = systemPage ? '系统管理' : '开发者';
+    const title = systemPage ? systemPages[systemPage] : developerPages[developerPage];
+    crumbs.innerHTML = '<span>' + section + '</span><span aria-hidden="true">/</span><span aria-current="page">' + title + '</span>';
+    page.innerHTML = systemPage ? OmniRelaySystem.render(systemPage) : OmniRelayDeveloper.render(developerPage);
+  } else {
+    crumbs.innerHTML = id
+      ? '<a href="#/projects">项目列表</a><span aria-hidden="true">/</span><span aria-current="page">' + projects[id].name + '</span>'
+      : '<span>工作空间</span><span aria-hidden="true">/</span><span aria-current="page">' + labels[area] + '</span>';
+    page.innerHTML = id ? renderProject(id, tab) : renderGlobal(area);
+  }
+  const list = document.getElementById('standard-list');
+  page.dataset.layout = list || systemPage || developerPage === 'list' ? 'list' : developerPage === 'colors' ? 'palette' : 'content';
+  page.scrollTop = 0;
+  if (list) OmniRelayUI.mountList(list, id ? taskListConfig(id) : area === 'runs' ? runListConfig() : projectListConfig(area));
+  if (developerPage) OmniRelayDeveloper.mount(page, developerPage);
+  if (systemPage) OmniRelaySystem.mount(page, systemPage);
+  if (focusAfterRoute === 'tab') {
+    const active = document.getElementById('tab-' + tab);
+    active?.focus({preventScroll:true});
+    active?.scrollIntoView({block:'nearest',inline:'nearest'});
+  } else if (focusAfterRoute === 'heading') {
+    document.getElementById('page-heading').focus({preventScroll:true});
+  }
+  focusAfterRoute = null;
+}
+
+function selectTab(tab) {
+  const route = getRoute();
+  if (tab === route.tab) return;
+  focusAfterRoute = 'tab';
+  location.hash = projectUrl(route.id, tab);
+}
+
+document.addEventListener('click', event => {
+  const link = event.target.closest('a[href^="#/"]');
+  if (link && link.hash !== location.hash && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) focusAfterRoute = 'heading';
+  const tab = event.target.closest('[data-tab]');
+  if (tab) selectTab(tab.dataset.tab);
+  const tip = event.target.closest('[data-tip]');
+  if (tip) showExampleTip(tip.dataset.tip);
+});
+page.addEventListener('keydown', event => {
+  const tab = event.target.closest('[data-tab]');
+  if (!tab) return;
+  const keys = Object.keys(tabs);
+  const at = keys.indexOf(tab.dataset.tab);
+  const targets = { ArrowRight:(at+1)%keys.length, ArrowLeft:(at+keys.length-1)%keys.length, Home:0, End:keys.length-1 };
+  if (!Object.hasOwn(targets,event.key)) return;
+  event.preventDefault();
+  selectTab(keys[targets[event.key]]);
+});
+mobile.addEventListener('change', () => {
+  focusAfterRoute = 'heading';
+  location.hash = '#/' + mobile.value;
+});
+window.addEventListener('hashchange',render);
+render();
+</script>
+</body>
+</html>
