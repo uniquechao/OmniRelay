@@ -1,10 +1,11 @@
 import { api, getSession, logout, mountLogin, setSession } from './login.js';
 import { mountAdmin } from './admin.js';
-import { readAdminCapabilities, systemAPI } from './system-api.js';
+import { feishuBotAPI, readAdminCapabilities, systemAPI } from './system-api.js';
+import { mountFeishuBot } from './feishu-bot.js';
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
 
-const titles = { users: '用户管理', roles: '角色权限', audit: '审计日志' };
+const titles = { users: '用户管理', roles: '角色权限', audit: '审计日志', 'feishu-bot': '飞书 Bot 配置' };
 const ui = window.OmniRelayUI;
 const shell = document.querySelector('.shell');
 const page = document.getElementById('page');
@@ -19,20 +20,30 @@ let routeRequest;
 let view;
 let renderedHash;
 let checkingNavigation = false;
+const oauthReturnKey = 'omnirelay.feishu.return-route';
 let returnRoute = '#/workbench';
+try {
+  if (location.hash.startsWith('#/login?error=')) {
+    returnRoute = safeRoute(sessionStorage.getItem(oauthReturnKey));
+  }
+  sessionStorage.removeItem(oauthReturnKey);
+} catch {}
 
 const login = mountLogin(loginPage, {
   onSuccess(nextSession) {
     establishSession(nextSession).then(render).catch(() => start());
-    location.replace(returnRoute);
   },
-  returnTo: () => '/' + returnRoute
+  returnTo() {
+    try { sessionStorage.setItem(oauthReturnKey, returnRoute); } catch {}
+    return '/' + returnRoute;
+  }
 });
 
 mountRail(shell, [systemNav]);
 mountAccount({
   currentUser: () => session?.user,
   async onLogout() {
+    if (view?.confirmNavigation && !await view.confirmNavigation()) return;
     await logout();
     showLogin();
   },
@@ -43,14 +54,18 @@ mountAccount({
 });
 
 async function protectedAPI(path, options) {
+  const requestSession = session;
   try {
     return await api(path, options);
   } catch (error) {
-    if (error.status === 401 && session && !options?.signal?.aborted) showLogin();
+    if (error.status === 401 && requestSession && session === requestSession && !options?.signal?.aborted) {
+      showLogin();
+    }
     throw error;
   }
 }
 const adminAPI = systemAPI(protectedAPI);
+const botAPI = feishuBotAPI(protectedAPI);
 
 function showLogin() {
   session = null;
@@ -64,11 +79,12 @@ function showLogin() {
 }
 
 function safeRoute(hash) {
-  return /^#\/(workbench|system\/(users|roles|audit))$/.test(hash) ? hash : '#/workbench';
+  const section = hash?.split('/')[2];
+  return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : '#/workbench';
 }
 
 function permission(user, section) {
-  return Boolean(user.adminCapabilities?.[section]);
+  return Boolean(user.adminCapabilities?.[section === 'feishu-bot' ? 'feishu_bot' : section]);
 }
 
 async function establishSession(nextSession) {
@@ -123,6 +139,7 @@ async function render() {
     return;
   }
   if (location.hash.startsWith('#/login')) {
+    page.replaceChildren();
     location.replace(returnRoute);
     return;
   }
@@ -147,7 +164,7 @@ async function render() {
   else overview.removeAttribute('aria-current');
   drawBreadcrumb(title, section ? '系统管理' : '工作空间');
   mobileNav.value = hash.slice(2);
-  page.dataset.layout = section ? 'list' : 'content';
+  page.dataset.layout = section && section !== 'feishu-bot' ? 'list' : 'content';
   page.scrollTop = 0;
   if (!section) goToAdministration(session.user);
   else if (!allowed(section)) {
@@ -159,6 +176,11 @@ async function render() {
     message.className = 'empty';
     message.textContent = '当前账号没有访问此页面的权限。';
     page.replaceChildren(heading, message);
+  } else if (section === 'feishu-bot') {
+    const canConfigure = session.user.roles.includes('system_admin');
+    view = mountFeishuBot(page, botAPI, {
+      signal, canConfigure, canSyncDirectory: canConfigure && allowed('users')
+    });
   } else {
     try {
       const admin = await mountAdmin(page, section, adminAPI, { user: session.user, signal });
@@ -202,6 +224,7 @@ addEventListener('hashchange', async () => {
     if (activeView !== view) return;
     if (!allowed) {
       history.replaceState(history.state, '', renderedHash);
+      mobileNav.value = renderedHash.slice(2);
       return;
     }
   }
