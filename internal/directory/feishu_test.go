@@ -299,3 +299,16 @@ func TestReadScopeExpandsUserGroups(t *testing.T) {
 		t.Fatalf("group scope was not expanded and deduplicated: %+v", got)
 	}
 }
+
+func TestDirectoryRetainsPermissionCodeWithStructuredError(t *testing.T) {
+	service := fixtureService(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"code":99991672,"error":{"permission_violations":[]},"msg":"Access denied"}`)
+	})
+	var result any
+	err := service.requestOnce(t.Context(), http.MethodGet, service.cfg.BaseURL, "fixture", nil, &result)
+	failure, ok := err.(upstreamError)
+	if !ok || failure.code != 99991672 || !failure.denied() {
+		t.Fatalf("structured permission error lost its code: %v", err)
+	}
+}

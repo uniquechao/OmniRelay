@@ -162,7 +162,7 @@ func (s *Service) requestOnce(ctx context.Context, method, address, token string
 	defer resp.Body.Close()
 	var envelope struct {
 		Code  *int            `json:"code"`
-		Error string          `json:"error"`
+		Error json.RawMessage `json:"error"`
 		Data  json.RawMessage `json:"data"`
 	}
 	const maxResponse = 4 << 20
@@ -175,7 +175,8 @@ func (s *Service) requestOnce(ctx context.Context, method, address, token string
 	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
 		upstream.retryAfter = time.Duration(min(seconds, 30)) * time.Second
 	}
-	if upstream.status < 200 || upstream.status >= 300 || upstream.code != 0 || envelope.Error != "" {
+	hasError := len(envelope.Error) > 0 && string(envelope.Error) != "null" && string(envelope.Error) != `""`
+	if upstream.status < 200 || upstream.status >= 300 || upstream.code != 0 || hasError {
 		return upstream
 	}
 	if !valid || envelope.Code == nil {
