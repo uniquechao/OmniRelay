@@ -16,7 +16,7 @@ const (
 	botLeaseSeconds = 30
 	bodyFingerprint = "{}"
 	resetConnection = `connection_generation=feishu_bot_configs.connection_generation+1,
-		connection_state='unavailable', connection_lease_until=NULL, last_heartbeat_at=NULL, last_message_at=NULL`
+		connection_lease_until=NULL, last_heartbeat_at=NULL, last_message_at=NULL`
 	checkColumns = `id, state, credentials_generation, created_at, started_at, finished_at, results`
 )
 
@@ -40,7 +40,8 @@ func (s *FeishuBot) Activate(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO feishu_bot_configs (tenant_key, app_id, credentials_generation)
 			VALUES ($1,$2,$3) ON CONFLICT (tenant_key,app_id) DO UPDATE
-			SET credentials_generation=EXCLUDED.credentials_generation, bot_name='', bot_open_id='', `+resetConnection+`
+			SET credentials_generation=EXCLUDED.credentials_generation, bot_name='', bot_open_id='',
+			connection_state=CASE WHEN feishu_bot_configs.enabled THEN 'unavailable' ELSE 'disabled' END, `+resetConnection+`
 			WHERE feishu_bot_configs.credentials_generation < EXCLUDED.credentials_generation`,
 			s.config.TenantKey, s.config.AppID, s.generation)
 		if err != nil {
@@ -79,9 +80,10 @@ func (s *FeishuBot) status(ctx context.Context, q queryer) (system.Status, error
 	err := q.QueryRow(ctx, `WITH instant AS (SELECT clock_timestamp() AS at)
 		SELECT credentials_generation, enabled, version, bot_name,
 		CASE WHEN NOT enabled THEN 'disabled'
-			WHEN last_heartbeat_at IS NULL OR last_heartbeat_at > at
-				OR last_heartbeat_at <= at - $3::bigint * interval '1 microsecond' THEN 'unavailable'
-			ELSE connection_state END,
+			WHEN connection_state IN ('connecting', 'reconnecting') AND connection_lease_until > at THEN connection_state
+			WHEN connection_state='connected' AND last_heartbeat_at <= at
+				AND last_heartbeat_at > at - $3::bigint * interval '1 microsecond' THEN 'connected'
+			ELSE 'unavailable' END,
 		CASE WHEN enabled AND last_heartbeat_at <= at THEN last_heartbeat_at END,
 		CASE WHEN enabled AND last_message_at <= at THEN last_message_at END
 		FROM feishu_bot_configs CROSS JOIN instant WHERE tenant_key=$1 AND app_id=$2`,
@@ -111,7 +113,8 @@ func (s *FeishuBot) Configure(ctx context.Context, actor identity.Principal, mat
 		if status.Enabled == enabled {
 			return nil
 		}
-		_, err = tx.Exec(ctx, `UPDATE feishu_bot_configs SET enabled=$3, version=version+1, `+resetConnection+
+		_, err = tx.Exec(ctx, `UPDATE feishu_bot_configs SET enabled=$3, version=version+1,
+			connection_state=CASE WHEN $3 THEN 'unavailable' ELSE 'disabled' END, `+resetConnection+
 			` WHERE tenant_key=$1 AND app_id=$2`, s.config.TenantKey, s.config.AppID, enabled)
 		if err != nil {
 			return err

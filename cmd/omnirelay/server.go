@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -52,9 +53,26 @@ func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, tran
 		}
 		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
 	}
-	bot := system.New(botStore, feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport))
+	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
+	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
+	if cfg.botLeaseNamespace != "" && cfg.appSecret != "" {
+		lease, err := feishu.NewLease(cfg.botLeaseNamespace, cfg.botPodUID)
+		if err != nil {
+			return nil, nil, err
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return nil, nil, errors.New("could not locate Feishu SDK worker executable")
+		}
+		inbox, err := postgres.NewFeishuInbox(botStore, 1000)
+		if err != nil {
+			return nil, nil, err
+		}
+		connection := feishu.NewConnection(executable, cfg.tenantKey, check, botStore, inbox, cfg.botHeartbeatTTL)
+		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
+	}
 	mux := http.NewServeMux()
-	bot.Register(mux, identityService.AuthenticateManagement, roles)
+	workers.bot.Register(mux, identityService.AuthenticateManagement, roles)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
 	web.Register(mux)
@@ -78,18 +96,22 @@ func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, tran
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return secureHeaders(mux), &backendWorkers{directory: directoryService, bot: bot}, nil
+	return secureHeaders(mux), workers, nil
 }
 
 type backendWorkers struct {
-	directory *directory.Service
-	bot       *system.Service
+	directory  *directory.Service
+	bot        *system.Service
+	connection func(context.Context)
 }
 
 func (w *backendWorkers) Run(ctx context.Context) {
 	var running sync.WaitGroup
 	running.Go(func() { w.directory.Run(ctx) })
 	running.Go(func() { w.bot.Run(ctx) })
+	if w.connection != nil {
+		running.Go(func() { w.connection(ctx) })
+	}
 	running.Wait()
 }
 

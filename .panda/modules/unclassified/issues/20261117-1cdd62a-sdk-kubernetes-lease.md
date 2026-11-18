@@ -24,7 +24,7 @@ module: unclassified
 agent: codex
 category: task
 impl_mode: seq
-status: pending
+status: merge_review
 created_ts: 1794969294158
 ---
 <!-- panda:issue-meta:end -->
