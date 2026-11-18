@@ -262,3 +262,40 @@ func TestContactErrorClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestReadScopeExpandsUserGroups(t *testing.T) {
+	service := fixtureService(t, func(w http.ResponseWriter, r *http.Request) {
+		var data string
+		switch r.URL.Path {
+		case contacts + "/scopes":
+			data = `{"department_ids":["a"],"user_ids":["ou_direct"],"group_ids":["g_one"],"has_more":false}`
+		case contacts + "/group/g_one/member/simplelist":
+			if r.URL.Query().Get("member_id_type") != "open_id" {
+				t.Error("group members must use stable open identifiers")
+			}
+			switch r.URL.Query().Get("member_type") {
+			case "department":
+				data = `{"memberlist":[{"member_id":"a","member_type":"department"},{"member_id":"b","member_type":"department"}],"has_more":false}`
+			case "user":
+				if r.URL.Query().Get("page_token") == "" {
+					data = `{"memberlist":[{"member_id":"ou_direct","member_type":"user"}],"has_more":true,"page_token":"next"}`
+				} else {
+					data = `{"memberlist":[{"member_id":"ou_group","member_type":"user"}],"has_more":false}`
+				}
+			default:
+				t.Error("missing group member type")
+			}
+		default:
+			t.Error("unexpected request path")
+		}
+		fmt.Fprintf(w, `{"code":0,"data":%s}`, data)
+	})
+	f := collector{service: service, token: "fixture", left: 20}
+	got, err := f.readScope(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Departments, ",") != "a,b" || strings.Join(got.People, ",") != "ou_direct,ou_group" {
+		t.Fatalf("group scope was not expanded and deduplicated: %+v", got)
+	}
+}

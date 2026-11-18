@@ -267,9 +267,13 @@ func (f *collector) readScope(ctx context.Context) (scope, error) {
 		Groups      []string `json:"group_ids"`
 	}
 	result := scope{Departments: []string{}, People: []string{}}
+	groups := map[string]bool{}
 	err := paginate(ctx, f, "/scopes", url.Values{"department_id_type": {"open_department_id"}, "user_id_type": {"open_id"}}, func(page scopePage) (paging, error) {
-		if len(page.Groups) > 0 {
-			return page.paging, upstreamError{kind: "Feishu scope contains unsupported groups", status: http.StatusForbidden}
+		for _, id := range page.Groups {
+			if !validID(id) {
+				return page.paging, errors.New("invalid user group identifier in Feishu permission scope")
+			}
+			groups[id] = true
 		}
 		for _, entry := range page.Departments {
 			if !validID(entry) {
@@ -281,18 +285,63 @@ func (f *collector) readScope(ctx context.Context) (scope, error) {
 				return page.paging, errors.New("invalid person identifier in Feishu permission scope")
 			}
 		}
-		if emptyIntermediatePage(page.paging, len(page.Departments)+len(page.People)) {
+		if emptyIntermediatePage(page.paging, len(page.Departments)+len(page.People)+len(page.Groups)) {
 			return page.paging, errors.New("empty intermediate Feishu scope page")
 		}
 		result.Departments = append(result.Departments, page.Departments...)
 		result.People = append(result.People, page.People...)
 		return page.paging, nil
 	})
+	if err != nil {
+		return scope{}, err
+	}
+	for id := range groups {
+		if err := f.readGroupMembers(ctx, id, &result); err != nil {
+			return scope{}, err
+		}
+	}
 	slices.Sort(result.Departments)
 	slices.Sort(result.People)
 	result.Departments = slices.Compact(result.Departments)
 	result.People = slices.Compact(result.People)
 	return result, err
+}
+
+func (f *collector) readGroupMembers(ctx context.Context, group string, result *scope) error {
+	type member struct {
+		ID   string `json:"member_id"`
+		Type string `json:"member_type"`
+	}
+	type page struct {
+		paging
+		Members []member `json:"memberlist"`
+	}
+	for _, kind := range []string{"department", "user"} {
+		params := url.Values{"member_type": {kind}, "member_id_type": {"open_id"}}
+		err := paginate(ctx, f, "/group/"+group+"/member/simplelist", params, func(reply page) (paging, error) {
+			if reply.Members == nil || emptyIntermediatePage(reply.paging, len(reply.Members)) {
+				return reply.paging, errors.New("incomplete Feishu user group member page")
+			}
+			for _, entry := range reply.Members {
+				if entry.Type != kind || !validID(entry.ID) {
+					return reply.paging, errors.New("invalid Feishu user group member")
+				}
+				if kind == "department" {
+					result.Departments = append(result.Departments, entry.ID)
+				} else {
+					if !validOpenID(entry.ID) {
+						return reply.paging, errors.New("invalid Feishu user group person identifier")
+					}
+					result.People = append(result.People, entry.ID)
+				}
+			}
+			return reply.paging, nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func departmentIDs() url.Values { return url.Values{"department_id_type": {"open_department_id"}} }
