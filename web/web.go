@@ -3,6 +3,7 @@ package web
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -39,4 +40,15 @@ func Register(mux *http.ServeMux) {
 		}
 		http.NotFound(w, r)
 	})
+}
+
+//go:embed setup.html
+var setupPage string
+
+// ServeSetup serves the initial configuration form while the backend is unconfigured.
+func ServeSetup(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, setupPage)
 }

@@ -20,15 +20,38 @@ const (
 
 var errFeishu = errors.New("Feishu OAuth request failed")
 
+// SetupOAuth verifies the identity that will administer a previously unconfigured instance.
+type SetupOAuth struct{ provider *Service }
+
+func NewSetupOAuth(appID, appSecret, publicOrigin string, transport http.RoundTripper) (*SetupOAuth, error) {
+	provider, err := newIdentityService(nil, Config{
+		AppID: appID, AppSecret: appSecret, PublicOrigin: publicOrigin, Transport: transport,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &SetupOAuth{provider: provider}, nil
+}
+
+func (s *SetupOAuth) AuthorizationURL(state, verifier string) string {
+	return s.provider.authorizationURL(state, verifier)
+}
+
+func (s *SetupOAuth) Resolve(ctx context.Context, code, verifier string) (Principal, error) {
+	return s.provider.feishuIdentity(ctx, code, verifier)
+}
+
 func (s *Service) authorizationURL(state, verifier string) string {
 	query := url.Values{
 		"client_id":             {s.cfg.AppID},
 		"response_type":         {"code"},
 		"redirect_uri":          {s.callback},
-		"target_tenant":         {s.cfg.TenantKey},
 		"state":                 {state},
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(digest(verifier))},
 		"code_challenge_method": {"S256"},
+	}
+	if s.cfg.TenantKey != "" {
+		query.Set("target_tenant", s.cfg.TenantKey)
 	}
 	return authorizeEndpoint + "?" + query.Encode()
 }
@@ -106,7 +129,8 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	data := user.Data
 	// The token exchange binds the app because Feishu authenticates the client and
 	// rejects codes issued to another app. User info normally omits app_id.
-	if data.TenantKey != s.cfg.TenantKey || strings.TrimSpace(data.OpenID) == "" ||
+	if strings.TrimSpace(data.TenantKey) == "" ||
+		(s.cfg.TenantKey != "" && data.TenantKey != s.cfg.TenantKey) || strings.TrimSpace(data.OpenID) == "" ||
 		(data.AppID != "" && data.AppID != s.cfg.AppID) ||
 		data.Disabled || (data.Active != nil && !*data.Active) ||
 		data.Status.Frozen || data.Status.Resigned || (data.Status.Activated != nil && !*data.Status.Activated) {

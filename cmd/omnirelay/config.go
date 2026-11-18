@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"strconv"
@@ -17,6 +18,7 @@ type configuration struct {
 	credentialsGeneration                  int64
 	botHeartbeatTTL                        time.Duration
 	botLeaseNamespace, botPodUID           string
+	setupKey                               []byte
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
@@ -47,7 +49,11 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 		origin.Fragment != "" || strings.Contains(cfg.publicOrigin, "#") {
 		return configuration{}, errors.New("OMNIRELAY_PUBLIC_ORIGIN must be an HTTPS origin")
 	}
-	cfg.publicOrigin = "https://" + origin.Host
+	host := strings.ToLower(origin.Host)
+	if origin.Port() == "443" {
+		host = strings.TrimSuffix(host, ":443")
+	}
+	cfg.publicOrigin = "https://" + host
 	cfg.tlsCertFile = strings.TrimSpace(getenv("OMNIRELAY_TLS_CERT_FILE"))
 	cfg.tlsKeyFile = strings.TrimSpace(getenv("OMNIRELAY_TLS_KEY_FILE"))
 	if (cfg.tlsCertFile == "") != (cfg.tlsKeyFile == "") {
@@ -57,8 +63,19 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 	cfg.appSecret = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_APP_SECRET"))
 	cfg.tenantKey = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_TENANT_KEY"))
 	cfg.bootstrap = strings.TrimSpace(getenv("OMNIRELAY_BOOTSTRAP_OPEN_ID"))
+	if strings.TrimSpace(getenv("OMNIRELAY_SETUP_MODE")) == "true" {
+		cfg.setupKey, err = parseSetupKey(getenv("OMNIRELAY_SETUP_KEY"))
+		if err != nil {
+			return configuration{}, err
+		}
+	}
 	if cfg.appID == "" || cfg.tenantKey == "" {
-		return configuration{}, errors.New("Feishu app ID and tenant key are required")
+		if len(cfg.setupKey) == 0 {
+			return configuration{}, errors.New("Feishu app ID and tenant key are required")
+		}
+		if cfg.appID != "" || cfg.appSecret != "" || cfg.tenantKey != "" || cfg.bootstrap != "" {
+			return configuration{}, errors.New("remove partial Feishu environment settings to use web setup")
+		}
 	}
 	if generation := strings.TrimSpace(getenv("OMNIRELAY_FEISHU_CREDENTIALS_GENERATION")); generation != "" {
 		cfg.credentialsGeneration, err = strconv.ParseInt(generation, 10, 64)
@@ -93,4 +110,12 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 		}
 	}
 	return cfg, nil
+}
+
+func parseSetupKey(value string) ([]byte, error) {
+	key, err := hex.DecodeString(strings.TrimSpace(value))
+	if err != nil || len(key) != 32 {
+		return nil, errors.New("OMNIRELAY_SETUP_KEY must contain a 32-byte hex-encoded key")
+	}
+	return key, nil
 }

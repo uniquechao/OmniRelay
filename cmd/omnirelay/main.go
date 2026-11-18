@@ -20,6 +20,8 @@ import (
 	"golang.org/x/term"
 )
 
+var errWebSetupSaved = errors.New("web setup saved")
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -29,9 +31,16 @@ func main() {
 		}
 		return
 	}
-	if err := run(ctx, os.Args[1:]); err != nil {
-		slog.Error("OmniRelay startup or shutdown failed", "error", err.Error())
-		os.Exit(1)
+	for {
+		err := run(ctx, os.Args[1:])
+		if errors.Is(err, errWebSetupSaved) && ctx.Err() == nil {
+			continue
+		}
+		if err != nil && !errors.Is(err, errWebSetupSaved) {
+			slog.Error("OmniRelay startup or shutdown failed", "error", err.Error())
+			os.Exit(1)
+		}
+		return
 	}
 }
 
@@ -40,10 +49,18 @@ func run(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 	}
+	if command == "setup-token" && len(args) == 1 {
+		key, err := parseSetupKey(os.Getenv("OMNIRELAY_SETUP_KEY"))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(os.Stdout, setupToken(key))
+		return err
+	}
 	valid := (command == "serve" || command == "migrate") && len(args) <= 1 ||
 		command == "password" && len(args) == 3
 	if !valid {
-		return errors.New("usage: omnirelay [serve|migrate|password <account-id> <username>]")
+		return errors.New("usage: omnirelay [serve|migrate|setup-token|password <account-id> <username>]")
 	}
 	cfg, err := readConfig(os.Getenv, command == "serve")
 	if err != nil {
@@ -87,9 +104,34 @@ func run(ctx context.Context, args []string) error {
 	if command == "password" {
 		return setAccountPassword(startup, pool, args[1], args[2])
 	}
-	handler, workers, err := newBackend(startup, pool, cfg, nil)
-	if err != nil {
-		return err
+	var handler http.Handler
+	var workers *backendWorkers
+	var reload chan struct{}
+	if cfg.appID == "" {
+		store := newWebSetupStore(pool, cfg.setupKey)
+		credentials, configured, err := store.load(startup)
+		if err != nil {
+			return fmt.Errorf("could not load saved web setup: %w", err)
+		}
+		if configured {
+			cfg.appID, cfg.appSecret = credentials.AppID, credentials.AppSecret
+			cfg.tenantKey, cfg.bootstrap = credentials.TenantKey, credentials.Bootstrap
+		} else {
+			reload = make(chan struct{}, 1)
+			handler = newWebSetupHandler(store, cfg.publicOrigin, nil, func() {
+				select {
+				case reload <- struct{}{}:
+				default:
+				}
+			})
+			slog.Info("OmniRelay web setup is available")
+		}
+	}
+	if handler == nil {
+		handler, workers, err = newBackend(startup, pool, cfg, nil)
+		if err != nil {
+			return err
+		}
 	}
 
 	server := &http.Server{
@@ -102,7 +144,9 @@ func run(ctx context.Context, args []string) error {
 	workersStopped := make(chan struct{})
 	go func() {
 		defer close(workersStopped)
-		workers.Run(background)
+		if workers != nil {
+			workers.Run(background)
+		}
 	}()
 	serverDone := make(chan error, 1)
 	go func() {
@@ -121,6 +165,8 @@ func run(ctx context.Context, args []string) error {
 			serveErr = fmt.Errorf("HTTP listener failed on %s", cfg.listenAddr)
 		}
 	case <-ctx.Done():
+	case <-reload:
+		serveErr = errWebSetupSaved
 	}
 	cancelBackground()
 	shutdown, stopShutdown := context.WithTimeout(context.Background(), 15*time.Second)
@@ -140,6 +186,17 @@ func run(ctx context.Context, args []string) error {
 func setAccountPassword(ctx context.Context, pool *pgxpool.Pool, accountID, username string) error {
 	tenant := strings.TrimSpace(os.Getenv("OMNIRELAY_FEISHU_TENANT_KEY"))
 	app := strings.TrimSpace(os.Getenv("OMNIRELAY_FEISHU_APP_ID"))
+	if tenant == "" && app == "" && strings.TrimSpace(os.Getenv("OMNIRELAY_SETUP_MODE")) == "true" {
+		key, err := parseSetupKey(os.Getenv("OMNIRELAY_SETUP_KEY"))
+		if err != nil {
+			return err
+		}
+		credentials, configured, err := newWebSetupStore(pool, key).load(ctx)
+		if err != nil || !configured {
+			return errors.New("complete web setup before provisioning an account password")
+		}
+		tenant, app = credentials.TenantKey, credentials.AppID
+	}
 	if tenant == "" || app == "" {
 		return errors.New("the Feishu app ID and tenant key are required")
 	}

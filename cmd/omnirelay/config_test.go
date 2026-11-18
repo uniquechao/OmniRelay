@@ -122,3 +122,26 @@ func TestConfigFeishuBotLeaseRequiresNamespaceAndPodUID(t *testing.T) {
 		t.Fatalf("unexpected Lease config: %s %s %v", cfg.botLeaseNamespace, cfg.botPodUID, err)
 	}
 }
+
+func TestConfigAllowsWebSetupWithNoFeishuEnvironment(t *testing.T) {
+	env := goodEnvironment()
+	delete(env, "OMNIRELAY_FEISHU_APP_ID")
+	delete(env, "OMNIRELAY_FEISHU_APP_SECRET")
+	delete(env, "OMNIRELAY_FEISHU_TENANT_KEY")
+	get := func(key string) string { return env[key] }
+
+	env["OMNIRELAY_PUBLIC_ORIGIN"] = "https://RELAY.example.test:443/"
+	env["OMNIRELAY_SETUP_MODE"] = "true"
+	env["OMNIRELAY_SETUP_KEY"] = strings.Repeat("12", 32)
+	cfg, err := readConfig(get, true)
+	if err != nil || cfg.appID != "" || cfg.tenantKey != "" {
+		t.Fatalf("web setup should start with no Feishu credentials: %v", err)
+	}
+	if cfg.publicOrigin != "https://relay.example.test" {
+		t.Fatalf("web setup origin must match the browser: %s", cfg.publicOrigin)
+	}
+	env["OMNIRELAY_SETUP_KEY"] = "invalid"
+	if _, err := readConfig(get, true); err == nil {
+		t.Fatal("web setup must require a valid setup key")
+	}
+}

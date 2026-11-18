@@ -16,8 +16,8 @@ func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != 7 {
-		t.Fatalf("expected seven migrations, got %d", len(versions))
+	if len(versions) != 8 {
+		t.Fatalf("expected eight migrations, got %d", len(versions))
 	}
 	for i, change := range versions {
 		if change.version != i+1 || len(change.digest) != 64 || change.sql == "" {
@@ -69,8 +69,8 @@ func TestApplyAndCheckPostgreSQL(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM omnirelay_schema_migrations").Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 7 {
-		t.Fatalf("expected seven applied migrations, got %d", n)
+	if n != 8 {
+		t.Fatalf("expected eight applied migrations, got %d", n)
 	}
 }
 

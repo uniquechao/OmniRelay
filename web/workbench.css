@@ -118,3 +118,8 @@ td a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { transition: none !important; }
 }
+
+.setup-page { min-height: 100svh; }
+.setup-page small { color: var(--or-text-secondary); }
+.setup-callback { color: var(--or-text-secondary); }
+.setup-callback code { display: block; overflow-wrap: anywhere; color: var(--or-text); }

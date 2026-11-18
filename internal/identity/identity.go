@@ -73,6 +73,10 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	if strings.TrimSpace(cfg.AppID) == "" || strings.TrimSpace(cfg.TenantKey) == "" {
 		return nil, errors.New("Feishu app ID and tenant key are required")
 	}
+	return newIdentityService(pool, cfg)
+}
+
+func newIdentityService(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	origin, err := url.Parse(cfg.PublicOrigin)
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil ||
 		(origin.Path != "" && origin.Path != "/") || origin.RawPath != "" ||
