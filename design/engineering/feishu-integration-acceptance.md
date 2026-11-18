@@ -69,3 +69,13 @@
 每项记录：验收编号、代码/部署版本、SDK 版本（若涉及）、UTC 时间、角色、操作、请求 ID、平台请求 ID（若可得）、预期、实际、通过/失败/待验证、证据相对路径。不记录 OAuth code/state 值、PKCE verifier、Cookie、CSRF 实值、App Secret、访问令牌或原始用户消息。截图和导出文件写在项目内并先脱敏。
 
 本条离线证据：运行契约测试输出无跳过；检查范围包括严格结构/枚举/UTC/ETag、HTTP 决策表、幂等保留与换代、目录同版/隐藏及非法样例拒绝。数据库和真实 SDK、浏览器、飞书应用均未执行；最终门禁由系统运行。后续真实验收属于实现与最终联调任务，不能将其待验证状态写成本条样例已验证的能力。
+
+## issue 10 通讯录真机核验
+
+D1–D3 的后端流程已有本地 PostgreSQL 和合成飞书响应的定向证据。以下步骤使用预发布自建应用和专用测试成员执行，实际权限、字段和响应形状仍待核验。
+
+1. 在飞书开发者后台分别核对应用身份 API 权限和通讯录数据范围，发布版本并确认管理员审批生效。用同一应用通过 `POST https://accounts.feishu.cn/oauth/v3/token` 的 `client_credentials` 获取应用身份令牌，取顶层 `access_token` 调用通讯录接口。记录生效权限标识和应用发布版本。 [应用身份令牌](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/tenant_access_token) · [配置应用数据权限](https://open.feishu.cn/document/api-call-guide/calling-process/configure-app-data-permissions)
+2. 在通讯录范围内添加一个部门和一个归属范围外部门的单独授权人员。用 `GET /open-apis/contact/v3/scopes?user_id_type=open_id&department_id_type=open_department_id&page_size=1` 遍历全部页，确认 `department_ids` 返回部门 ID，`user_ids` 返回该应用的 `ou_` ID。逐一检查无额外员工 ID 权限、授予 `contact:user.employee_id:readonly` 两个预发布版本的响应。核验 Open ID 模式下 `user_ids` 是否省略、为空或可读，并记录所需的最小权限组合。另测全员范围对一级部门、根直属人员和 `group_ids` 的实际表现。当前只展开部门和个人授权，非空 `group_ids` 会阻止发布并隐藏旧目录。 [授权范围](https://open.feishu.cn/document/server-docs/contact-v3/scope/list) · [Open ID](https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-openid)
+3. 对范围内部门用 `GET /departments/{id}/children` 传 `fetch_child=false`，逐页核对 `open_department_id` 和 `parent_department_id`。用 `GET /users/find_by_department` 按 `department_id` 逐页核对 `items[].open_id` 和 `department_ids`。对仅直接授权的人员用 `GET /users/{open_id}` 核对 `data.user.open_id` 与 scopes 中的 ID 一致。两条人员查询均传 `user_id_type=open_id&department_id_type=open_department_id`。分别核对应用身份下 `department_ids` 的省略与空数组行为，以及 `contact:user.department:readonly` 是否影响可见部门归属。 [子部门](https://open.feishu.cn/document/server-docs/contact-v3/department/children) · [直属人员](https://open.feishu.cn/document/server-docs/contact-v3/user/find_by_department) · [单个人员](https://open.feishu.cn/document/server-docs/contact-v3/user/get)
+4. 确认 `status` 字段与 `contact:user.employee:readonly` 或应用已有通讯录权限的实际关系。使用激活、冻结、主动退出、已确认离职和状态缺失的测试样本，核对 `is_activated`、`is_frozen`、`is_unjoin`、`is_exited` 和 `is_resigned`。只有明确的 `is_resigned=true` 表示已核实离职。主动退出映射为 `inactive`，没有足够状态字段时为 `unknown`。核对同名、多部门和调岗后的路径，确认其中一个部门撤权后，范围外的路径从目录消失。 [用户资源与状态](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/contact-v3/user/field-overview)
+5. 先记录一版可见快照，分别演练同范围临时失败、移除单独授权人员、部门收窄和撤回 API 权限。观察相同范围下旧版本仍返回 200，确认范围变化后旧版本返回 409，完成后置范围复查才恢复可见。对照已开通成员本地账号状态、角色、现有会话和未开通成员，确认目录变化只影响目录显示。记录前后版本、范围计数、字段的存在性和类型、UTC 时间、请求 ID、飞书请求 ID、HTTP 状态及平台错误码。人员与部门使用固定匿名代号，仅保存脱敏结果。

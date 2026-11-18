@@ -78,6 +78,10 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 
 部门、人员和同步历史使用同一 snapshot_version；翻页携带，409 后丢弃混版结果重载。sync-runs POST 是扁平 run 加 coalesced，非嵌套 task；ID 为数字。初次无快照和撤权隐藏都 visible=false，靠 last_success_at 与 latest_attempt 区分。临时失败允许 visible=true 保留合法旧快照；已确认范围变化须先隐藏，后续完整发布才恢复。failure_reason 是现有接口的脱敏显示字符串，本条不引入新目录失败枚举。
 
+部门查询省略 `parent_id` 或传 `0` 时返回可见树顶层，传实际 ID 时只返回直属子部门。人员查询省略 `department_id` 或传 `0` 时返回整个可见目录，含直接授权且无可见部门的人员。传实际 ID 时默认筛选直属人员，`include_descendants=true` 才包含下级。筛选命中后仍返回该人员的全部可见部门路径。分页排序为不区分大小写的姓名或部门名，同名以对应 ID 排序，`total` 表示筛选后、分页前的条数。
+
+例如 `GET /departments?parent_id=0&limit=1` 得到 `snapshot_version=42` 后，可以用 `GET /people?department_id=od-example&limit=1&snapshot_version=42` 读取同版，再加 `offset=1` 读取下一页。快照被隐藏或替换后，这两个集合携带旧版本均返回 `409 {"error":"directory_snapshot_changed"}`。目录缺失数表示同范围下未再观察到的人员，范围外计数表示授权集合变化后未再观察到的人员。两项均是快照比较结果。人员返回 `resigned` 需要飞书显式给出 `status.is_resigned=true`。
+
 ## 验证边界
 
 离线样例校验严格字段集合、类型、枚举、时间、ETag、生命周期、目录可见性、同版与去重。设置 `OMNIRELAY_TEST_DATABASE_URL` 指向隔离 PostgreSQL 后，执行 `go test -v ./cmd/omnirelay ./internal/feishu ./migrations` 验证 Bot 管理 HTTP、适配器、任务并发与迁移。飞书适配测试为真实请求构造与响应解析注入测试传输层。预发布飞书应用、浏览器和 SDK 验收见[跨角色验收与预发布清单](feishu-integration-acceptance.md)。

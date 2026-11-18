@@ -65,9 +65,9 @@ type contactPerson struct {
 
 func (p contactPerson) status() string {
 	switch {
-	case p.Status.Resigned || p.Status.Exited:
+	case p.Status.Resigned:
 		return "resigned"
-	case p.Status.Frozen || p.Status.Inactive || (p.Status.Activated != nil && !*p.Status.Activated):
+	case p.Status.Exited || p.Status.Frozen || p.Status.Inactive || (p.Status.Activated != nil && !*p.Status.Activated):
 		return "inactive"
 	case p.Status.Activated != nil:
 		return "active"
@@ -109,8 +109,14 @@ func (e upstreamError) Error() string {
 }
 
 func (e upstreamError) denied() bool {
-	return e.status == http.StatusForbidden || e.code == 20068 || e.code == 40003 || e.code == 40004 ||
-		e.code == 41050 || e.code == 99991672 || e.code == 99991679
+	switch e.code {
+	case 20009, 20068, 20069, 40004, 41050, 99991672, 99991673, 99991676, 99991679:
+		return true
+	case 40003, 99991400, 99991401, 99991403:
+		return false
+	default:
+		return e.status == http.StatusForbidden
+	}
 }
 
 func (e upstreamError) transient() bool {
@@ -245,6 +251,14 @@ func validID(id string) bool {
 	return true
 }
 
+func validOpenID(id string) bool {
+	return validID(id) && strings.HasPrefix(id, "ou_") && len(id) > len("ou_")
+}
+
+func emptyIntermediatePage(pager paging, count int) bool {
+	return count == 0 && pager.More != nil && *pager.More
+}
+
 func (f *collector) readScope(ctx context.Context) (scope, error) {
 	type scopePage struct {
 		paging
@@ -257,10 +271,18 @@ func (f *collector) readScope(ctx context.Context) (scope, error) {
 		if len(page.Groups) > 0 {
 			return page.paging, upstreamError{kind: "Feishu scope contains unsupported groups", status: http.StatusForbidden}
 		}
-		for _, entry := range append(slices.Clone(page.Departments), page.People...) {
+		for _, entry := range page.Departments {
 			if !validID(entry) {
-				return page.paging, errors.New("invalid identifier in Feishu permission scope")
+				return page.paging, errors.New("invalid department identifier in Feishu permission scope")
 			}
+		}
+		for _, entry := range page.People {
+			if !validOpenID(entry) {
+				return page.paging, errors.New("invalid person identifier in Feishu permission scope")
+			}
+		}
+		if emptyIntermediatePage(page.paging, len(page.Departments)+len(page.People)) {
+			return page.paging, errors.New("empty intermediate Feishu scope page")
 		}
 		result.Departments = append(result.Departments, page.Departments...)
 		result.People = append(result.People, page.People...)
@@ -335,6 +357,7 @@ func (f *collector) readDepartments(ctx context.Context, result *snapshot) error
 		Items []contactDepartment `json:"items"`
 	}
 	raw := map[string]contactDepartment{}
+	listed := map[string]bool{}
 	queue := slices.Clone(result.Scope.Departments)
 	visited := map[string]bool{}
 	for len(queue) > 0 {
@@ -359,17 +382,18 @@ func (f *collector) readDepartments(ctx context.Context, result *snapshot) error
 		args := departmentIDs()
 		args.Set("fetch_child", "false")
 		err := paginate(ctx, f, "/departments/"+parent+"/children", args, func(reply page) (paging, error) {
-			if reply.Items == nil {
-				return reply.paging, errors.New("Feishu department page missing items")
+			if reply.Items == nil || emptyIntermediatePage(reply.paging, len(reply.Items)) {
+				return reply.paging, errors.New("incomplete Feishu department page")
 			}
 			for _, entry := range reply.Items {
-				if !validID(entry.ID) || entry.ID == "0" || entry.Parent == nil || *entry.Parent != parent {
+				if !validID(entry.ID) || entry.ID == "0" || listed[entry.ID] || entry.Parent == nil || *entry.Parent != parent {
 					return reply.paging, errors.New("invalid Feishu child department")
 				}
 				if before, ok := raw[entry.ID]; ok && (before.Parent == nil || *before.Parent != parent || before.Name != entry.Name) {
 					return reply.paging, errors.New("inconsistent Feishu department hierarchy")
 				}
 				raw[entry.ID] = entry
+				listed[entry.ID] = true
 				queue = append(queue, entry.ID)
 			}
 			return reply.paging, nil
@@ -383,7 +407,11 @@ func (f *collector) readDepartments(ctx context.Context, result *snapshot) error
 			return errors.New("incomplete Feishu department")
 		}
 		parent := *entry.Parent
-		if _, visible := raw[parent]; !visible {
+		if _, visible := raw[parent]; visible {
+			if !listed[id] {
+				return errors.New("Feishu child missing from parent pages")
+			}
+		} else {
 			if !slices.Contains(result.Scope.Departments, id) && parent != "0" {
 				return errors.New("orphaned Feishu department")
 			}
@@ -422,8 +450,16 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		Items []contactPerson `json:"items"`
 	}
 	merge := func(entry contactPerson, parent string) error {
-		if !validID(entry.ID) || strings.TrimSpace(entry.Name) == "" {
+		if !validOpenID(entry.ID) || strings.TrimSpace(entry.Name) == "" {
 			return errors.New("incomplete Feishu person")
+		}
+		if parent != "" && entry.Departments != nil && !slices.Contains(entry.Departments, parent) {
+			return errors.New("Feishu person does not belong to the listed department")
+		}
+		for _, id := range entry.Departments {
+			if !validID(id) {
+				return errors.New("invalid Feishu person department identifier")
+			}
 		}
 		if before, exists := result.People[entry.ID]; exists {
 			oldStatus, newStatus := before.status(), entry.status()
@@ -433,6 +469,11 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 			if newStatus == "unknown" {
 				entry.Status = before.Status
 			}
+			for _, id := range before.Departments {
+				if !slices.Contains(entry.Departments, id) {
+					entry.Departments = append(entry.Departments, id)
+				}
+			}
 		}
 		result.People[entry.ID] = entry
 		if result.Members[entry.ID] == nil {
@@ -440,11 +481,6 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		}
 		if _, visible := result.Departments[parent]; visible {
 			result.Members[entry.ID][parent] = true
-		}
-		for _, id := range entry.Departments {
-			if _, visible := result.Departments[id]; visible {
-				result.Members[entry.ID][id] = true
-			}
 		}
 		return nil
 	}
@@ -456,14 +492,20 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		parents = append(parents, "0")
 	}
 	slices.Sort(parents)
-	for i, parent := range parents {
+	departmentsRead := 0
+	for _, parent := range parents {
+		seen := map[string]bool{}
 		ids := personIDs()
 		ids.Set("department_id", parent)
 		err := paginate(ctx, f, "/users/find_by_department", ids, func(reply page) (paging, error) {
-			if reply.Items == nil {
-				return reply.paging, errors.New("Feishu department member page missing items")
+			if reply.Items == nil || emptyIntermediatePage(reply.paging, len(reply.Items)) {
+				return reply.paging, errors.New("incomplete Feishu department member page")
 			}
 			for _, entry := range reply.Items {
+				if seen[entry.ID] {
+					return reply.paging, errors.New("duplicate Feishu person in department pages")
+				}
+				seen[entry.ID] = true
 				if err := merge(entry, parent); err != nil {
 					return reply.paging, err
 				}
@@ -473,7 +515,10 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		if err != nil {
 			return err
 		}
-		if err := progress(result.Scope, i+1, len(result.People)); err != nil {
+		if parent != "0" {
+			departmentsRead++
+		}
+		if err := progress(result.Scope, departmentsRead, len(result.People)); err != nil {
 			return err
 		}
 	}
@@ -493,8 +538,15 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		if err := merge(reply.User, ""); err != nil {
 			return err
 		}
-		if err := progress(result.Scope, len(parents), len(result.People)); err != nil {
+		if err := progress(result.Scope, departmentsRead, len(result.People)); err != nil {
 			return err
+		}
+	}
+	for id, person := range result.People {
+		for _, dept := range person.Departments {
+			if _, visible := result.Departments[dept]; visible && !result.Members[id][dept] {
+				return errors.New("Feishu person missing from their department pages")
+			}
 		}
 	}
 	return nil
