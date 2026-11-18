@@ -320,8 +320,7 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 				(after.name,after.avatar_url,after.directory_status,after.memberships)) AS changed
 		FROM before FULL JOIN after USING(open_id)
 	)
-	UPDATE directory_sync_runs SET state='succeeded',finished_at=clock_timestamp(),lease_until=NULL,
-		department_count=$4,people_count=$5,scope=$6,missing_people_count=CASE WHEN (SELECT active_scope_hash FROM directory_sources WHERE tenant_key=$1 AND app_id=$2)=$7 THEN delta.missing ELSE 0 END,
+	UPDATE directory_sync_runs SET department_count=$4,people_count=$5,scope=$6,missing_people_count=CASE WHEN (SELECT active_scope_hash FROM directory_sources WHERE tenant_key=$1 AND app_id=$2)=$7 THEN delta.missing ELSE 0 END,
 		outside_scope_count=CASE WHEN (SELECT active_scope_hash FROM directory_sources WHERE tenant_key=$1 AND app_id=$2) IS DISTINCT FROM $7 THEN delta.missing ELSE 0 END,
 		new_people_count=delta.added,
 		changed_people_count=delta.changed FROM delta WHERE id=$3`, tenant, app, job.id, len(result.Departments), len(result.People), scopeJSON, result.Scope.hash())
@@ -329,7 +328,7 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE directory_sources SET active_version=$3,active_scope_hash=$4,visible=true,
-		last_success_at=clock_timestamp(),failures=0,next_run_at=clock_timestamp()+($5::double precision * interval '1 second')
+		last_success_at=statement_timestamp(),failures=0,next_run_at=statement_timestamp()+($5::double precision * interval '1 second')
 		WHERE tenant_key=$1 AND app_id=$2`, tenant, app, job.id, result.Scope.hash(), s.cfg.Interval.Seconds())
 	if err != nil {
 		return err
@@ -339,6 +338,16 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 		if err != nil {
 			return err
 		}
+	}
+	// The staged rows, delta and source pointer must all roll back if this
+	// transaction spends the rest of its lease preparing the replacement.
+	finished, err := tx.Exec(ctx, `UPDATE directory_sync_runs SET state='succeeded',finished_at=clock_timestamp(),lease_until=NULL
+		WHERE id=$1 AND claim_version=$2 AND state='running' AND lease_until>clock_timestamp()`, job.id, job.version)
+	if err != nil {
+		return err
+	}
+	if finished.RowsAffected() != 1 {
+		return errLostClaim
 	}
 	return tx.Commit(ctx)
 }

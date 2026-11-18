@@ -92,7 +92,17 @@ func scanRun(row pgx.Row) (run, error) {
 	err := row.Scan(&item.ID, &item.Trigger, &item.State, &item.CreatedAt, &item.StartedAt, &item.FinishedAt,
 		&item.DepartmentCount, &item.PeopleCount, &item.MissingPeopleCount, &item.OutsideScopeCount, &item.NewPeopleCount,
 		&item.ChangedPeopleCount, &item.FailureReason, &item.Scope)
+	item.CreatedAt = item.CreatedAt.UTC()
+	normalizeTimes(item.StartedAt, item.FinishedAt)
 	return item, err
+}
+
+func normalizeTimes(times ...*time.Time) {
+	for _, value := range times {
+		if value != nil {
+			*value = value.UTC()
+		}
+	}
 }
 
 type sourceStatus struct {
@@ -115,6 +125,7 @@ func (s *Service) status(ctx context.Context, tx pgx.Tx) (sourceStatus, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
+	normalizeTimes(status.LastSuccess, status.NextRun)
 	return status, err
 }
 

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,7 +47,8 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		publicOrigin: fixtureOrigin, appID: "cli_fixture", appSecret: "fixture-only",
 		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour, credentialsGeneration: 1, botHeartbeatTTL: 30 * time.Second,
 	}
-	handler, workers, err := newBackend(ctx, pool, cfg, feishuFixture{})
+	fixture := &feishuFixture{}
+	handler, workers, err := newBackend(ctx, pool, cfg, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,41 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)
-	wantStatus(do("POST", syncPath, "", admin, csrf), http.StatusAccepted)
+	fixture.resigned.Store(true)
+	submitted := do("POST", syncPath, "", admin, csrf)
+	wantStatus(submitted, http.StatusAccepted)
+	var syncRun struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &syncRun); err != nil || syncRun.ID == 0 {
+		t.Fatalf("invalid synchronization response: %s", submitted.Body.String())
+	}
+	for {
+		status := do("GET", fmt.Sprintf("%s/%d", syncPath, syncRun.ID), "", admin, "")
+		wantStatus(status, http.StatusOK)
+		var progress struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(status.Body.Bytes(), &progress); err != nil || progress.State == "failed" {
+			t.Fatalf("directory synchronization failed: %s", status.Body.String())
+		}
+		if progress.State == "succeeded" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("directory synchronization did not finish: %s", status.Body.String())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	people := do("GET", peoplePath, "", admin, "")
+	wantStatus(people, http.StatusOK)
+	if !strings.Contains(people.Body.String(), `"directory_status":"resigned"`) ||
+		!strings.Contains(people.Body.String(), `"account_status":"active"`) ||
+		!strings.Contains(people.Body.String(), `"platform_roles":[]`) {
+		t.Fatalf("directory status changed the local account or roles: %s", people.Body.String())
+	}
+	wantStatus(do("GET", "/api/v1/me", "", member, ""), http.StatusOK)
 	wantStatus(do("GET", "/api/v1/system/accounts", "", member, ""), http.StatusForbidden)
 	grantPath := "/api/v1/system/role-grants"
 	grant := do("POST", grantPath, fmt.Sprintf(`{"accountId":%q,"role":"audit_viewer"}`, target.AccountID), admin, csrf)
@@ -279,9 +315,9 @@ func backendTestPool(t *testing.T, ctx context.Context, dsn string) *pgxpool.Poo
 	return pool
 }
 
-type feishuFixture struct{}
+type feishuFixture struct{ resigned atomic.Bool }
 
-func (feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
+func (f *feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 	var body string
 	switch r.URL.Path {
 	case "/oauth/v3/token":
@@ -318,7 +354,7 @@ func (feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 	case "/open-apis/contact/v3/departments/team/children":
 		body = `{"code":0,"data":{"items":[],"has_more":false}}`
 	case "/open-apis/contact/v3/users/find_by_department":
-		body = `{"code":0,"data":{"items":[{"open_id":"ou_member","name":"Example member","status":{"is_activated":true},"department_ids":["team"]}],"has_more":false}}`
+		body = fmt.Sprintf(`{"code":0,"data":{"items":[{"open_id":"ou_member","name":"Example member","status":{"is_activated":true,"is_resigned":%t},"department_ids":["team"]}],"has_more":false}}`, f.resigned.Load())
 	default:
 		return nil, fmt.Errorf("unexpected fixture route")
 	}
