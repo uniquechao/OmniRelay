@@ -3,6 +3,42 @@
   outline: 2px solid var(--or-focus);
   outline-offset: 2px;
 }
+/* Route headings receive focus for assistive technology. */
+:is(#login-heading, #page-heading)[tabindex="-1"]:focus { outline: none; }
+
+::view-transition-group(root) {
+  animation-duration: 240ms;
+  animation-timing-function: ease-in-out;
+}
+@property --theme-reveal-radius {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+:root[data-theme-reveal]::view-transition { pointer-events: none; }
+:root[data-theme-reveal]::view-transition-group(root) { animation: none; }
+:root[data-theme-reveal]::view-transition-old(root),
+:root[data-theme-reveal]::view-transition-new(root) { mix-blend-mode: normal; }
+:root[data-theme-reveal]::view-transition-old(root) { animation: none; }
+:root[data-theme-reveal]::view-transition-new(root) {
+  mask-image: radial-gradient(circle at var(--theme-reveal-x) var(--theme-reveal-y),
+    black max(0px, calc(var(--theme-reveal-radius) - 40px)),
+    transparent var(--theme-reveal-radius));
+  animation: theme-reveal 440ms cubic-bezier(.38,.08,.25,1) both;
+}
+@keyframes theme-reveal {
+  from { --theme-reveal-radius: 0px; }
+  to { --theme-reveal-radius: var(--theme-reveal-end); }
+}
+button.theme-toggle[data-theme-icon] {
+  inline-size: var(--theme-toggle-size, 44px);
+  min-block-size: var(--theme-toggle-size, 44px);
+  padding: 0;
+}
+.theme-toggle .icon { width: 20px; height: 20px; }
+@media (min-width: 521px) and (pointer: fine) {
+  .top-tools .theme-toggle { --theme-toggle-size: 34px; }
+}
 :where(input[type="radio"],input[type="checkbox"]) { accent-color: var(--or-primary); }
 :is(.button,.btn) {
   --control-fill: var(--or-secondary-fill);

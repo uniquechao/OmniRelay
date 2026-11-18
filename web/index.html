@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniRelay · 项目工作台</title>
+<link rel="icon" href="omni-relay-avatar.png">
+<link rel="stylesheet" href="omni-relay-colors.css">
+<script src="omni-relay-theme.js"></script>
+<link rel="stylesheet" href="workbench.css">
+<link rel="stylesheet" href="omni-relay-ui.css">
+<link rel="stylesheet" href="omni-relay-content.css">
+<link rel="stylesheet" href="omni-relay-interactions.css">
+<link rel="stylesheet" href="omni-relay-system.css">
+</head>
+<body>
+<!-- Navigation symbols from the existing OmniGrid icon sprite. -->
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="nav-system" viewBox="0 0 24 24"><path d="m12 3 7 3v5c0 4.7-3.2 8-7 10-3.8-2-7-5.3-7-10V6l7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-workbench" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v9h13v-9M9.5 19v-5h5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-projects" viewBox="0 0 24 24"><path d="M3.5 7.5h17v11h-17zM3.5 7.5 6 4.5h5l2 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-logs" viewBox="0 0 24 24"><path d="M5 3.5h10l4 4v13H5zM15 3.5v4h4M8.5 11h7M8.5 15h7M8.5 18h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="nav-settings" viewBox="0 0 24 24"><path d="M9.7 3.8 10.4 2h3.2l.7 1.8 2 .8 1.8-.8 2.2 2.2-.8 1.8.8 2L22 10.5v3l-1.7.7-.8 2 .8 1.8-2.2 2.2-1.8-.8-2 .8-.7 1.8h-3.2l-.7-1.8-2-.8-1.8.8L3.7 18l.8-1.8-.8-2L2 13.5v-3l1.7-.7.8-2L3.7 6l2.2-2.2 1.8.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="nav-components" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="action-expand" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="action-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="nav-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="9" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 20c0-4 2.2-6 5.5-6s5.5 2 5.5 6M14 15c3.8-.8 6.5 1.2 6.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="status-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5m0 3v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+  <symbol id="status-danger" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m9 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+</svg>
+<div class="shell" hidden>
+  <aside class="rail" id="workspace-rail">
+    <a class="brand" href="#/workbench" aria-label="OmniRelay 工作台总览">
+      <img class="wide-logo" src="omni-relay-logo-bicolor.png" width="2172" height="724" alt="">
+      <img class="compact-logo" src="omni-relay-avatar.png" width="1254" height="1254" alt="">
+    </a>
+    <div>
+      <p class="rail-caption">工作空间</p>
+      <nav class="nav" id="side-navigation" aria-label="工作台主导航">
+        <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
+        <details class="nav-group" id="system-nav">
+          <summary aria-label="系统管理"><svg class="icon" aria-hidden="true"><use href="#nav-system"/></svg><span>系统管理</span>
+            <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
+          </summary>
+          <div class="nav-children">
+            <a href="#/system/users" data-system="users">用户管理</a>
+            <a href="#/system/roles" data-system="roles">角色权限</a>
+            <a href="#/system/audit" data-system="audit">审计日志</a>
+          </div>
+        </details>
+      </nav>
+    </div>
+    <div class="rail-tools">
+      <button class="rail-toggle" id="rail-toggle" type="button" aria-controls="side-navigation" aria-expanded="true" aria-label="收起侧栏" title="收起侧栏"><svg class="icon toggle-icon" aria-hidden="true"><use href="#action-expand"/></svg><span>收起侧栏</span></button>
+      <div class="rail-foot">
+        <button class="account-trigger" type="button" popovertarget="account-menu" aria-label="用户菜单" title="用户菜单">
+          <span class="account-avatar" aria-hidden="true">用</span><span class="account-trigger-name">用户</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+  <div class="rail-resizer" id="rail-resizer" role="separator" aria-label="调整侧栏宽度" aria-orientation="vertical" aria-controls="workspace-rail" aria-valuemin="52" aria-valuemax="166" aria-valuenow="166" tabindex="0" title="向左拖动收起，向右拖动展开"></div>
+  <div class="workspace">
+    <header class="top">
+      <div class="mobile-nav">
+        <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
+        <select class="select" id="mobile-nav" aria-label="工作台主导航">
+          <option value="workbench">工作台总览</option>
+          <optgroup label="系统管理">
+            <option value="system/users">用户管理</option>
+            <option value="system/roles">角色权限</option>
+            <option value="system/audit">审计日志</option>
+          </optgroup>
+        </select>
+      </div>
+      <nav class="crumb" id="breadcrumb" aria-label="当前位置"></nav>
+      <div class="top-tools">
+        <button id="theme" class="button neutral theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button>
+        <button class="account-trigger mobile-account" type="button" popovertarget="account-menu" aria-label="用户菜单">用</button>
+      </div>
+    </header>
+    <main class="page" id="page"></main>
+    <div class="toast-region" id="toast-region" aria-label="浮动提示"></div>
+    <div class="sr-only" id="toast-status" role="status" aria-live="polite"></div>
+    <div class="sr-only" id="toast-urgent" role="alert"></div>
+  </div>
+</div>
+<div class="account-menu" id="account-menu" popover="auto" aria-label="用户菜单">
+  <div class="account-identity"><span class="account-avatar" aria-hidden="true">用</span><div><strong>用户</strong><span></span></div></div>
+  <button type="button" data-account="profile">个人信息</button>
+  <button type="button" data-account="password">修改密码</button>
+  <button type="button" data-account="logout">退出</button>
+</div>
+<main class="login-page" id="login-page" hidden aria-labelledby="login-heading">
+  <div class="login-brand">
+    <canvas class="login-motion" aria-hidden="true"></canvas>
+    <p class="login-tagline">让工作脉络自然浮现</p>
+    <div class="login-visual">
+      <div class="login-orbit" aria-hidden="true"><span></span><span></span><span></span><span></span><img src="omni-relay-avatar.png" width="160" height="160" alt=""></div>
+      <ul class="login-features" aria-label="OmniRelay 产品特性">
+        <li>
+          <div class="login-feature-head">
+            <span class="login-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8.5-4 6m8-6 4 6m-10 3h8"/><circle cx="12" cy="6.5" r="2.5"/><circle cx="5.5" cy="17.5" r="2.5"/><circle cx="18.5" cy="17.5" r="2.5"/></svg>
+            </span>
+            <strong>上下文聚合</strong>
+          </div>
+          <p>串联项目进展、任务与对话，让团队共享同一条工作脉络。</p>
+        </li>
+        <li>
+          <div class="login-feature-head">
+            <span class="login-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a2 2 0 0 0 1-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1v4l4-4h2m-5-5h9m1 3 3 3-3 3m-4-3h7"/></svg>
+            </span>
+            <strong>飞书联动</strong>
+          </div>
+          <p>在飞书查进展、收简报、分派任务，让协作在对话中继续。</p>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <section class="login-content">
+    <div class="login-top"><button class="button neutral theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button></div>
+    <div class="login-entry">
+      <div class="login-logo"><img src="omni-relay-logo-bicolor.png" width="195" height="65" alt="OmniRelay"></div>
+      <h1 id="login-heading" tabindex="-1">登录工作台</h1>
+      <form class="login-form" id="password-login" method="post" action="/auth/login">
+        <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required disabled></div>
+        <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required disabled></div>
+        <button class="button primary login-button" type="submit" disabled>登录</button>
+      </form>
+      <div class="login-divider"><span>或</span></div>
+      <button class="button neutral login-button" type="button" id="feishu-login">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M3 11.2 20.3 3a.65.65 0 0 1 .9.8l-4.6 16.5a.7.7 0 0 1-1.1.4l-4.5-3.4-2.6 2.3a.6.6 0 0 1-1-.4l.2-4.6 9.7-8.2-11.2 6-3.1-.5c-.6-.1-.6-.5 0-.7Z"/></svg>
+        使用飞书登录
+      </button>
+      <p id="login-feedback" class="login-feedback" role="status" hidden></p>
+    </div>
+  </section>
+</main>
+<main id="session-status" class="page" aria-live="polite"><p>正在检查会话…</p><button type="button" class="button" hidden>重试</button></main>
+<script src="omni-relay-ui.js"></script>
+<script src="omni-relay-login-motion.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

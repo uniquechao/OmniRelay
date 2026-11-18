@@ -82,8 +82,7 @@ window.OmniRelaySystem = (() => {
   function render(page) {
     const controls = page === 'users' ?
       '<div class="system-heading-actions"><button class="button primary" type="button" data-directory-sync title="同步飞书组织与用户">同步</button>' +
-      '<button class="button" type="button" data-directory-details>同步详情</button></div>' :
-      page === 'roles' ? '<button type="button" class="button primary" data-admin-action="grant">授权用户</button>' : '';
+      '<button class="button" type="button" data-directory-details>同步详情</button></div>' : '';
     const list = page === 'users' ? '<div class="directory-layout"><details class="directory-org" open>' +
       '<summary>组织结构</summary><div class="directory-tree" data-directory-tree></div></details>' +
       '<section id="system-list"></section></div>' : '<section id="system-list"></section>';
@@ -206,7 +205,7 @@ window.OmniRelaySystem = (() => {
     const row = dialog.querySelector('.user-grant-editor');
     const add = dialog.querySelector('[data-admin-action="add-role"]');
     const form = dialog.querySelector('form');
-    const syncScope = row ? mountGrantFields(form,() => user) : null;
+    const syncScope = row ? mountGrantFields(form,user) : null;
     function setEditor(open) {
       row.hidden = !open;
       add.hidden = open;
@@ -234,16 +233,11 @@ window.OmniRelaySystem = (() => {
   }
 
   function showRole(role, trigger) {
-    const roster = grants.filter(grant => grant.role === role.id);
     openDialog({
       title:'角色权限', description:role.name, drawer:'standard', tone:'info', restoreFocus:() => trigger,
       body:group('授权范围',details([['范围',scopes[role.scope]],['适用条件',role.boundary]])) +
-        group('可执行操作','<ul class="admin-permissions">' + role.permissions.map(item => '<li>' + item + '</li>').join('') + '</ul>') +
-        group('当前授权',roster.length ? '<ul class="admin-grants">' + roster.map(grant => '<li><strong>' +
-          escape(findUser(grant.user).name) + '</strong><span class="aux">' + scopeLabel(grant) + '</span></li>').join('') + '</ul>'
-          : '<p class="aux">当前无用户获得此角色。</p>') +
-        '<a class="button neutral" href="#/system/users" data-open-users>去用户管理查看或撤销授权</a>'
-    }).querySelector('[data-open-users]').addEventListener('click', event => event.currentTarget.closest('dialog').close());
+        group('可执行操作','<ul class="admin-permissions">' + role.permissions.map(item => '<li>' + item + '</li>').join('') + '</ul>')
+    });
   }
 
   const grantOptions = (items, placeholder) => '<option value="">' + placeholder + '</option>' +
@@ -267,42 +261,22 @@ window.OmniRelaySystem = (() => {
     toast('success','已为' + user.name + '授予' + role.name + '。');
   }
 
-  function mountGrantFields(form,resolveUser) {
+  function mountGrantFields(form,user) {
     const project = form.elements.scope;
-    const hint = form.querySelector('[data-grant-hint]');
     function syncScope() {
-      const user = resolveUser();
       const role = findRole(form.elements.role.value);
       const projectRole = role?.scope === 'project';
       const previous = project.value;
-      const available = user?.projects ?? [];
+      const available = user.projects;
       project.closest('label').hidden = !projectRole;
       project.required = Boolean(projectRole);
       project.disabled = !projectRole;
       project.innerHTML = grantOptions(available.map(id => [id,projects[id]]),'选择项目');
       if (available.includes(previous)) project.value = previous;
-      if (hint) hint.textContent = projectRole ? '可选范围为该用户已加入的项目。' : role ? '授权适用范围为本组织。' : '';
     }
-    form.addEventListener('change',event => { if (event.target !== project) syncScope(); });
+    form.elements.role.addEventListener('change',syncScope);
     syncScope();
     return syncScope;
-  }
-
-  function showGrant({ trigger, refresh }) {
-    const body = grantField('user','用户',users.filter(item => item.status === 'active').map(item => [item.id,item.name]),'选择已启用用户') +
-      grantFields() + '<p class="aux" data-grant-hint></p>';
-    const dialog = openDialog({
-      title:'授予角色', variant:'form', drawer:'standard', confirm:'确认授权', body, restoreFocus:() => trigger,
-      isDirty:form => Boolean(form.elements.role.value || form.elements.user.value),
-      onSubmit(form) {
-        const failure = saveGrant(form,findUser(form.elements.user.value));
-        if (failure) return failure;
-        refresh();
-      }
-    });
-    const form = dialog.querySelector('form');
-    mountGrantFields(form,() => findUser(form.elements.user.value));
-    form.elements.user.focus();
   }
 
   function showEvent(entry, trigger) {
@@ -436,10 +410,6 @@ window.OmniRelaySystem = (() => {
     const mounted = mountList(list,configuration(page));
     const { refresh } = mounted;
     if (page === 'users') mountDirectory(root,mounted);
-    root.querySelector('.admin-heading').addEventListener('click',event => {
-      const trigger = event.target.closest('[data-admin-action="grant"]');
-      if (trigger) showGrant({ trigger, refresh });
-    });
     list.addEventListener('click',event => {
       const trigger = event.target.closest('[data-admin-action]');
       if (!trigger) return;
@@ -453,19 +423,50 @@ window.OmniRelaySystem = (() => {
 
   function mountLogin(page, enter) {
     const trigger = page.querySelector('#feishu-login');
+    const form = page.querySelector('#password-login');
     const feedback = page.querySelector('#login-feedback');
-    trigger.addEventListener('click', () => {
+    const {username,password} = form.elements;
+
+    function clearFeedback() {
       feedback.hidden = true;
+      password.removeAttribute('aria-invalid');
+      password.removeAttribute('aria-describedby');
+    }
+
+    function completeLogin(method) {
+      record('login',method,'OmniRelay 工作台','未登录','已登录');
+      form.reset();
+      clearFeedback();
+      enter();
+    }
+
+    form.addEventListener('input',clearFeedback);
+    form.addEventListener('submit',event => {
+      event.preventDefault();
+      if (username.value.trim() === 'demo' && password.value === 'omni-demo') {
+        completeLogin('账号密码登录');
+        return;
+      }
+      feedback.dataset.tone = 'error';
+      feedback.textContent = '账号或密码不匹配，请使用页面上的演示账号。';
+      feedback.hidden = false;
+      password.setAttribute('aria-invalid','true');
+      password.setAttribute('aria-describedby',feedback.id);
+      password.focus();
+    });
+
+    trigger.addEventListener('click', () => {
+      clearFeedback();
       openDialog({
         title:'飞书登录授权', description:'模拟飞书授权确认', variant:'confirm', tone:'default',
         body:details([['登录身份',current.name + ' · 飞书示例账号'],['应用','OmniRelay'],['授权信息','基本身份资料']]),
         confirm:'同意并登录', cancelLabel:'取消授权',
         onClose(confirmed) {
           if (confirmed) {
-            record('login','飞书登录','OmniRelay 工作台','未登录','已登录');
-            enter();
+            completeLogin('飞书登录');
           } else {
             record('login','飞书登录','OmniRelay 工作台','未登录','取消授权','cancelled');
+            feedback.dataset.tone = 'warning';
             feedback.textContent = '已取消授权。你可以重新发起登录。';
             feedback.hidden = false;
           }

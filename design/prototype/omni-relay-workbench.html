@@ -235,7 +235,7 @@ td a:hover { text-decoration: underline; }
       <nav class="crumb" id="breadcrumb" aria-label="当前位置"></nav>
       <div class="top-tools">
         <span class="sample">示例数据</span>
-        <button type="button" class="button" id="theme" data-theme-toggle aria-label="切换深色主题" aria-pressed="false">深色</button>
+        <button id="theme" class="button neutral theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button>
         <button class="account-trigger mobile-account" type="button" popovertarget="account-menu" aria-label="用户菜单，苏涵">苏</button>
       </div>
     </header>
@@ -252,25 +252,55 @@ td a:hover { text-decoration: underline; }
   <button type="button" data-account="logout">退出</button>
 </div>
 <main class="login-page" id="login-page" hidden aria-labelledby="login-heading">
-  <div class="login-brand" aria-hidden="true">
-    <div class="login-orbit"><span></span><span></span><img src="omni-relay-avatar.png" width="160" height="160" alt=""></div>
+  <div class="login-brand">
+    <canvas class="login-motion" aria-hidden="true"></canvas>
+    <p class="login-tagline">让工作脉络自然浮现</p>
+    <div class="login-visual">
+      <div class="login-orbit" aria-hidden="true"><span></span><span></span><span></span><span></span><img src="omni-relay-avatar.png" width="160" height="160" alt=""></div>
+      <ul class="login-features" aria-label="OmniRelay 产品特性">
+        <li>
+          <div class="login-feature-head">
+            <span class="login-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8.5-4 6m8-6 4 6m-10 3h8"/><circle cx="12" cy="6.5" r="2.5"/><circle cx="5.5" cy="17.5" r="2.5"/><circle cx="18.5" cy="17.5" r="2.5"/></svg>
+            </span>
+            <strong>上下文聚合</strong>
+          </div>
+          <p>串联项目进展、任务与对话，让团队共享同一条工作脉络。</p>
+        </li>
+        <li>
+          <div class="login-feature-head">
+            <span class="login-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a2 2 0 0 0 1-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1v4l4-4h2m-5-5h9m1 3 3 3-3 3m-4-3h7"/></svg>
+            </span>
+            <strong>飞书联动</strong>
+          </div>
+          <p>在飞书查进展、收简报、分派任务，让协作在对话中继续。</p>
+        </li>
+      </ul>
+    </div>
   </div>
   <section class="login-content">
-    <div class="login-top"><span class="sample">演示环境</span><button class="button neutral" type="button" data-theme-toggle>深色</button></div>
+    <div class="login-top"><span class="sample">演示环境</span><button class="button neutral theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button></div>
     <div class="login-entry">
       <div class="login-logo"><img src="omni-relay-logo-bicolor.png" width="195" height="65" alt="OmniRelay"></div>
       <h1 id="login-heading" tabindex="-1">登录工作台</h1>
-      <p>使用你所在组织的飞书账号继续。</p>
-      <button class="button primary login-button" type="button" id="feishu-login">
+      <form class="login-form" id="password-login" method="post">
+        <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+        <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+        <button class="button primary login-button" type="submit">登录</button>
+      </form>
+      <p class="login-caption">演示账号 <code>demo</code> · 密码 <code>omni-demo</code></p>
+      <div class="login-divider"><span>或</span></div>
+      <button class="button neutral login-button" type="button" id="feishu-login">
         <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M3 11.2 20.3 3a.65.65 0 0 1 .9.8l-4.6 16.5a.7.7 0 0 1-1.1.4l-4.5-3.4-2.6 2.3a.6.6 0 0 1-1-.4l.2-4.6 9.7-8.2-11.2 6-3.1-.5c-.6-.1-.6-.5 0-.7Z"/></svg>
         使用飞书登录
       </button>
       <p id="login-feedback" class="login-feedback" role="status" hidden></p>
-      <p class="login-caption">使用示例账号模拟飞书授权。</p>
     </div>
   </section>
 </main>
 <script src="omni-relay-ui.js"></script>
+<script src="omni-relay-login-motion.js"></script>
 <script src="omni-relay-system.js"></script>
 <script src="vendor/quill-2.0.3.js"></script>
 <script src="vendor/markdown-it-15.0.3.min.js"></script>

@@ -5,17 +5,18 @@
 ## 交互原型
 
 - [工作台](prototype/omni-relay-workbench.html)
-- [飞书登录演示](prototype/omni-relay-workbench.html#/login)
+- [登录演示](prototype/omni-relay-workbench.html#/login)
 - [飞书 Bot 交互与卡片](prototype/omni-relay-feishu-prototype.html)
 - [色彩系统](prototype/omni-relay-color-system.html)
 - [UI 规范](specs/omni-relay-ui-standards.md)
 
-工作台、登录和卡片使用演示数据。双击 HTML 可在浏览器本地打开。整理时登录动效脚本尚未齐备，登录页使用原有静态标志图形。构建正式工作台时，源码放在工程根目录的 `web/`。
+工作台、登录和卡片使用演示数据。双击 HTML 可在浏览器本地打开。登录页提供账号密码和飞书授权演示。构建正式工作台时，源码放在工程根目录的 `web/`，按本目录最新确认的原型验收视觉、交互和功能。
 
 ## 系统设计
 
 - [系统模块与服务边界](specs/omni-relay-module-design.md)
 - [Go 主服务详细设计](specs/omni-relay-go-service-design.md)
+- [飞书 Bot 配置、登录与通讯录同步](specs/omni-relay-feishu-integration.md)
 - [Kubernetes 部署设计](specs/omni-relay-k8s-deployment-design.md)
 
 ## 品牌素材

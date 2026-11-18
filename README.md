@@ -6,7 +6,7 @@
 
 OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自托管架构。成员在群里 @ Bot 或发起私聊，就能查询项目任务、交办事项、查看当前风险。
 
-**当前处于交互原型与架构设计阶段。** 工作台、飞书登录和 Bot 卡片可以离线体验，演示数据随仓库提供。
+**工作台已实现账号登录、用户管理、组织级角色与飞书通讯录。** 项目协作和 Bot 卡片可继续使用离线原型体验。
 
 ![OmniRelay 工作台示例，展示项目进展、关键任务和阻塞事项](design/prototype/omni-relay-workbench-preview.png)
 
@@ -25,6 +25,27 @@ OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自�
 - [飞书登录演示](design/prototype/omni-relay-workbench.html#/login) · 体验模拟授权流程。
 - [飞书 Bot 卡片](design/prototype/omni-relay-feishu-prototype.html) · 试用任务查询、任务分派和项目简报三种交互。
 - [色彩系统](design/prototype/omni-relay-color-system.html) · 查看浅色、深色主题及设计色值。
+
+## 运行工作台
+
+工作台由 Go 服务同源提供。准备支持 TLS 的 PostgreSQL 和飞书自建应用，参照[环境变量模板](config/backend.env.example)向服务注入凭据。将 HTTPS 入口设置为 `OMNIRELAY_PUBLIC_ORIGIN`，并在飞书应用内登记该地址下的 `/auth/feishu/callback`。首次启动需要本应用下首位管理员的飞书 Open ID。
+
+使用账号密码登录时，设置 `OMNIRELAY_TLS_CERT_FILE` 和 `OMNIRELAY_TLS_KEY_FILE`，让 Go 监听 HTTPS。若经 Kubernetes Ingress 访问，入口到 Go 服务的连接也需使用 TLS，并验证上游证书。只在入口终止 TLS 的部署仍可提供飞书登录。避免在入口访问日志及 APM 中采集 `/auth/` 请求体或登录回调查询参数。
+
+```sh
+mkdir -p bin
+go build -o bin/omnirelay ./cmd/omnirelay
+./bin/omnirelay migrate
+./bin/omnirelay serve
+```
+
+同步通讯录后，管理员可在「系统管理 → 用户管理」开通目录人员。账号密码登录需要运维为现有有效账号单独设置密码。命令从终端无回显地读取至少 15 个字符且最多 256 字节的密码，设置或重置密码会撤销该账号的现有会话。
+
+```sh
+./bin/omnirelay password <account-id> <username>
+```
+
+组织级角色授权、撤销和用户启停经服务端鉴权并写入审计。项目级角色需要可信的 OmniGrid 项目成员解析和项目选择接口，当前运行配置中尚未接通。
 
 ## 系统架构
 
@@ -85,7 +106,7 @@ deploy/k8s/            Kubernetes 部署
 tests/                 契约测试、集成测试和样例
 ```
 
-[原型与设计索引](design/README.md)汇总可体验页面和设计资料。其余工程目录为后续实现预留。
+[原型与设计索引](design/README.md)汇总可体验页面和设计资料。
 
 ## 参与讨论
 
