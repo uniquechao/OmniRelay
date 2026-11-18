@@ -16,7 +16,7 @@ const (
 	botLeaseSeconds = 30
 	bodyFingerprint = "{}"
 	resetConnection = `connection_generation=feishu_bot_configs.connection_generation+1,
-		connection_state='unavailable', last_heartbeat_at=NULL, last_message_at=NULL`
+		connection_state='unavailable', connection_lease_until=NULL, last_heartbeat_at=NULL, last_message_at=NULL`
 	checkColumns = `id, state, credentials_generation, created_at, started_at, finished_at, results`
 )
 

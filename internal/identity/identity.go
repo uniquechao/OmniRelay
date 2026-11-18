@@ -26,7 +26,7 @@ const (
 	loginTTL      = 5 * time.Minute
 )
 
-var errNotAdmitted = errors.New("account not admitted")
+var ErrNotAdmitted = errors.New("account not admitted")
 
 type Principal struct {
 	AccountID         string `json:"account_id"`
@@ -189,7 +189,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal, err := s.feishuIdentity(r.Context(), code, verifier)
-	if errors.Is(err, errNotAdmitted) {
+	if errors.Is(err, ErrNotAdmitted) {
 		writeFailure(w, http.StatusForbidden, "login_denied")
 		return
 	}
@@ -199,7 +199,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	}
 	token := newSecret()
 	err = s.createSession(r.Context(), principal, token, cookieSecret(r, sessionCookie))
-	if errors.Is(err, errNotAdmitted) {
+	if errors.Is(err, ErrNotAdmitted) {
 		writeFailure(w, http.StatusForbidden, "login_denied")
 		return
 	}
