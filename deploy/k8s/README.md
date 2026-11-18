@@ -1,12 +1,58 @@
 # Kubernetes 部署目录
 
-资源拆分、连接、迁移、密钥与备份设计见 [OmniRelay Kubernetes 部署设计](../../design/specs/omni-relay-k8s-deployment-design.md)。
+连接、迁移、密钥、备份和网络拓扑见 [OmniRelay Kubernetes 部署设计](../../design/specs/omni-relay-k8s-deployment-design.md)。
 
-- `base/` 放 Go Deployment、Web 和工具 Service、DSH StatefulSet 与 Service、选主和网络资源，以及独立迁移 Job。
-- `overlays/staging/` 放测试飞书应用所用的入口、配置及密钥引用。
-- `overlays/production/` 放生产入口、资源和存储配置，以及生产密钥引用。
+## 目标主机工作目录
 
-目录当前用于部署文件归位。清单随阶段零验证补齐。
+在运行 Kubernetes 客户端和构建工具的目标主机，用 `workspace/OmniRelay` 保存工程。构建镜像、生成环境配置、校验清单、执行部署和验证都在目标主机运行。
+
+| 目录 | 用途 |
+| --- | --- |
+| `base/namespace/` | `omni` 命名空间 |
+| `base/minio/` | HTTPS S3 服务、PVC 与访问策略 |
+| `scripts/` | 部署、探针和读写检查 |
+| `overlays/` | 可公开且不含环境实际值的示例 |
+| `private/` | 目标主机本地目录，保存真实入口参数、镜像仓库地址、证书、凭据与覆盖文件。此目录从 Git 忽略 |
+
+真实入口域名、SSH 隧道参数、节点地址及端口、Feishu 和数据库凭据均在目标主机设置。工作负载需要的凭据通过 Kubernetes Secret 注入。外部 Nginx 和 SSH 只转发工作台及 OAuth 路由到 Go Web 服务。MinIO 仅提供集群内部 ClusterIP。
+
+## 部署顺序
+
+1. 核对 Kubernetes context 和本地制品。需要 Docker 的环境先在目标主机拉取或构建可用镜像。在私有配置里可用 `MINIO_IMAGE` 指向对应的镜像摘要或已构建的目标主机镜像。
+2. 创建 `omni` 命名空间，创建 MinIO 数据卷，再部署及验证文件存储。
+3. 配置 PostgreSQL TLS、运行和迁移身份，执行迁移 Job。
+4. 按版本发布 Go、DSH 桥和运行时，通过各自探针后，再配置目标主机的 Web NodePort。确认外部 TLS、OAuth 回调和内网依赖。
+5. 通过应用身份访问 MinIO 时，给 Go Pod 加 `omnirelay.io/s3-access: "true"`，挂载 CA，并配置仅能操作应用 bucket 的 S3 身份。
+
+### 镜像仓库直连不可用时
+
+从下文指定版本的上游制品取得与目标节点架构匹配的静态 `silo`，按上游校验清单核对后，将其放入目标主机的 `deploy/k8s/private/assets/silo/`。也可从固定摘要的上游镜像提取对应平台二进制并校验传输前后的 SHA256。在目标主机为其构建镜像，再将镜像引用写入私有环境配置。多节点部署应把构建结果推送到内部镜像仓库。
+
+```bash
+docker build --network=none \
+  -f deploy/k8s/base/minio/image.Dockerfile \
+  -t omnirelay/silo:<release> deploy/k8s/private/assets/silo
+printf 'MINIO_IMAGE=%s\n' 'omnirelay/silo:<release>' > deploy/k8s/private/minio-image.env
+```
+
+### MinIO 兼容文件存储
+
+清单使用 [PGSTY Silo 的固定版本](https://github.com/pgsty/silo/releases/tag/RELEASE.2026-11-12T00-00-00Z)。该版本兼容 MinIO 的环境变量、管理接口和 S3 API。清单按单节点部署，使用 Rancher local-path 和专用 Retain 存储类。集群采用其他存储后端时调整 StorageClass 并复用已有 PVC；首次部署前确定存储配置。
+
+```bash
+context="$(kubectl config current-context)"
+deploy/k8s/scripts/apply-object-storage.sh "$context"
+deploy/k8s/scripts/verify-object-storage.sh "$context"
+deploy/k8s/scripts/configure-object-storage-access.sh "$context"
+```
+
+部署脚本在目标主机 `private/minio/` 下生成凭据及内部 CA，复用已有凭据。凭据及 TLS 私钥通过 K8s Secret 提供，CA 公钥通过 ConfigMap 提供。S3 域名为 `minio.omni.svc`。服务以 HTTPS 监听 9000，管理控制台关闭。目录中的 CA 和服务证书需要按有效期轮换。备份对象和 CA 时继续使用受控的私有存储。
+
+验证脚本通过目标主机回环地址临时转发，校验证书链和服务名，创建或复用私有 bucket `omnirelay-files`，写入和读回临时对象，再验证匿名访问被拒绝并删除测试对象。首次部署可传 `--restart` 验证 Pod 重建后仍能读回同一对象。已有业务流量时安排重建窗口。
+
+应用授权脚本使用目标主机上的 `mcli`，可用 `MINIO_ADMIN_CLIENT` 指定可执行文件。它创建或复用 `omnirelay-files` 和该 bucket 专用的读写身份，验证写入、读回和禁止管理操作，并生成 `Secret/omnirelay-s3` 给 Go。管理凭据只用于初始化。应用权限包含对象读写和分段上传，普通应用请求没有删除权限。
+
+Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文只包含 Go 源码、Web 资源和模块清单，避免把目标主机的 `private/` 目录传给构建器。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
 
 ## 飞书 Bot Lease
 

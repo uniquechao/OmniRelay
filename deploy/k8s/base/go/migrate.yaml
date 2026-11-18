@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: omnirelay-migrate-
+  namespace: omni
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        omnirelay.io/postgres-access: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: OMNIRELAY_GO_IMAGE
+          imagePullPolicy: IfNotPresent
+          args: ["migrate"]
+          envFrom:
+            - secretRef:
+                name: postgres-migrate
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: pg-ca
+              mountPath: /run/pg-ca
+              readOnly: true
+      volumes:
+        - name: pg-ca
+          configMap:
+            name: postgres-ca

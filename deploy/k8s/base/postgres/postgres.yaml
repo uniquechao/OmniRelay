@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: omni
+spec:
+  selector:
+    app.kubernetes.io/name: omnirelay-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: omni
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: omnirelay-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: omni
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: omnirelay-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: omnirelay-postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:17.12-alpine
+          imagePullPolicy: IfNotPresent
+          args:
+            - postgres
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/run/postgres-tls/tls.crt
+            - -c
+            - ssl_key_file=/run/postgres-tls/tls.key
+          envFrom:
+            - secretRef:
+                name: postgres-bootstrap
+          env:
+            - name: POSTGRES_DB
+              value: omnirelay
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: scram-sha-256
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-d", "omnirelay"]
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-d", "omnirelay"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-d", "omnirelay"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            - name: tls
+              mountPath: /run/postgres-tls
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+            defaultMode: 0444
+        - name: tls
+          secret:
+            secretName: postgres-tls
+            defaultMode: 0440
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: omni-local-retain
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: omni
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: omnirelay-postgres
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              omnirelay.io/postgres-access: "true"
+      ports:
+        - protocol: TCP
+          port: 5432

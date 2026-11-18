@@ -1,8 +1,8 @@
 # OmniRelay Kubernetes 部署设计
 
-2026-11-18 · v0.1 架构评审稿
+2026-11-18 · v0.2
 
-适用于首期 500 人以内、单飞书组织的部署。Go 与 DSH 各部署一个副本。PostgreSQL 保存 OmniRelay 运行数据，OmniGrid Business API 保存正式项目和任务。生产优先接入公司已有 PostgreSQL，已有服务无法满足连接或备份要求时，再使用集群内 PostgreSQL Operator。模块与应用接口见 [Go 主服务详细设计](omni-relay-go-service-design.md)。
+适用于首期 500 人以内、单飞书组织的部署。Go 与 DSH 各部署一个副本。PostgreSQL 保存 OmniRelay 运行数据和文件索引，MinIO 兼容的 S3 服务保存文件内容，OmniGrid Business API 保存正式项目和任务。生产优先接入公司已有 PostgreSQL，已有服务无法满足连接或备份要求时，再使用集群内 PostgreSQL Operator。模块与应用接口见 [Go 主服务详细设计](omni-relay-go-service-design.md)。
 
 ## 1. 资源与网络拓扑
 
@@ -10,31 +10,36 @@
 flowchart LR
     Browser["工作台浏览器"]
     Feishu["飞书 OAuth · Bot"]
+    Gateway["公网 Nginx<br/>TLS / Certbot"]
+    Tunnel["持久 SSH 隧道<br/>systemd 管理"]
     Grid["OmniGrid Business API"]
     Model["模型 API"]
     PG[("PostgreSQL 主库<br/>omnirelay 数据库")]
     Backup[("独立备份存储")]
 
-    subgraph NS["Kubernetes · omnirelay-prod"]
-        Edge["HTTPS 入口"]
-        Web["omnirelay-web<br/>ClusterIP"]
+    subgraph NS["Kubernetes · omni"]
+        Edge["私有 Web 转发端口<br/>NodePort"]
+        Web["omnirelay-web<br/>Go Web 服务"]
         Tools["omnirelay-tools<br/>内部 ClusterIP"]
         Go["omnirelay Go<br/>Deployment × 1"]
         Bridge["omnirelay-dsh<br/>内部 ClusterIP + 执行桥"]
         DSH["DSH<br/>StatefulSet × 1"]
         Home[("DSH home PVC")]
+        S3["minio<br/>ClusterIP · HTTPS S3"]
+        S3Data[("MinIO 数据 PVC")]
         Migrate["迁移 Job · 发布时运行"]
         Lease["Bot 与调度 Lease"]
 
         Edge --> Web --> Go
         DSH --> Home
+        Go -->|"文件读写"| S3 --> S3Data
         Go --> Lease
         Go -->|"执行／取消"| Bridge
         Bridge -->|"Pod 内 stdio JSON-RPC"| DSH
         Bridge -->|"逐轮工具回调"| Tools --> Go
     end
 
-    Browser --> Edge
+    Browser --> Gateway --> Tunnel --> Edge
     Browser -->|"用户授权跳转"| Feishu
     Go <-->|"长连接 · OAuth · 发送 API"| Feishu
     Go -->|"PostgreSQL TLS"| PG
@@ -43,6 +48,7 @@ flowchart LR
     Migrate -->|"PostgreSQL TLS"| PG
     PG -->|"基础备份与 WAL"| Backup
     Home -->|"一致性会话备份"| Backup
+    S3Data -->|"对象与版本备份"| Backup
 ```
 
 资源名和端口是首期约定，可按目标集群规范替换。预发布和生产使用独立命名空间、飞书应用、回调地址、运行库及密钥引用。环境之间通过数据库、身份和网络规则隔离。
@@ -50,16 +56,17 @@ flowchart LR
 | 资源 | 用途与生命周期 |
 | --- | --- |
 | `Deployment/omnirelay` | 一个 Go Pod，持有工作台、OAuth、飞书长连接、组织同步、调度、执行 Worker 和发送 Worker。任务状态保存在 PostgreSQL，Pod 可替换 |
-| `Service/omnirelay-web` | ClusterIP，示例端口 8080。集群 HTTPS 入口仅把工作台和登录路由转给该端口 |
+| `Service/omnirelay-web` | Go 的工作台和 OAuth 路由。目标主机的私有入口配置为该服务提供 NodePort，供现有 SSH 隧道转发 |
 | `Service/omnirelay-tools` | ClusterIP，示例端口 9443。Go 的独立工具监听器，只向 DSH 桥开放 |
 | `StatefulSet/omnirelay-dsh` | 一个 DSH Pod，运行执行桥和 DSH。执行桥管理本 Pod 内的子进程，通过管道交换 JSON-RPC |
 | `Service/omnirelay-dsh` | ClusterIP，示例端口 9443。Go 通过私有 HTTPS 调用 |
 | `Service/omnirelay-dsh-headless` | StatefulSet 的 Headless Service，设为 `.spec.serviceName`，用于 DSH Pod 稳定网络标识 |
+| `StatefulSet/minio` 与 `Service/minio` | MinIO 兼容对象存储，单副本，独立 PVC，S3 通过集群内部 HTTPS 9000 访问。维护版本采用 [PGSTY Silo](https://github.com/pgsty/silo)，沿用 MinIO 的 S3 协议和环境变量 |
 | DSH home PVC | 按环境配置存储类、容量、扩容和备份策略。CSI 支持时选用 `ReadWriteOncePod`，确保单 Pod 写入。卷上保存指定会话与运行状态。profile 与插件随镜像和配置发布 |
 | `Job/omnirelay-migrate-<release>` | 每次发布按需运行，使用该版本镜像内的迁移命令和 SQL，迁移成功后推进发布 |
 | `Lease/omnirelay-leader` | Go 实例竞争飞书长连接和定时触发权，覆盖滚动更新交接。授权收口到命名空间里的指定资源 |
 
-工作台入口使用独立域名，例如 `relay.example.com`，OAuth 回调精确登记为 `/auth/feishu/callback` 的完整 HTTPS URL。Bot 使用 Go 出站连接飞书，生产入口只开放 Web 与登录面。内部 Service 经集群 DNS 发现，TLS 验证使用对应服务证书或集群工作负载身份。 [Kubernetes StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Kubernetes Lease](https://kubernetes.io/docs/concepts/architecture/leases/)
+工作台入口使用独立域名，例如 `relay.example.com`。公网 Nginx 终止 TLS，由 Certbot 续期和重载。持久 SSH 隧道通过 systemd 自动启动和重连，将流量送到集群的私有 Web NodePort。公网、SSH 和节点地址及端口由目标主机维护。启用密码登录时，Nginx 到 Go 的上游连接仍须使用并校验 HTTPS。OAuth 回调精确登记为 `/auth/feishu/callback` 的完整 HTTPS URL。Bot 使用 Go 出站连接飞书，生产入口只开放 Web 与登录面。内部 Service 经集群 DNS 发现，TLS 验证使用对应服务证书或集群工作负载身份。 [Kubernetes StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Kubernetes Lease](https://kubernetes.io/docs/concepts/architecture/leases/)
 
 ## 2. Go、DSH 和 PostgreSQL 的连接
 
@@ -79,12 +86,18 @@ flowchart LR
 
 所有工作领取、幂等查询和应用写入走主库地址。首期使用 Go 连接池。按滚动发布期间同时运行的 Pod 数和迁移 Job 预留总连接配额，监控连接池等待和慢事务。数据库管理员创建应用库和固定的不可登录 schema 所有者角色。迁移身份切换到所有者角色执行 DDL。运行身份获得所需的 schema、表和序列权限，由所有者为后续创建的对象设定默认授权。连接凭据轮换时保留对象所有权。 [PostgreSQL TLS 与主机名校验](https://www.postgresql.org/docs/current/libpq-ssl.html) · [PostgreSQL 默认授权](https://www.postgresql.org/docs/current/sql-alterdefaultprivileges.html) · [CloudNativePG 读写服务](https://cloudnative-pg.io/docs/current/architecture/)
 
+### Go 与 MinIO
+
+- Go 使用 `minio.omni.svc:9000` 的 S3 HTTPS 接口，挂载部署生成的 CA 公钥并校验服务名。Go 通过按 bucket 授权的应用凭据读写私有 bucket。预留文件索引记录对象键、大小、类型、校验值和访问范围，访问由 Go 复核业务权限。
+- 管理员凭据仅用于初始化 bucket、分配应用权限和维护。Go 及 DSH 使用各自的运行身份。浏览器与 DSH 的文件访问经过 Go，集群外入口只转发工作台和 OAuth。
+- 初始数据卷为单节点本地卷，PVC 使用独立的 Retain 存储类。重建 Pod 可重挂同一卷。节点或磁盘故障需从独立对象备份恢复，应用和存储部署分别验收。
+
 ### 网络放行与滚动交接
 
 | 发起侧 | 目标 |
 | --- | --- |
 | HTTPS 入口 | Go Web 端口 |
-| Go Pod | DSH 桥、PostgreSQL、飞书 API／长连接、OmniGrid Business API、Kubernetes API（续租） |
+| Go Pod | DSH 桥、PostgreSQL、MinIO HTTPS、飞书 API／长连接、OmniGrid Business API、Kubernetes API（续租） |
 | DSH Pod | Go 工具端口、批准的模型出口 |
 | 迁移 Job | PostgreSQL |
 | 备份组件 | 各自的数据／快照接口与备份存储 |
@@ -99,7 +112,8 @@ Go 的启动探针检查配置加载，存活探针检查进程，就绪探针�
 
 | 配置类别 | 归属与下发 | 变更方式 |
 | --- | --- | --- |
-| 非敏感部署配置 | Git 中保存按环境区分的配置，构建或发布渲染 ConfigMap。Go 包含公开地址、DSH 私有地址、数据库主机／库名、容量上限等。DSH 包含 profile、工具白名单和模型端点 | 配置和镜像绑定发布版本。启动时校验，配置变化触发 Pod 更新 |
+| 公开模板与脚本 | Git 保存通用清单、占位示例和复现步骤。发布与构建在目标主机的 workspace 工程目录运行 | 发布记录关联代码版本和镜像标识 |
+| 真实环境配置 | 目标主机工程目录的 `deploy/k8s/private/`。包含入口域名、SSH 和节点地址及端口、集群和存储覆盖配置 | 依据目标主机上的配置渲染或注入 K8s，目录从 Git 忽略 |
 | 业务运行配置 | PostgreSQL。包括项目群绑定、简报时区与计划、组织同步设置、授权及可审计开关 | 有权管理员在系统里调整。带版本和审计，执行时读当前配置，暂停与撤权在发送前复核 |
 | 应用与数据库密钥 | 公司密钥系统为首选来源，运行时注入 Pod。仅使用 Kubernetes Secret 时配置静态加密、限制读取权限，并保留受控恢复渠道 | 一类凭据单独轮换。记录密钥版本引用和更新时间，滚动更新对应组件，验证新凭据后撤销旧凭据 |
 | 运行身份和证书 | Go、DSH 和迁移 Job 使用各自的 ServiceAccount，按需发放 API 权限和工作负载证书 | Go 仅获选主所需 API 权限。没有 Kubernetes API 调用的组件关闭自动挂载 ServiceAccount 令牌 |
@@ -109,6 +123,7 @@ Go 的启动探针检查配置加载，存活探针检查进程，就绪探针�
 - **Go Pod**取得飞书应用 OAuth／Bot 凭据、业务 API 服务身份、数据库运行身份以及 Go 的私有服务证书。
 - **DSH Pod**内分开注入。执行桥持有私有接口证书及短时工作授权，DSH 运行时持有模型凭据和会话卷。
 - **迁移 Job**取得迁移数据库身份和数据库 CA。发布流程在 Job 成功后记录结果并按集群策略回收 Job。
+- **MinIO**由 Kubernetes Secret 注入管理员凭据和 S3 服务 TLS 私钥。Go 通过单独的应用 Secret 和 CA ConfigMap 访问私有 bucket。
 - **备份组件**使用专用备份身份访问对象存储。恢复演练使用独立的恢复身份和地址。
 
 飞书应用密钥、数据库凭据、证书私钥、用户 OAuth 令牌和回调授权码使用受控注入或进程内处理。日志、Git 和普通诊断输出仅记录脱敏标识。数据库轮换如需让新旧 Pod 短时共存，可先创建等权新登录身份，更新引用并滚动发布，确认旧连接池已排空后撤销旧身份。飞书密钥轮换需要按应用的实际换钥行为验证登录、目录读取和 Bot 重连。 [Kubernetes Secret 管理实践](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
@@ -129,7 +144,8 @@ Go 的启动探针检查配置加载，存活探针检查进程，就绪探针�
 | --- | --- | --- |
 | **PostgreSQL** | 基础备份加持续 WAL 归档，使用托管 PITR 或 Operator 提供的备份方案。备份存储与运行节点分别管理，按公司策略加密与保留 | 恢复到指定时间点。检查 schema、组织与账号、队列和交付记录。记录实际可恢复点及耗时 |
 | **DSH 会话卷** | 在暂停新 turn、排空和确认会话落盘后做 PVC 快照或一致性文件备份。快照能力取决于目标存储类，跨故障域保留可恢复副本 | 校验 DSH 版本、profile 与会话引用。缺失或版本不匹配的会话按当前权限重建上下文 |
-| **部署配置与密钥** | Git 保留环境配置和镜像引用。密钥由公司密钥系统恢复或重新签发。备份记录关联发布版本、数据库恢复点和 DSH 备份时间 | 在恢复环境核对回调域名、角色、密钥引用、CA 和网络出口。演练环境使用测试应用与凭据 |
+| **MinIO 对象** | 同步到独立存储或周期备份对象与版本，单独记录 bucket 策略和恢复点 | 在隔离环境按对象键与校验值读回，并对照 PostgreSQL 文件索引 |
+| **部署配置与密钥** | Git 保存公共模板和镜像版本，真实环境配置由目标主机受控备份，密钥由公司密钥系统恢复或重新签发。备份记录关联发布版本、数据库恢复点和 DSH 备份时间 | 在恢复环境核对回调域名、角色、密钥引用、CA 和网络出口。演练环境使用测试应用与凭据 |
 
 PostgreSQL 和 DSH 会话卷按各自的时间点恢复。运行账本保存在 PostgreSQL。会话内容缺失时，Go 先用原编号核对外部写入和发送，确认后从有权数据重建。建议首轮演练以运行账本 **RPO ≤ 1 小时、RTO ≤ 2 小时恢复受理**为目标，试点后按实测调整。记录 WAL 归档延迟、最近可恢复点、会话备份状态和最近恢复演练结果。 [PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html) · [Kubernetes VolumeSnapshot](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) · [CloudNativePG 对象存储备份](https://cloudnative-pg.io/plugin-barman-cloud/docs/concepts/)
 
@@ -142,7 +158,8 @@ PostgreSQL 和 DSH 会话卷按各自的时间点恢复。运行账本保存在 
 
 ## 6. 上线验收
 
-- Go 访问 PostgreSQL 主库、DSH 私有桥和 OmniGrid。工作台能完成飞书登录，飞书群 @ 能从新 Bot 进入并回复原话题。
+- MinIO 的 S3 就绪探针通过。验收写入、读回、匿名拒绝和重建 Pod 后读回，确认对外入口只转发 Web。
+- Go 访问 PostgreSQL 主库、MinIO、DSH 私有桥和 OmniGrid。工作台能完成飞书登录，飞书群 @ 能从新 Bot 进入并回复原话题。
 - 工具回调从 DSH 到 Go 工作正常。外部访问、错误工作负载身份、过期 turn 授权和其他工作的授权按预期拒绝。
 - Go 滚动更新时验证 Lease 交接和事件重投去重。DSH Pod 重建后验证卷恢复及并发中断。PostgreSQL 暂时不可用时验证入站确认逻辑、连接恢复和原操作对账。
 - 在临时环境验证迁移 Job 失败与重跑、旧程序兼容，以及运行账号对新增表和序列的访问。演练 PostgreSQL 时间点恢复和 DSH 会话卷恢复，记录可恢复点、恢复耗时和未结回执。

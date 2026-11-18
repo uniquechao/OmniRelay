@@ -8,3 +8,6 @@
 /backups/
 *.pem
 *.key
+
+# Target-host configuration and credentials.
+/deploy/k8s/private/

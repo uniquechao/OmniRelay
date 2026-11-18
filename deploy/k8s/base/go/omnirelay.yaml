@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: omnirelay-web
+  namespace: omni
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: omnirelay
+  ports:
+    - name: web
+      port: 8080
+      targetPort: web
+      nodePort: WEB_NODEPORT
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omnirelay
+  namespace: omni
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: omnirelay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: omnirelay
+        omnirelay.io/postgres-access: "true"
+        omnirelay.io/s3-access: "true"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: omnirelay
+          image: OMNIRELAY_GO_IMAGE
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          envFrom:
+            - configMapRef:
+                name: omnirelay-runtime
+            - secretRef:
+                name: postgres-runtime
+            - secretRef:
+                name: omnirelay-s3
+            - secretRef:
+                name: omnirelay-feishu
+                optional: true
+          env:
+            - name: OMNIRELAY_S3_ENDPOINT
+              value: https://minio.omni.svc:9000
+            - name: OMNIRELAY_S3_BUCKET
+              value: omnirelay-files
+            - name: OMNIRELAY_S3_CA_FILE
+              value: /run/s3-ca/ca.crt
+          ports:
+            - name: web
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: web
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: web
+            timeoutSeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: web
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 96Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: pg-ca
+              mountPath: /run/pg-ca
+              readOnly: true
+            - name: s3-ca
+              mountPath: /run/s3-ca
+              readOnly: true
+      volumes:
+        - name: pg-ca
+          configMap:
+            name: postgres-ca
+        - name: s3-ca
+          configMap:
+            name: minio-ca

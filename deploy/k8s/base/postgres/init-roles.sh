@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+psql --quiet -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+\getenv migrate_password OMNI_PG_MIGRATE_PASSWORD
+\getenv runtime_password OMNI_PG_RUNTIME_PASSWORD
+CREATE ROLE omni_migrate LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB PASSWORD :'migrate_password';
+CREATE ROLE omni_runtime LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB PASSWORD :'runtime_password';
+REVOKE ALL ON DATABASE omnirelay FROM PUBLIC;
+GRANT CONNECT ON DATABASE omnirelay TO omni_migrate, omni_runtime;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+ALTER SCHEMA public OWNER TO omni_migrate;
+GRANT USAGE ON SCHEMA public TO omni_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE omni_migrate IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO omni_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE omni_migrate IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO omni_runtime;
+SQL
