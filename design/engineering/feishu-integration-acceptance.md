@@ -79,3 +79,59 @@ D1–D3 的后端流程已有本地 PostgreSQL 和合成飞书响应的定向证
 3. 对范围内部门用 `GET /departments/{id}/children` 传 `fetch_child=false`，逐页核对 `open_department_id` 和 `parent_department_id`。用 `GET /users/find_by_department` 按 `department_id` 逐页核对 `items[].open_id` 和 `department_ids`。对仅直接授权的人员用 `GET /users/{open_id}` 核对 `data.user.open_id` 与 scopes 中的 ID 一致。两条人员查询均传 `user_id_type=open_id&department_id_type=open_department_id`。分别核对应用身份下 `department_ids` 的省略与空数组行为，以及 `contact:user.department:readonly` 是否影响可见部门归属。 [子部门](https://open.feishu.cn/document/server-docs/contact-v3/department/children) · [直属人员](https://open.feishu.cn/document/server-docs/contact-v3/user/find_by_department) · [单个人员](https://open.feishu.cn/document/server-docs/contact-v3/user/get)
 4. 确认 `status` 字段与 `contact:user.employee:readonly` 或应用已有通讯录权限的实际关系。使用激活、冻结、主动退出、已确认离职和状态缺失的测试样本，核对 `is_activated`、`is_frozen`、`is_unjoin`、`is_exited` 和 `is_resigned`。只有明确的 `is_resigned=true` 表示已核实离职。主动退出映射为 `inactive`，没有足够状态字段时为 `unknown`。核对同名、多部门和调岗后的路径，确认其中一个部门撤权后，范围外的路径从目录消失。 [用户资源与状态](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/contact-v3/user/field-overview)
 5. 先记录一版可见快照，分别演练同范围临时失败、移除单独授权人员、部门收窄和撤回 API 权限。观察相同范围下旧版本仍返回 200，确认范围变化后旧版本返回 409，完成后置范围复查才恢复可见。对照已开通成员本地账号状态、角色、现有会话和未开通成员，确认目录变化只影响目录显示。记录前后版本、范围计数、字段的存在性和类型、UTC 时间、请求 ID、飞书请求 ID、HTTP 状态及平台错误码。人员与部门使用固定匿名代号，仅保存脱敏结果。
+
+## 预发布三链路执行与证据 20261117-2e4862a
+
+本 issue 按用户确认的范围，以已有本地证据、接入说明和取证工具完成交付。真实预发布环境验证已从本次完成条件中移除，以下真实平台项目仍为待验证。
+
+截至 2026-11-18，本次工作环境无 OmniRelay 预发布入口、专用应用凭据、集群授权及测试账号/群的接入信息。下表各项真实平台状态均为**待验证**。应用管理员通过部署秘密管理设施下发凭据，并提供可访问的 HTTPS 入口、授权的预发布命名空间、专用成员和群。按上面的资源清单核实已审批和发布的权限、应用可用范围、目录读取范围和精确回调地址。部署参见 [Kubernetes 接入说明](../../deploy/k8s/README.md)。
+
+仓库测试版本为 `f450021`。官方飞书 Go SDK 锁定在 `github.com/larksuite/oapi-sdk-go/v3 v3.13.0`（MIT），Kubernetes 客户端为 `k8s.io/client-go v0.35.0`（Apache-2.0）。验收时从待部署二进制的 `go version -m` 输出核对这两个模块版本，仅记录对应行。
+
+| 顺序与验收项 | 预发布操作和完成判据 | 真实状态 |
+| --- | --- | --- |
+| 1 · B1–B3、B5 | 管理员读取初始关闭配置，运维提交检测。确认 `tenant_token`、`bot_info` 通过，仍显示关闭且 `last_message_at=null`。重复提交同键核对任务复用，记录配置版本、检测 ID 和阶段结果。保留此时的应用权限、可用范围和已发布版本摘要。 | 待验证 |
+| 2 · O1–O2 | 用已开通启用成员从有权页面真机登录，验证 303 回原页及 `/api/v1/me` 200。取消后重试。分别用未开通、停用、异组织成员发起登录，记录平台拦截位置和 OmniRelay 实际收到回调时的结果。原浏览器在内存中重放已消费回调，确认 400 且没有新会话。退出后复用旧会话访问 `/api/v1/me` 得 401。采集时仅记录路径、状态和错误枚举。 | 待验证 |
+| 3 · D1–D3 | 结合上面的通讯录真机核验，完成限制部门、单独授权个人、多部门和调岗操作。基线记录树和人员同版。对同一授权范围只在后续分页注入临时失败，预期同步失败且合法旧快照仍为 200。发布授权收窄及撤回后分别触发同步，在确认变化时检查旧版查询 409 和当前查询无撤权数据，并检查已打开页面的列表、筛选及详情清除。恢复后完整同步出一份新快照。 | 待验证 |
+| 4 · M1–M2、X1 身份 | 管理员保存开关，观察首次握手，随后在飞书保存长连接方式并发布 `im.message.receive_v1`。首条合规消息前确认连接在线、收信时间为空。用第 2 步中同一成员分别私聊和群 @ 本 Bot，核对各自 `1/1/1`、Web 账号匹配及本代次收信时间。用无关群消息、@ 其他对象和 Bot 消息核对零新增。使用同一 `message_id` 的实际重投核对事件和工作仍各一条。记录受理成功与故障投递的回执状态、服务端接收至回执耗时和平台是否重投。 | 待验证 |
+| 5 · M3、X1 独立性 | 在双副本上分别演练 Lease 丢失、滚动更新、进程重启和断线恢复。将 Lease 持有者、数据库连接代次、接收/回执时间和计数放在同一条时间线上。核实旧持有者的晚到回调被存储拒绝，且新代次真实事件能提交。关闭 Bot 后重新从授权码开始登录并运行一次目录同步，确认两者成功。 | 待验证 |
+| 6 · B4、X2 | 轮换 Secret，递增凭据代次。旧检测只保留历史，旧代次活动任务应为零，当前状态须由新检测和新连接生成。用新键复测检测，重新换码、读取目录和验证 Bot 重连及收信。新代次收到真实消息前应无 `last_message_at`。检查日志、审计、截图和 APM 的最终留存内容，附脱敏检查结果。 | 待验证 |
+
+回执耗时以 SDK 接收到事件至返回 ACK 的窗口为准。SQL 输出中的 `received_at` 与 `last_message_at` 用来关联事件和当前代次，不能用两者的差值充当 ACK 耗时。飞书请求 ID 和回执耗时优先取平台或受控的预发布诊断，采集时仅保留 ID、状态和时长。当前仓库验收工具只覆盖本地线协议计时和数据库记录，真实回执计时及飞书请求 ID 尚无证据。异组织授权若被飞书拦在回调前，应记录为平台拒绝，并把服务端真实异组织回调场景保留待验证。
+
+### 入站证据查询
+
+使用预发布只读数据库账号，以 `PGSERVICE` 选择已配置 TLS 的连接。通过验收进程环境注入以下查询参数，避免将实值写入命令历史或验收材料。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `OMNIRELAY_EVIDENCE_APP_ID` | 本次应用 App ID |
+| `OMNIRELAY_EVIDENCE_TENANT_KEY` | 本次组织的 Tenant Key |
+| `OMNIRELAY_EVIDENCE_MESSAGE_ID` | 在受控平台诊断中定位的消息 ID，重投前后复用同一个值 |
+| `OMNIRELAY_EVIDENCE_ACCOUNT_ID` | 从同成员 `/api/v1/me` 的 `principal.account_id` 取得，仅比较一致性。只核对过滤或检查代次时设为空字符串 |
+
+```sh
+psql -Xq -f tests/integration/feishu_staging_evidence.sql
+```
+
+期望第一行能定位到应用配置。对成功入站，按 `event_count/work_count/pending_route_count` 记录 `1/1/1`，并检查 `matches_web_account` 和事件代次。对已确认投递的过滤消息应是 `0/0/0`。重投前后保留两次结果，用同一个匿名事件代号关联；需要证明平台实际发出重投时，还应附平台或回执诊断记录。查询结果不包含这些输入标识或消息正文。保存状态、计数、UTC 时间、配置版本及代次即可。
+
+### 本次本地证据
+
+执行时间为 2026-11-18T06:04Z 至 2026-11-18T06:10Z。
+
+- PostgreSQL 16.15 隔离实例，Go 1.26.11。Bot 配置、并发检测和凭据代次、OAuth 准入、目录同步和重启恢复、入站去重及旧代次拒绝的定向数据库用例均通过，数据库用例无跳过。飞书响应为受控测试数据。
+- 官方 SDK v3.13.0 对本地 WebSocket 的成功、数据库失败、超时和重投试验均通过。四次回执分别为 200、500、500、200，WebSocket 往返约 53 ms、1.5 ms、2.30 s、2.7 ms。Lease 验证使用本地测试服务；真实集群当选与断线尚待演练。
+- 使用真实 PostgreSQL 运行[只读验收查询](../../tests/integration/feishu_staging_evidence.sql)，有事件的样本输出 `1/1/1` 且账号匹配，无事件的样本输出 `0/0/0`。两次输出均只含状态、时间、代次和计数。
+- Chrome 157.0.8103.50 连接真实 Go HTTPS 接口和隔离 PostgreSQL，使用受控授权页完成取消、拒绝、暂不可用、成功回原页面和退出后 401。另 4 项浏览器回归以及 Bot、目录客户端的 6 项接口回归通过，均无跳过。截图为取消后回到登录页的本地场景，表单为空。 [桌面浅色 1280×800](evidence/20261117-2e4862a/cancelled-desktop-light.png) · [移动端深色 390×844](evidence/20261117-2e4862a/cancelled-mobile-dark.png)
+
+向 Go 测试进程注入隔离的 `OMNIRELAY_TEST_DATABASE_URL`，浏览器用例另需 `OMNIRELAY_PLAYWRIGHT_MODULE` 和 `OMNIRELAY_CHROME`。若 Chrome 因套接字路径过长退出，缩短浏览器临时目录路径后重试。
+
+```sh
+go test ./cmd/omnirelay ./internal/directory ./internal/feishu ./tests/contract \
+  -run 'Test(BackendFeishu|FeishuBot|FeishuInbox|FeishuConnection|SynchronizationClaimsPublicationAndAccess|ScheduledSynchronizationRecoversAfterRestart|Collect|ReadScope|MissingContactActivation|ContactErrorClassification|SDKWorker|Lease|ConnectionRestarts|TrustedMessageMapping)' -count=1 -v
+node --test --test-name-pattern='取消与失败|后退缓存|拒绝未知|密码登录' tests/integration/feishu_login_browser.test.mjs
+node --test tests/contract/directory_client.test.mjs tests/contract/feishu_bot_client.test.mjs
+```
+
+真实记录逐项填写验收编号、版本、角色、UTC 时间、操作、OmniRelay 请求 ID、飞书请求 ID（缺失时注明）、预期、实际、结论和相对证据路径。保留测试账号和群的匿名代号。禁用 OAuth 页面自动 HAR、追踪与录屏，截图从已回到工作台的页面采集，并排除账号标识或敏感 URL。

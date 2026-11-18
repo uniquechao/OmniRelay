@@ -50,9 +50,10 @@ go test ./internal/feishu -run 'Test(SDKWorker|Lease|ConnectionRestarts|TrustedM
 go test ./tests/contract -run 'TestFeishu(Inbox|Connection)' -count=1 -v
 ```
 
-issue 10 使用授权的预发布应用与测试会话完成平台验收。
+使用授权的预发布应用与测试会话执行[三链路验收](../../design/engineering/feishu-integration-acceptance.md#预发布三链路执行与证据-20261117-2e4862a)。发布前由独立迁移 Job 执行 `omnirelay migrate`，并对两副本检查 `/readyz`。两个副本须使用同一预发布数据库、飞书应用身份和凭据代次。确认 HTTPS 入口证书有效，且调试跟踪、入口及 APM 已过滤 OAuth 回调查询串、请求凭据和响应令牌。
 
 1. 启动两个 Go 副本，开启 Bot，观察 `holderIdentity`、连接代次和运行状态。等待首次握手后，在飞书开发者后台保存长连接方式并发布 `im.message.receive_v1`。
 2. 验证同组织用户私聊和明确 @ 当前 Bot 的群消息。核对消息 ID、话题 ID、回复消息 ID 和 `last_message_at`。同时验证其他 Bot、无关 @ 及不匹配来源被过滤。
-3. 依次验证停用、滚动交接、凭据换代和断线重连。核对旧代次停止入站，替换代次开始时清空旧收信时间。中断连接后核对状态变化和心跳失效，恢复后核对新的握手与心跳。
+3. 依次验证停用、滚动交接、Lease 丢失、持有者进程重启和断线重连。逐次记录两副本角色、Lease 持有者、接管前后的数据库代次及心跳，核对替换代次开始时清空旧收信时间。单独暂停持有者续租并保持候选者可访问 Kubernetes API，待接管后恢复旧进程。在可控的晚到回调实验中记录旧持有者提交失败和零新增事件/工作。候选者接管本身只证明选主，旧代次拒绝提交还须核对存储结果。
 4. 在隔离环境注入数据库提交失败和超过回调预算的等待，记录失败回执、飞书平台是否重投以及同一消息的工作记录数量。证据仅记录脱敏事件标识、版本、时间、响应状态和耗时。
+5. 在维护窗口轮换预发布 App Secret。保持 App ID、租户、回调地址一致，退出旧副本并将新 Secret 与递增的 `OMNIRELAY_FEISHU_CREDENTIALS_GENERATION` 一并下发后，再恢复双副本和流量。旧代次副本不能用来回滚。需要恢复旧二进制时，先核实兼容性并继续使用当前有效 Secret 及代次。恢复服务后用新幂等键做一次检测，重新走 OAuth 换码、通讯录同步和 Bot 入站。
