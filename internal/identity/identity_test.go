@@ -203,14 +203,16 @@ func TestOAuthSessionLifecycleWithPostgres(t *testing.T) {
 		switch r.URL.String() {
 		case "https://accounts.feishu.cn/oauth/v3/token":
 			exchanges.Add(1)
-			if err := r.ParseForm(); err != nil {
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Error(err)
 			}
-			verifier := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
-			if r.Method != http.MethodPost || base64.RawURLEncoding.EncodeToString(verifier[:]) != challenge ||
-				r.Form.Get("client_id") != cfg.AppID || r.Form.Get("client_secret") != cfg.AppSecret ||
-				r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "code-ok" ||
-				r.Form.Get("redirect_uri") != cfg.PublicOrigin+"/auth/feishu/callback" {
+			verifier := sha256.Sum256([]byte(payload["code_verifier"]))
+			if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" ||
+				base64.RawURLEncoding.EncodeToString(verifier[:]) != challenge ||
+				payload["client_id"] != cfg.AppID || payload["client_secret"] != cfg.AppSecret ||
+				payload["grant_type"] != "authorization_code" || payload["code"] != "code-ok" ||
+				payload["redirect_uri"] != cfg.PublicOrigin+"/auth/feishu/callback" {
 				t.Error("token exchange request did not match OAuth transaction")
 			}
 			if rejectExchange.Load() {

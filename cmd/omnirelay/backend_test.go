@@ -404,19 +404,23 @@ func (f *feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 	var body string
 	switch r.URL.Path {
 	case "/oauth/v3/token":
-		if err := r.ParseForm(); err != nil {
-			return nil, err
-		}
 		token := "tenant-fixture"
-		if r.Form.Get("grant_type") == "authorization_code" {
+		if r.Header.Get("Content-Type") == "application/json" {
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
 			origin := f.callbackOrigin
 			if origin == "" {
 				origin = fixtureOrigin
 			}
-			if r.Form.Get("code_verifier") == "" || r.Form.Get("redirect_uri") != origin+"/auth/feishu/callback" {
+			if payload["grant_type"] != "authorization_code" || payload["code_verifier"] == "" ||
+				payload["redirect_uri"] != origin+"/auth/feishu/callback" {
 				return nil, fmt.Errorf("incorrect OAuth exchange")
 			}
-			token = "fixture-access-token-" + r.Form.Get("code")
+			token = "fixture-access-token-" + payload["code"]
+		} else if r.ParseForm() != nil || r.Form.Get("grant_type") != "client_credentials" {
+			return nil, fmt.Errorf("incorrect app token exchange")
 		}
 		body = fmt.Sprintf(`{"code":0,"access_token":%q,"token_type":"Bearer"}`, token)
 	case "/open-apis/authen/v1/user_info":

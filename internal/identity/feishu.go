@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -69,26 +70,32 @@ func (s *Service) authorizationURL(state, verifier string) string {
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(digest(verifier))},
 		"code_challenge_method": {"S256"},
 	}
-	if s.cfg.TenantKey != "" {
+	if s.cfg.TenantKey == "" {
+		query.Set("prompt", "consent")
+	} else {
 		query.Set("target_tenant", s.cfg.TenantKey)
 	}
 	return authorizeEndpoint + "?" + query.Encode()
 }
 
 func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Principal, error) {
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"client_id":     {s.cfg.AppID},
-		"client_secret": {s.cfg.AppSecret},
-		"redirect_uri":  {s.callback},
-		"code":          {code},
-		"code_verifier": {verifier},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	// Feishu v3 documents JSON as well as form encoding for authorization-code exchange.
+	payload, err := json.Marshal(map[string]string{
+		"grant_type":    "authorization_code",
+		"client_id":     s.cfg.AppID,
+		"client_secret": s.cfg.AppSecret,
+		"redirect_uri":  s.callback,
+		"code":          code,
+		"code_verifier": verifier,
+	})
 	if err != nil {
 		return Principal{}, errFeishu
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return Principal{}, errFeishu
+	}
+	req.Header.Set("Content-Type", "application/json")
 	var token struct {
 		Code        *int   `json:"code"`
 		AccessToken string `json:"access_token"`

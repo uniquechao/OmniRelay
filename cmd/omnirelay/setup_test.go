@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -29,16 +31,22 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 	}
 	var providerCalls, saves, verified atomic.Int32
 	bothVerifying := make(chan struct{})
+	challenges := make(map[string]string)
 	provider := setupProviderFunc(func(r *http.Request) (*http.Response, error) {
 		providerCalls.Add(1)
 		var body string
 		switch r.URL.Path {
 		case "/oauth/v3/token":
-			if err := r.ParseForm(); err != nil || r.Form.Get("client_id") != credentials.AppID ||
-				r.Form.Get("client_secret") != credentials.AppSecret ||
-				r.Form.Get("redirect_uri") != origin+"/auth/feishu/callback" ||
-				len(r.Form.Get("code_verifier")) != 43 {
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || r.Header.Get("Content-Type") != "application/json" ||
+				payload["grant_type"] != "authorization_code" || payload["client_id"] != credentials.AppID ||
+				payload["client_secret"] != credentials.AppSecret || payload["redirect_uri"] != origin+"/auth/feishu/callback" ||
+				len(payload["code_verifier"]) != 43 {
 				t.Error("unexpected OAuth token exchange")
+			}
+			verifierHash := sha256.Sum256([]byte(payload["code_verifier"]))
+			if issued := challenges[payload["code"]]; issued == "" || base64.RawURLEncoding.EncodeToString(verifierHash[:]) != issued {
+				t.Error("token exchange verifier does not match the challenge issued for its browser")
 			}
 			body = `{"code":0,"access_token":"fixture_token","token_type":"Bearer"}`
 		case "/open-apis/authen/v1/user_info":
@@ -103,7 +111,7 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		auth, err := url.Parse(payload["authorization_url"])
-		if err != nil || auth.Host != "accounts.feishu.cn" || auth.Query().Has("target_tenant") ||
+		if err != nil || auth.Host != "accounts.feishu.cn" || auth.Query().Has("target_tenant") || auth.Query().Get("prompt") != "consent" ||
 			auth.Query().Get("code_challenge_method") != "S256" || auth.Query().Get("code_challenge") == "" {
 			t.Fatal("invalid setup OAuth authorization URL")
 		}
@@ -112,7 +120,9 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 			cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].Path != "/" {
 			t.Fatal("setup login was not securely bound to the browser")
 		}
-		return auth.Query().Get("state"), cookies[0]
+		state := auth.Query().Get("state")
+		challenges["fixture_code_"+state] = auth.Query().Get("code_challenge")
+		return state, cookies[0]
 	}
 	firstState, firstCookie := start()
 	secondState, secondCookie := start()
@@ -121,7 +131,7 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 		t.Fatal("provider identity was not required before saving")
 	}
 	callback := func(state string, cookie *http.Cookie) *httptest.ResponseRecorder {
-		return request(http.MethodGet, "/auth/feishu/callback?code=fixture_code&state="+state, nil, "", cookie)
+		return request(http.MethodGet, "/auth/feishu/callback?code=fixture_code_"+state+"&state="+state, nil, "", cookie)
 	}
 	if response := callback(firstState, secondCookie); response.Header().Get("Location") != "/setup?error=authorization" {
 		t.Fatal("setup accepted a different browser")
