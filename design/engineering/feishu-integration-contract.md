@@ -2,7 +2,7 @@
 
 依据：[接入设计 §2–5](../specs/omni-relay-feishu-integration.md)、[工程标准](feishu-integration-standards.md)。本条负责固定供前后端复用的目标协议，不包含 Bot 领域、OAuth 修补或目录改造。下文标记“实施约定”的内容用于补齐设计留白；其余保留设计规定值。
 
-当前基线：Bot 管理接口尚未实现；OAuth 错误仍统一回 `error=feishu`；目录响应字段已按 `internal/directory/http.go` 固定。样例检查通过只表示契约内部一致，服务端实现负责人仍须用这些输入重放真实 HTTP。工程标准原样从原项目工作区恢复，未修改其验收要求。索引为空且无 MODULE.md，不创建模块。
+Bot 管理接口已接入 Go 服务。OAuth 错误仍统一回 `error=feishu`，目录响应字段按 `internal/directory/http.go` 固定。
 
 ## 文件与运行方式
 
@@ -48,7 +48,9 @@ POST `/api/v1/system/feishu-bot/checks` 使用 `system.read`，仍须 Origin 和
 5. `OMNIRELAY_FEISHU_CREDENTIALS_GENERATION=1` 是非敏感、单调递增的部署版本字符串，轮换 App Secret 时所有副本原子更新并递增，不使用秘密值或其哈希。新键仅合并当前代次活动任务；旧键仍回原 ID。读取、领取、续租和提交必须核对代次，禁止旧代次任务更新当前状态。旧活动任务由协调/租约恢复终结为 failed，失败码为 provider_temporarily_unavailable；不新增 cancelled 检测状态。
 6. 同键不同指纹返回 409 `idempotency_conflict`，不得覆盖绑定。当前合法正文只有 `{}`，非法正文先返回 400，因此该冲突主要是后续协议扩展的防护，不将非法正文改报 409。并发键绑定与活动任务唯一性依靠数据库事务，不能只用内存缓存。
 
-两个新增环境名及默认值已记入 `config/backend.env.example`，当前基线尚未解析它们，后端接入时须补配置读取和校验。24h 为固定服务约定，不新增环境开关。
+部署样例在 `config/backend.env.example`。服务启动前，以独立迁移角色运行 `omnirelay migrate` 应用 `0005_feishu_bot.sql`。App ID 和租户标识用于隔离数据，必须配置。缺少 App Secret 时，已有本地账号仍可管理 Bot，检测返回 `credentials_missing`，飞书登录和目录同步需要有效凭据。配置变更写入 `feishu_bot.configure` 审计事件，包含操作者、应用资源和变更版本。
+
+数据库拒绝旧凭据代次重新启用。检测任务的领取租约为 30 秒，Worker 完成令牌阶段后续租。异常退出后，同一代次的实例可在租约过期后重新领取。配置变更及凭据换代会清除当前连接的心跳和收信时间。幂等窗口固定为 24 小时。
 
 ## HTTP、OAuth 与目录约束
 
@@ -74,4 +76,4 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 
 ## 验证边界
 
-自动检查严格字段集合、类型、枚举、时间、ETag、生命周期、目录可见性、同版与去重，并用破坏后的样例验证校验器会拒绝非法结构。HTTP 决策表及幂等序列是目标协议的离线检查，不会调用实际 HTTP 服务；不证明后端已实现、不证明数据库事务/并发正确。真实服务、浏览器、数据库与 SDK 验收步骤见[跨角色验收与预发布清单](feishu-integration-acceptance.md)。
+离线样例校验严格字段集合、类型、枚举、时间、ETag、生命周期、目录可见性、同版与去重。设置 `OMNIRELAY_TEST_DATABASE_URL` 指向隔离 PostgreSQL 后，执行 `go test -v ./cmd/omnirelay ./internal/feishu ./migrations` 验证 Bot 管理 HTTP、适配器、任务并发与迁移。飞书适配测试为真实请求构造与响应解析注入测试传输层。预发布飞书应用、浏览器和 SDK 验收见[跨角色验收与预发布清单](feishu-integration-acceptance.md)。

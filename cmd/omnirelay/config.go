@@ -14,14 +14,18 @@ type configuration struct {
 	appID, appSecret, tenantKey, bootstrap string
 	syncInterval                           time.Duration
 	pageBudget                             int
+	credentialsGeneration                  int64
+	botHeartbeatTTL                        time.Duration
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
 	cfg := configuration{
-		databaseURL:  strings.TrimSpace(getenv("OMNIRELAY_DATABASE_URL")),
-		listenAddr:   ":8080",
-		syncInterval: time.Hour,
-		pageBudget:   1000,
+		databaseURL:           strings.TrimSpace(getenv("OMNIRELAY_DATABASE_URL")),
+		listenAddr:            ":8080",
+		syncInterval:          time.Hour,
+		pageBudget:            1000,
+		credentialsGeneration: 1,
+		botHeartbeatTTL:       30 * time.Second,
 	}
 	database, err := url.Parse(cfg.databaseURL)
 	if err != nil || database.Hostname() == "" || len(strings.Trim(database.Path, "/")) == 0 ||
@@ -52,8 +56,20 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 	cfg.appSecret = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_APP_SECRET"))
 	cfg.tenantKey = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_TENANT_KEY"))
 	cfg.bootstrap = strings.TrimSpace(getenv("OMNIRELAY_BOOTSTRAP_OPEN_ID"))
-	if cfg.appID == "" || cfg.appSecret == "" || cfg.tenantKey == "" {
-		return configuration{}, errors.New("Feishu app ID, app secret and tenant key are required")
+	if cfg.appID == "" || cfg.tenantKey == "" {
+		return configuration{}, errors.New("Feishu app ID and tenant key are required")
+	}
+	if generation := strings.TrimSpace(getenv("OMNIRELAY_FEISHU_CREDENTIALS_GENERATION")); generation != "" {
+		cfg.credentialsGeneration, err = strconv.ParseInt(generation, 10, 64)
+		if err != nil || cfg.credentialsGeneration < 1 || strconv.FormatInt(cfg.credentialsGeneration, 10) != generation {
+			return configuration{}, errors.New("OMNIRELAY_FEISHU_CREDENTIALS_GENERATION must be a positive decimal integer")
+		}
+	}
+	if ttl := strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_HEARTBEAT_TTL")); ttl != "" {
+		cfg.botHeartbeatTTL, err = time.ParseDuration(ttl)
+		if err != nil || cfg.botHeartbeatTTL <= 0 {
+			return configuration{}, errors.New("OMNIRELAY_FEISHU_BOT_HEARTBEAT_TTL must be a positive duration")
+		}
 	}
 	if addr := strings.TrimSpace(getenv("OMNIRELAY_LISTEN_ADDR")); addr != "" {
 		cfg.listenAddr = addr

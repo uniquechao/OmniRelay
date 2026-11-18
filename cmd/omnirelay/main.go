@@ -80,7 +80,7 @@ func run(ctx context.Context, args []string) error {
 	if command == "password" {
 		return setAccountPassword(startup, pool, args[1], args[2])
 	}
-	handler, directory, err := newBackend(startup, pool, cfg, nil)
+	handler, workers, err := newBackend(startup, pool, cfg, nil)
 	if err != nil {
 		return err
 	}
@@ -92,10 +92,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	background, cancelBackground := context.WithCancel(ctx)
 	defer cancelBackground()
-	directoryStopped := make(chan struct{})
+	workersStopped := make(chan struct{})
 	go func() {
-		defer close(directoryStopped)
-		directory.Run(background)
+		defer close(workersStopped)
+		workers.Run(background)
 	}()
 	serverDone := make(chan error, 1)
 	go func() {
@@ -107,10 +107,11 @@ func run(ctx context.Context, args []string) error {
 		slog.Info("OmniRelay HTTP backend starting; password endpoints require TLS")
 		serverDone <- server.ListenAndServe()
 	}()
+	var serveErr error
 	select {
 	case err := <-serverDone:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("HTTP listener failed on %s", cfg.listenAddr)
+			serveErr = fmt.Errorf("HTTP listener failed on %s", cfg.listenAddr)
 		}
 	case <-ctx.Done():
 	}
@@ -119,13 +120,13 @@ func run(ctx context.Context, args []string) error {
 	defer stopShutdown()
 	if err := server.Shutdown(shutdown); err != nil {
 		_ = server.Close()
-		return errors.New("HTTP shutdown deadline exceeded")
+		serveErr = errors.Join(serveErr, errors.New("HTTP shutdown deadline exceeded"))
 	}
 	select {
-	case <-directoryStopped:
-		return nil
+	case <-workersStopped:
+		return serveErr
 	case <-shutdown.Done():
-		return errors.New("directory shutdown deadline exceeded")
+		return errors.Join(serveErr, errors.New("background worker shutdown deadline exceeded"))
 	}
 }
 

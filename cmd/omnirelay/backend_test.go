@@ -32,20 +32,20 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	pool := backendTestPool(t, ctx, dsn)
 	cfg := configuration{
 		publicOrigin: fixtureOrigin, appID: "cli_fixture", appSecret: "fixture-only",
-		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour,
+		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour, credentialsGeneration: 1, botHeartbeatTTL: 30 * time.Second,
 	}
-	handler, directory, err := newBackend(ctx, pool, cfg, feishuFixture{})
+	handler, workers, err := newBackend(ctx, pool, cfg, feishuFixture{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	directoryDone := make(chan struct{})
+	workersDone := make(chan struct{})
 	go func() {
-		defer close(directoryDone)
-		directory.Run(ctx)
+		defer close(workersDone)
+		workers.Run(ctx)
 	}()
 	defer func() {
 		stop()
-		<-directoryDone
+		<-workersDone
 	}()
 
 	do := func(method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {

@@ -216,6 +216,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 	view.Admin["users"] = platformAllowed(view.Roles, "account.read")
 	view.Admin["roles"] = platformAllowed(view.Roles, "role.read")
 	view.Admin["audit"] = platformAllowed(view.Roles, "audit.read")
+	view.Admin["feishu_bot"] = platformAllowed(view.Roles, "system.read")
 	return view, nil
 }
 
@@ -281,4 +282,20 @@ func (s *Service) AuditIdentity(ctx context.Context, tx pgx.Tx, p identity.Princ
 		return err
 	}
 	return s.audit(ctx, tx, p.AccountID, action, "account", p.AccountID, version)
+}
+
+// AuthorizeBotWrite rechecks current grants in the transaction that changes Bot state.
+func (s *Service) AuthorizeBotWrite(ctx context.Context, tx pgx.Tx, p identity.Principal, action string) error {
+	if action != "system.read" && action != "system.configure" {
+		return ErrForbidden
+	}
+	if err := s.lockOrganization(ctx, tx); err != nil {
+		return err
+	}
+	return s.require(ctx, tx, p, action, "")
+}
+
+// AuditBotConfig records an actual version change in the configuration transaction.
+func (s *Service) AuditBotConfig(ctx context.Context, tx pgx.Tx, p identity.Principal, version int64) error {
+	return s.audit(ctx, tx, p.AccountID, "feishu_bot.configure", "feishu_bot", s.appID, version)
 }

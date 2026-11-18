@@ -12,12 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/directory"
+	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/store/postgres"
+	"github.com/uniquechao/OmniRelay/internal/system"
 	"github.com/uniquechao/OmniRelay/migrations"
 	"github.com/uniquechao/OmniRelay/web"
 )
 
-func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper) (http.Handler, *directory.Service, error) {
+func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper) (http.Handler, *backendWorkers, error) {
 	roles := access.New(pool, cfg.tenantKey, cfg.appID)
 	if err := roles.Bootstrap(ctx, cfg.bootstrap); err != nil {
 		if errors.Is(err, access.ErrBootstrapRequired) {
@@ -39,7 +42,19 @@ func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, tran
 	if err != nil {
 		return nil, nil, err
 	}
+	botStore := postgres.NewFeishuBot(pool, system.Config{
+		AppID: cfg.appID, TenantKey: cfg.tenantKey, CallbackURL: identityService.CallbackURL(),
+		CredentialsConfigured: cfg.appSecret != "",
+	}, cfg.credentialsGeneration, cfg.botHeartbeatTTL, roles.AuthorizeBotWrite, roles.AuditBotConfig)
+	if err := botStore.Activate(ctx); err != nil {
+		if errors.Is(err, system.ErrStaleGeneration) {
+			return nil, nil, errors.New("Feishu credentials generation is older than the database generation")
+		}
+		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
+	}
+	bot := system.New(botStore, feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport))
 	mux := http.NewServeMux()
+	bot.Register(mux, identityService.AuthenticateManagement, roles)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
 	web.Register(mux)
@@ -63,7 +78,19 @@ func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, tran
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return secureHeaders(mux), directoryService, nil
+	return secureHeaders(mux), &backendWorkers{directory: directoryService, bot: bot}, nil
+}
+
+type backendWorkers struct {
+	directory *directory.Service
+	bot       *system.Service
+}
+
+func (w *backendWorkers) Run(ctx context.Context) {
+	var running sync.WaitGroup
+	running.Go(func() { w.directory.Run(ctx) })
+	running.Go(func() { w.bot.Run(ctx) })
+	running.Wait()
 }
 
 type requestWindow struct {

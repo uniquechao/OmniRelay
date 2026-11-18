@@ -84,18 +84,22 @@ VALUES ($1, $2, CURRENT_TIMESTAMP + make_interval(secs => $3), CURRENT_TIMESTAMP
 	return tx.Commit(ctx)
 }
 
-func (s *Service) loadSession(ctx context.Context, token string) (Principal, error) {
+func (s *Service) loadSession(ctx context.Context, token string, refresh bool) (Principal, error) {
+	const fields = `account.id, account.tenant_key, account.app_id, account.open_id, account.name, account.avatar_url, session.auth_method,
+		EXISTS (SELECT 1 FROM account_passwords WHERE account_id=account.id)`
+	const conditions = `session.token_digest=$1 AND account.id=session.account_id AND account.active
+		AND account.tenant_key=$2 AND account.app_id=$3
+		AND session.expires_at>clock_timestamp() AND session.idle_expires_at>clock_timestamp()`
+	args := []any{digest(token), s.cfg.TenantKey, s.cfg.AppID}
+	query := `SELECT ` + fields + ` FROM web_sessions AS session, accounts AS account WHERE ` + conditions
+	if refresh {
+		query = `UPDATE web_sessions AS session
+			SET idle_expires_at=LEAST(session.expires_at, clock_timestamp()+make_interval(secs => $4))
+			FROM accounts AS account WHERE ` + conditions + ` RETURNING ` + fields
+		args = append(args, s.cfg.IdleTTL.Seconds())
+	}
 	var p Principal
-	err := s.pool.QueryRow(ctx, `
-UPDATE web_sessions AS session
-SET idle_expires_at = LEAST(session.expires_at, clock_timestamp() + make_interval(secs => $4))
-FROM accounts AS account
-WHERE session.token_digest = $1 AND account.id = session.account_id AND account.active
-  AND account.tenant_key = $2 AND account.app_id = $3
-  AND session.expires_at > clock_timestamp() AND session.idle_expires_at > clock_timestamp()
-RETURNING account.id, account.tenant_key, account.app_id, account.open_id, account.name, account.avatar_url, session.auth_method,
-  EXISTS (SELECT 1 FROM account_passwords WHERE account_id=account.id)
-`, digest(token), s.cfg.TenantKey, s.cfg.AppID, s.cfg.IdleTTL.Seconds()).Scan(
+	err := s.pool.QueryRow(ctx, query, args...).Scan(
 		&p.AccountID, &p.TenantKey, &p.AppID, &p.OpenID, &p.Name, &p.AvatarURL, &p.AuthMethod, &p.CanChangePassword)
 	return p, err
 }
