@@ -1,0 +1,38 @@
+[
+  {
+    "name": "new",
+    "status": 202,
+    "body": {
+      "id": "check-queued",
+      "state": "queued",
+      "reused": false
+    }
+  },
+  {
+    "name": "same-key",
+    "status": 202,
+    "body": {
+      "id": "check-queued",
+      "state": "queued",
+      "reused": true
+    }
+  },
+  {
+    "name": "other-key-active",
+    "status": 202,
+    "body": {
+      "id": "check-queued",
+      "state": "running",
+      "reused": true
+    }
+  },
+  {
+    "name": "same-key-terminal",
+    "status": 202,
+    "body": {
+      "id": "check-queued",
+      "state": "succeeded",
+      "reused": true
+    }
+  }
+]

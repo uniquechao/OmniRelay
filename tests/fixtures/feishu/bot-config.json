@@ -1,0 +1,107 @@
+[
+  {
+    "name": "disabled",
+    "status": 200,
+    "headers": {
+      "ETag": "\"bot-0\""
+    },
+    "body": {
+      "app_id": "cli_example",
+      "tenant_key": "tenant_example",
+      "credentials_configured": false,
+      "bot_name": "",
+      "oauth_callback_url": "https://relay.example.test/auth/feishu/callback",
+      "enabled": false,
+      "version": 0,
+      "connection": {
+        "state": "disabled",
+        "last_heartbeat_at": null,
+        "last_message_at": null
+      }
+    }
+  },
+  {
+    "name": "connecting",
+    "status": 200,
+    "headers": {
+      "ETag": "\"bot-1\""
+    },
+    "body": {
+      "app_id": "cli_example",
+      "tenant_key": "tenant_example",
+      "credentials_configured": true,
+      "bot_name": "OmniRelay",
+      "oauth_callback_url": "https://relay.example.test/auth/feishu/callback",
+      "enabled": true,
+      "version": 1,
+      "connection": {
+        "state": "connecting",
+        "last_heartbeat_at": null,
+        "last_message_at": null
+      }
+    }
+  },
+  {
+    "name": "connected",
+    "status": 200,
+    "headers": {
+      "ETag": "\"bot-2\""
+    },
+    "body": {
+      "app_id": "cli_example",
+      "tenant_key": "tenant_example",
+      "credentials_configured": true,
+      "bot_name": "OmniRelay",
+      "oauth_callback_url": "https://relay.example.test/auth/feishu/callback",
+      "enabled": true,
+      "version": 2,
+      "connection": {
+        "state": "connected",
+        "last_heartbeat_at": "2026-11-17T20:00:00Z",
+        "last_message_at": null
+      }
+    }
+  },
+  {
+    "name": "reconnecting",
+    "status": 200,
+    "headers": {
+      "ETag": "\"bot-3\""
+    },
+    "body": {
+      "app_id": "cli_example",
+      "tenant_key": "tenant_example",
+      "credentials_configured": true,
+      "bot_name": "OmniRelay",
+      "oauth_callback_url": "https://relay.example.test/auth/feishu/callback",
+      "enabled": true,
+      "version": 3,
+      "connection": {
+        "state": "reconnecting",
+        "last_heartbeat_at": "2026-11-17T20:00:00Z",
+        "last_message_at": "2026-11-17T20:00:01Z"
+      }
+    }
+  },
+  {
+    "name": "unavailable",
+    "status": 200,
+    "headers": {
+      "ETag": "\"bot-4\""
+    },
+    "body": {
+      "app_id": "cli_example",
+      "tenant_key": "tenant_example",
+      "credentials_configured": true,
+      "bot_name": "OmniRelay",
+      "oauth_callback_url": "https://relay.example.test/auth/feishu/callback",
+      "enabled": true,
+      "version": 4,
+      "connection": {
+        "state": "unavailable",
+        "last_heartbeat_at": "2026-11-17T20:00:00Z",
+        "last_message_at": null
+      }
+    }
+  }
+]

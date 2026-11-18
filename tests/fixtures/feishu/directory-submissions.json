@@ -1,0 +1,121 @@
+[
+  {
+    "name": "new",
+    "status": 202,
+    "body": {
+      "id": 18,
+      "trigger": "manual",
+      "state": "queued",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": null,
+      "finished_at": null,
+      "department_count": 2,
+      "people_count": 1,
+      "missing_people_count": 0,
+      "outside_scope_count": 0,
+      "new_people_count": 1,
+      "changed_people_count": 0,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "coalesced": false
+    }
+  },
+  {
+    "name": "coalesced",
+    "status": 202,
+    "body": {
+      "id": 18,
+      "trigger": "manual",
+      "state": "queued",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": null,
+      "finished_at": null,
+      "department_count": 2,
+      "people_count": 1,
+      "missing_people_count": 0,
+      "outside_scope_count": 0,
+      "new_people_count": 1,
+      "changed_people_count": 0,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "coalesced": true
+    }
+  },
+  {
+    "name": "running",
+    "status": 202,
+    "body": {
+      "id": 18,
+      "trigger": "manual",
+      "state": "running",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": null,
+      "department_count": 2,
+      "people_count": 1,
+      "missing_people_count": 0,
+      "outside_scope_count": 0,
+      "new_people_count": 1,
+      "changed_people_count": 0,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "coalesced": true
+    }
+  },
+  {
+    "name": "succeeded",
+    "status": 200,
+    "body": {
+      "id": 17,
+      "trigger": "manual",
+      "state": "succeeded",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "department_count": 2,
+      "people_count": 4,
+      "missing_people_count": 0,
+      "outside_scope_count": 0,
+      "new_people_count": 4,
+      "changed_people_count": 0,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      }
+    }
+  },
+  {
+    "name": "failed",
+    "status": 200,
+    "body": {
+      "id": 18,
+      "trigger": "manual",
+      "state": "failed",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "department_count": 2,
+      "people_count": 1,
+      "missing_people_count": 0,
+      "outside_scope_count": 0,
+      "new_people_count": 1,
+      "changed_people_count": 0,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "failure_reason": "分页不完整"
+    }
+  }
+]

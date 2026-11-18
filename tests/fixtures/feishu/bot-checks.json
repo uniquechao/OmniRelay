@@ -1,0 +1,169 @@
+[
+  {
+    "name": "queued",
+    "body": {
+      "id": "check-queued",
+      "state": "queued",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": null,
+      "finished_at": null,
+      "results": []
+    }
+  },
+  {
+    "name": "running",
+    "body": {
+      "id": "check-running",
+      "state": "running",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": null,
+      "results": []
+    }
+  },
+  {
+    "name": "succeeded",
+    "body": {
+      "id": "check-succeeded",
+      "state": "succeeded",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "passed",
+          "checked_at": "2026-11-17T20:00:01Z"
+        },
+        {
+          "name": "bot_info",
+          "state": "passed",
+          "checked_at": "2026-11-17T20:00:01Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "failed",
+    "body": {
+      "id": "check-failed",
+      "state": "failed",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "failed",
+          "checked_at": "2026-11-17T20:00:01Z",
+          "error": "credentials_rejected"
+        },
+        {
+          "name": "bot_info",
+          "state": "skipped",
+          "checked_at": "2026-11-17T20:00:01Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "credentials_missing",
+    "body": {
+      "id": "check-credentials_missing",
+      "state": "failed",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "failed",
+          "checked_at": "2026-11-17T20:00:01Z",
+          "error": "credentials_missing"
+        },
+        {
+          "name": "bot_info",
+          "state": "skipped",
+          "checked_at": "2026-11-17T20:00:01Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "credentials_rejected",
+    "body": {
+      "id": "check-credentials_rejected",
+      "state": "failed",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "failed",
+          "checked_at": "2026-11-17T20:00:01Z",
+          "error": "credentials_rejected"
+        },
+        {
+          "name": "bot_info",
+          "state": "skipped",
+          "checked_at": "2026-11-17T20:00:01Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "bot_unavailable",
+    "body": {
+      "id": "check-bot_unavailable",
+      "state": "failed",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "passed",
+          "checked_at": "2026-11-17T20:00:01Z"
+        },
+        {
+          "name": "bot_info",
+          "state": "failed",
+          "checked_at": "2026-11-17T20:00:01Z",
+          "error": "bot_unavailable"
+        }
+      ]
+    }
+  },
+  {
+    "name": "provider_temporarily_unavailable",
+    "body": {
+      "id": "check-provider_temporarily_unavailable",
+      "state": "failed",
+      "credentials_generation": "1",
+      "created_at": "2026-11-17T20:00:00Z",
+      "started_at": "2026-11-17T20:00:00Z",
+      "finished_at": "2026-11-17T20:00:01Z",
+      "results": [
+        {
+          "name": "tenant_token",
+          "state": "failed",
+          "checked_at": "2026-11-17T20:00:01Z",
+          "error": "provider_temporarily_unavailable"
+        },
+        {
+          "name": "bot_info",
+          "state": "skipped",
+          "checked_at": "2026-11-17T20:00:01Z"
+        }
+      ]
+    }
+  }
+]

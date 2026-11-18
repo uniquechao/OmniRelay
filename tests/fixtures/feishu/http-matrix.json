@@ -1,0 +1,806 @@
+[
+  {
+    "name": "read-operator",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "read-admin",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "read-member",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "member",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "read-expired",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "operator",
+      "session": "expired",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 401,
+      "error": "unauthorized"
+    }
+  },
+  {
+    "name": "patch-valid",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "patch-noop",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": false
+      }
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "patch-no-origin",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-other-origin",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "cross",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-no-csrf",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "absent",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-bad-csrf",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "invalid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-operator",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-member",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "member",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "patch-expired",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "expired",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 401,
+      "error": "unauthorized"
+    }
+  },
+  {
+    "name": "patch-no-match",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 428,
+      "error": "config_version_required"
+    }
+  },
+  {
+    "name": "patch-stale",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-9\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 412,
+      "error": "config_version_conflict"
+    }
+  },
+  {
+    "name": "patch-weak",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "W/\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 412,
+      "error": "config_version_conflict"
+    }
+  },
+  {
+    "name": "patch-wildcard",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "*",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 412,
+      "error": "config_version_conflict"
+    }
+  },
+  {
+    "name": "patch-unknown",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true,
+        "secret": "示例非法字段"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_request"
+    }
+  },
+  {
+    "name": "patch-type",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": "true"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_request"
+    }
+  },
+  {
+    "name": "patch-empty",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\"",
+      "idempotency_key": null,
+      "body": {}
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_request"
+    }
+  },
+  {
+    "name": "check-valid",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 202
+    }
+  },
+  {
+    "name": "check-no-key",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": {}
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_idempotency_key"
+    }
+  },
+  {
+    "name": "check-empty-key",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "",
+      "body": {}
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_idempotency_key"
+    }
+  },
+  {
+    "name": "check-long-key",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "body": {}
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_idempotency_key"
+    }
+  },
+  {
+    "name": "check-invalid-key",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "含空 格",
+      "body": {}
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_idempotency_key"
+    }
+  },
+  {
+    "name": "check-no-origin",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "check-cross-origin",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "cross",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "check-no-csrf",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "check-invalid-csrf",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "invalid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "check-member",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "member",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "check-expired",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "expired",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {}
+    },
+    "expected": {
+      "status": 401,
+      "error": "unauthorized"
+    }
+  },
+  {
+    "name": "check-body",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/feishu-bot/checks",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": "example-key-1",
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 400,
+      "error": "invalid_request"
+    }
+  },
+  {
+    "name": "check-found",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot/checks/check-example",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "check-not-found",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot/checks/check-missing",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 404,
+      "error": "check_not_found"
+    }
+  },
+  {
+    "name": "check-other-source",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot/checks/check-other-source",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 404,
+      "error": "check_not_found"
+    }
+  },
+  {
+    "name": "directory-stale",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/directory/people?snapshot_version=16",
+      "role": "admin",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 409,
+      "error": "directory_snapshot_changed"
+    }
+  },
+  {
+    "name": "directory-current",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/directory/people?snapshot_version=17",
+      "role": "admin",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 200
+    }
+  },
+  {
+    "name": "read-no-session",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "operator",
+      "session": "absent",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 401,
+      "error": "unauthorized"
+    }
+  },
+  {
+    "name": "patch-malformed-match",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "bot-0",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 412,
+      "error": "config_version_conflict"
+    }
+  },
+  {
+    "name": "patch-multiple-match",
+    "request": {
+      "method": "PATCH",
+      "path": "/api/v1/system/feishu-bot",
+      "role": "admin",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": "\"bot-0\", \"bot-1\"",
+      "idempotency_key": null,
+      "body": {
+        "enabled": true
+      }
+    },
+    "expected": {
+      "status": 412,
+      "error": "config_version_conflict"
+    }
+  },
+  {
+    "name": "directory-member",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/directory/people?snapshot_version=17",
+      "role": "member",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "directory-operator",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/directory/people?snapshot_version=17",
+      "role": "operator",
+      "session": "valid",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 403,
+      "error": "forbidden"
+    }
+  },
+  {
+    "name": "directory-no-session",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/system/directory/people?snapshot_version=17",
+      "role": "admin",
+      "session": "absent",
+      "origin": "absent",
+      "csrf": "absent",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 401,
+      "error": "unauthorized"
+    }
+  }
+]
