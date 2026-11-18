@@ -18,7 +18,7 @@ export function setSession(session) {
   csrfToken = typeof token === 'string' ? token : '';
 }
 
-export async function api(path, { method = 'GET', body, signal } = {}) {
+export async function api(path, { method = 'GET', body, signal, ifMatch, idempotencyKey, includeETag = false } = {}) {
   const url = new URL(path, location.origin);
   if (url.origin !== location.origin ||
       !(url.pathname.startsWith(apiBase) || url.pathname.startsWith(authBase))) {
@@ -33,6 +33,8 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
     headers.set('X-CSRF-Token', csrfToken);
   }
+  if (ifMatch !== undefined) headers.set('If-Match', ifMatch);
+  if (idempotencyKey !== undefined) headers.set('Idempotency-Key', idempotencyKey);
   if (body !== undefined) headers.set('Content-Type', 'application/json');
   const response = await fetch(url, {
     method,
@@ -44,11 +46,12 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
     signal
   });
 
-  if (response.status === 204) return null;
+  const result = data => includeETag ? { data, etag: response.headers.get('ETag') } : data;
+  if (response.status === 204) return result(null);
   const isJson = response.headers.get('Content-Type')?.includes('application/json');
   const data = isJson ? await response.json() : null;
   if (!response.ok || !isJson) throw new ApiError(response.status, data);
-  return data;
+  return result(data);
 }
 
 export async function getSession() {
@@ -74,6 +77,13 @@ export async function changePassword(currentPassword, newPassword) {
   if (session?.csrf_token ?? session?.csrfToken) setSession(session);
   return session;
 }
+
+const feishuErrors = new Map([
+  ['feishu', '飞书登录未完成。你可以重新发起登录或使用账号密码。'],
+  ['cancelled', '已取消飞书授权。你可以重新发起登录或使用账号密码。'],
+  ['denied', '当前飞书账号无法登录。请确认账号已由管理员开通并启用。'],
+  ['unavailable', '飞书登录暂不可用。请稍后重试或使用账号密码。']
+]);
 
 export function mountLogin(page, { onSuccess, returnTo = () => '/#/workbench' }) {
   const form = page.querySelector('#password-login');
@@ -180,8 +190,8 @@ export function mountLogin(page, { onSuccess, returnTo = () => '/#/workbench' })
       clearFeedback();
       if (!hasHTTPS()) {
         showFeedback(httpsRequired, { tone: 'warning' });
-      } else if (error === 'feishu') {
-        showFeedback('飞书登录未完成。你可以重新发起登录或使用账号密码。', { tone: 'warning' });
+      } else if (feishuErrors.has(error)) {
+        showFeedback(feishuErrors.get(error), { tone: 'warning' });
       }
     }
   };

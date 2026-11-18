@@ -1,5 +1,20 @@
 const system = '/api/v1/system';
 const directory = system + '/directory';
+const feishuBot = system + '/feishu-bot';
+
+export function feishuBotAPI(api) {
+  const checks = feishuBot + '/checks';
+  return {
+    status: signal => api(feishuBot, { includeETag: true, signal }),
+    save: (enabled, ifMatch, signal) => api(feishuBot, {
+      method: 'PATCH', body: { enabled }, ifMatch, includeETag: true, signal
+    }),
+    test: (idempotencyKey, signal) => api(checks, {
+      method: 'POST', body: {}, idempotencyKey, signal
+    }),
+    check: (id, signal) => api(checks + '/' + encodeURIComponent(id), { signal })
+  };
+}
 
 // Keep the design's labels here. The server separately authorizes every action.
 const roles = [
