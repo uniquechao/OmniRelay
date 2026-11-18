@@ -20,6 +20,25 @@ const (
 
 var errFeishu = errors.New("Feishu OAuth request failed")
 
+// OAuthFailure contains diagnostic metadata without request or response contents.
+type OAuthFailure struct {
+	Stage        string
+	HTTPStatus   int
+	ProviderCode int
+	cause        error
+}
+
+func (e *OAuthFailure) Error() string { return e.cause.Error() }
+func (e *OAuthFailure) Unwrap() error { return e.cause }
+
+func oauthFailure(stage string, status int, code *int, cause error) *OAuthFailure {
+	failure := &OAuthFailure{Stage: stage, HTTPStatus: status, cause: cause}
+	if code != nil {
+		failure.ProviderCode = *code
+	}
+	return failure
+}
+
 // SetupOAuth verifies the identity that will administer a previously unconfigured instance.
 type SetupOAuth struct{ provider *Service }
 
@@ -77,20 +96,20 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	}
 	status, err := s.feishuJSON(req, &token)
 	if status >= http.StatusInternalServerError || status == http.StatusTooManyRequests {
-		return Principal{}, errFeishu
+		return Principal{}, oauthFailure("token_exchange", status, token.Code, errFeishu)
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return Principal{}, ErrNotAdmitted
+		return Principal{}, oauthFailure("token_exchange", status, token.Code, ErrNotAdmitted)
 	}
 	if err != nil || token.Code == nil {
-		return Principal{}, errFeishu
+		return Principal{}, oauthFailure("token_exchange", status, token.Code, errFeishu)
 	}
 	switch *token.Code {
 	case 20003, 20004, 20008, 20010, 20024, 20049, 20065, 20066, 20071:
-		return Principal{}, ErrNotAdmitted
+		return Principal{}, oauthFailure("token_exchange", status, token.Code, ErrNotAdmitted)
 	}
 	if status != http.StatusOK || *token.Code != 0 || token.AccessToken == "" || !strings.EqualFold(token.TokenType, "Bearer") {
-		return Principal{}, errFeishu
+		return Principal{}, oauthFailure("token_exchange", status, token.Code, errFeishu)
 	}
 
 	req, err = http.NewRequestWithContext(ctx, http.MethodGet, userInfoEndpoint, nil)
@@ -117,14 +136,14 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	}
 	status, err = s.feishuJSON(req, &user)
 	if err != nil || user.Code == nil || status >= http.StatusInternalServerError || status == http.StatusTooManyRequests {
-		return Principal{}, errFeishu
+		return Principal{}, oauthFailure("user_info", status, user.Code, errFeishu)
 	}
 	switch *user.Code {
 	case 20008, 20021, 20022, 20023:
-		return Principal{}, ErrNotAdmitted
+		return Principal{}, oauthFailure("user_info", status, user.Code, ErrNotAdmitted)
 	}
 	if status != http.StatusOK || *user.Code != 0 {
-		return Principal{}, errFeishu
+		return Principal{}, oauthFailure("user_info", status, user.Code, errFeishu)
 	}
 	data := user.Data
 	// The token exchange binds the app because Feishu authenticates the client and
@@ -134,7 +153,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		(data.AppID != "" && data.AppID != s.cfg.AppID) ||
 		data.Disabled || (data.Active != nil && !*data.Active) ||
 		data.Status.Frozen || data.Status.Resigned || (data.Status.Activated != nil && !*data.Status.Activated) {
-		return Principal{}, ErrNotAdmitted
+		return Principal{}, oauthFailure("identity_validation", status, user.Code, ErrNotAdmitted)
 	}
 	return Principal{
 		TenantKey: data.TenantKey, AppID: s.cfg.AppID, OpenID: data.OpenID,

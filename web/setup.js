@@ -41,7 +41,12 @@ async function openLogin() {
 
 const result = new URLSearchParams(window.location.search);
 const oauthErrors = {
-  authorization: '飞书授权未通过或已超时。请核对应用凭据与回调地址，然后重试。',
+  authorization: '本次飞书授权已失效。请在当前浏览器重新发起授权。',
+  credentials: '飞书未接受应用凭据。请核对同一应用的 App ID 和 App Secret。',
+  denied: '飞书拒绝了当前账号或应用。请检查应用是否已启用，以及账号是否在可用范围内。',
+  token_exchange: '飞书授权码换取令牌失败。请重新发起授权，若仍失败请联系部署管理员。',
+  user_info: '已收到飞书令牌，但读取用户信息失败。请重试，若仍失败请联系部署管理员。',
+  identity: '飞书返回的账号身份不可用。请确认使用了该应用可访问的企业账号。',
   cancelled: '飞书授权已取消。准备好后可以重新提交。',
   unavailable: '暂时无法完成设置。请稍后重试。',
 };

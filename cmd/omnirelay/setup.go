@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -61,8 +62,12 @@ func validSetupApp(appID, secret string) bool {
 }
 
 func (c setupCredentials) valid() bool {
-	return validSetupApp(c.AppID, c.AppSecret) && setupIdentifier.MatchString(c.TenantKey) &&
-		strings.HasPrefix(c.Bootstrap, "ou_") && len(c.Bootstrap) > len("ou_") && setupIdentifier.MatchString(c.Bootstrap)
+	return validSetupApp(c.AppID, c.AppSecret) && validSetupIdentity(c.TenantKey) && validSetupIdentity(c.Bootstrap)
+}
+
+func validSetupIdentity(value string) bool {
+	return value != "" && len(value) <= 256 && strings.TrimSpace(value) == value &&
+		strings.IndexFunc(value, unicode.IsControl) == -1
 }
 
 func setupMAC(key []byte, purpose string) []byte {
@@ -303,8 +308,13 @@ func newWebSetupHandler(store webSetupStore, origin string,
 		credentials := setupCredentials{
 			AppID: login.AppID, AppSecret: login.AppSecret, TenantKey: principal.TenantKey, Bootstrap: principal.OpenID,
 		}
-		if err != nil || !credentials.valid() {
-			http.Redirect(w, r, "/setup?error=authorization", http.StatusSeeOther)
+		if err != nil {
+			http.Redirect(w, r, "/setup?error="+setupOAuthFailure(r.Context(), err), http.StatusSeeOther)
+			return
+		}
+		if !credentials.valid() {
+			slog.WarnContext(r.Context(), "Feishu setup authorization failed", "stage", "setup_identity_validation")
+			http.Redirect(w, r, "/setup?error=identity", http.StatusSeeOther)
 			return
 		}
 		saved, err := store.save(r.Context(), credentials)
@@ -318,4 +328,35 @@ func newWebSetupHandler(store webSetupStore, origin string,
 		}
 	})
 	return secureHeaders(mux)
+}
+
+func setupOAuthFailure(ctx context.Context, err error) string {
+	var failure *identity.OAuthFailure
+	if !errors.As(err, &failure) {
+		slog.WarnContext(ctx, "Feishu setup authorization failed", "stage", "unknown")
+		return "unavailable"
+	}
+	slog.WarnContext(ctx, "Feishu setup authorization failed", "stage", failure.Stage,
+		"http_status", failure.HTTPStatus, "provider_code", failure.ProviderCode)
+	if failure.HTTPStatus == 0 || failure.HTTPStatus == http.StatusTooManyRequests || failure.HTTPStatus >= http.StatusInternalServerError {
+		return "unavailable"
+	}
+	switch failure.ProviderCode {
+	case 20002, 20048, 20130, 20140:
+		return "credentials"
+	case 20003, 20004, 20007, 20024:
+		return "authorization"
+	case 20008, 20009, 20010, 20021, 20022, 20023, 20069:
+		return "denied"
+	}
+	switch failure.Stage {
+	case "token_exchange":
+		return "token_exchange"
+	case "user_info":
+		return "user_info"
+	case "identity_validation":
+		return "identity"
+	default:
+		return "unavailable"
+	}
 }

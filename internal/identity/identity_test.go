@@ -105,8 +105,17 @@ func TestFeishuRejectsTokenExchangeForAnotherApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.feishuIdentity(t.Context(), "one-time-code", "verifier"); !errors.Is(err, ErrNotAdmitted) {
+	_, err = svc.feishuIdentity(t.Context(), "one-time-code", "verifier")
+	if !errors.Is(err, ErrNotAdmitted) {
 		t.Fatalf("expected a generic denial for a code from another app, got %v", err)
+	}
+	var failure *OAuthFailure
+	if !errors.As(err, &failure) || failure.Stage != "token_exchange" ||
+		failure.HTTPStatus != http.StatusBadRequest || failure.ProviderCode != 20024 {
+		t.Fatal("missing sanitized Feishu token error metadata")
+	}
+	if strings.Contains(err.Error(), "private provider diagnostic") {
+		t.Fatal("error disclosed the upstream response body")
 	}
 }
 

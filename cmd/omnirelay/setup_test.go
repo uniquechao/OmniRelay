@@ -187,3 +187,17 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 		t.Fatal("normal Feishu login did not use the verified tenant after setup")
 	}
 }
+
+func TestSetupAcceptsOpaqueFeishuIdentity(t *testing.T) {
+	credentials := setupCredentials{
+		AppID: "cli_example", AppSecret: "fixture-secret",
+		TenantKey: "tenant.example", Bootstrap: "ou-example",
+	}
+	if !credentials.valid() {
+		t.Fatal("setup rejected identifiers returned by the authenticated Feishu user-info API")
+	}
+	credentials.Bootstrap = "invalid\nidentity"
+	if credentials.valid() {
+		t.Fatal("setup accepted a control character in a Feishu identifier")
+	}
+}
