@@ -52,7 +52,9 @@
           "id": "od_eng",
           "parent_id": "",
           "name": "研发",
-          "path": "研发",
+          "path": [
+            "研发"
+          ],
           "has_children": true
         }
       ],
@@ -80,11 +82,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -99,11 +106,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -118,11 +130,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -137,11 +154,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -222,7 +244,9 @@
           "id": "od_eng",
           "parent_id": "",
           "name": "研发",
-          "path": "研发",
+          "path": [
+            "研发"
+          ],
           "has_children": true
         }
       ],
@@ -250,11 +274,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -269,11 +298,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -288,11 +322,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []
@@ -307,11 +346,16 @@
           "departments": [
             {
               "id": "od_eng",
-              "path": "研发"
+              "path": [
+                "研发"
+              ]
             },
             {
               "id": "od_ops",
-              "path": "研发/运维"
+              "path": [
+                "研发",
+                "运维"
+              ]
             }
           ],
           "platform_roles": []

@@ -92,12 +92,7 @@ function directoryFields(person) {
   };
 }
 
-async function listUsers(api, options) {
-  const [accounts, grants, people] = await Promise.all([
-    collectPages(api, accountPath, options),
-    collectPages(api, grantsPath, options),
-    listDirectoryPeople(api, options)
-  ]);
+function directoryUsers(accounts, grants, people) {
   const directoryByAccount = new Map(people.filter(person => person.account_id).map(person => [person.account_id, person]));
   const accountGrants = groupGrants(grants);
 
@@ -162,106 +157,110 @@ async function listAudit(api, options) {
   }));
 }
 
-// All pages and children in one directory read use a single authorized
-// snapshot. The server rejects further reads once a newer scope is published.
-async function collectDirectory(api, path, readItems, { signal } = {}) {
+function directoryStatus(response) {
+  return {
+    snapshotVersion: response.snapshot_version,
+    visible: response.visible,
+    scope: response.scope,
+    lastSuccessAt: response.last_success_at,
+    nextRunAt: response.next_run_at
+  };
+}
+
+const snapshotChanged = () => Object.assign(new Error('组织目录已更新，请重试。'), {
+  status: 409, data: { error: 'directory_snapshot_changed' }
+});
+
+export const isDirectoryConflict = error => error.status === 409 && error.data?.error === 'directory_snapshot_changed';
+
+async function readDirectory(api, { signal, onSnapshot } = {}) {
   let snapshot;
-  async function items(params = {}) {
+  async function items(resource, params = {}) {
     const records = [];
     const limit = 200;
     let offset = 0;
     for (;;) {
       const query = new URLSearchParams({ ...params, limit, offset });
-      if (snapshot != null) query.set('snapshot_version', snapshot);
-      const page = await api(path + '?' + query, { signal });
-      if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total)) {
+      if (snapshot?.visible) query.set('snapshot_version', snapshot.snapshotVersion);
+      const page = await api(directory + '/' + resource + '?' + query, { signal });
+      if (signal?.aborted) throw signal.reason;
+      if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) ||
+          typeof page.visible !== 'boolean' ||
+          (page.visible ? !Number.isSafeInteger(page.snapshot_version) || page.snapshot_version <= 0 : page.snapshot_version !== null)) {
         throw new Error('飞书目录响应无效。');
       }
-      snapshot = page.snapshot_version;
+      const status = directoryStatus(page);
+      if (!snapshot) {
+        snapshot = status;
+        onSnapshot?.(status);
+      }
+      if (snapshot.snapshotVersion !== status.snapshotVersion) throw snapshotChanged();
       records.push(...page.items);
       offset += page.items.length;
       if (offset >= page.total) return records;
-      if (!page.items.length || offset > 10000) throw new Error('无法读取完整的飞书目录。');
+      if (!page.items.length || offset > 1000000) throw new Error('无法读取完整的飞书目录。');
     }
   }
-  try {
-    return await readItems(items);
-  } catch (error) {
-    if (error.status !== 409 || error.data?.error !== 'directory_snapshot_changed') throw error;
-    snapshot = undefined;
-    return readItems(items);
-  }
-}
-
-function listDirectoryPeople(api, options) {
-  return collectDirectory(api, directory + '/people', items => items(), options);
-}
-
-function listDepartments(api, options) {
-  return collectDirectory(api, directory + '/departments', async items => {
-    const queue = await items();
-    const departments = [];
-    const visited = new Set();
-    for (const item of queue) {
-      if (visited.has(item.id) || visited.size >= 10000) throw new Error('飞书组织结构数据无效。');
-      visited.add(item.id);
-      departments.push({ id: item.id, name: item.name, parentId: item.parent_id });
-      if (item.has_children) queue.push(...await items({ parent_id: item.id }));
+  const queue = await items('departments');
+  const departments = [];
+  const visited = new Set();
+  for (const item of queue) {
+    if (visited.has(item.id)) throw new Error('飞书组织结构数据无效。');
+    visited.add(item.id);
+    departments.push({ id: item.id, name: item.name, parentId: item.parent_id });
+    if (item.has_children) {
+      for (const child of await items('departments', { parent_id: item.id })) queue.push(child);
     }
-    return departments;
-  }, options);
+  }
+  const people = await items('people');
+  return { snapshot, departments, people };
 }
 
-function syncState(run, lastSuccess, lastSuccessAt) {
-  const statuses = new Map([
-    ['queued', 'running'], ['running', 'running'], ['succeeded', 'success'], ['failed', 'failed']
+async function directoryView(api, options) {
+  // Collect the tree and people together before publishing either to the list.
+  const [view, accounts, grants] = await Promise.all([
+    readDirectory(api, options),
+    collectPages(api, accountPath, options),
+    collectPages(api, grantsPath, options)
   ]);
-  const status = statuses.get(run?.state) ?? 'idle';
-  const phases = {
-    queued: '等待同步',
-    running: run?.scope ? '读取飞书组织与用户' : '核对飞书通讯录权限',
-    succeeded: '同步完成',
-    failed: '同步失败'
-  };
   return {
-    id: run?.id,
-    status,
-    progress: status === 'success' ? 100 : null,
-    phase: phases[run?.state],
-    startedAt: run?.started_at,
-    finishedAt: run?.finished_at,
-    lastSuccessAt,
-    departments: run?.department_count,
-    users: run?.people_count,
-    lastSuccess: lastSuccess ? {
-      startedAt: lastSuccess.started_at,
-      finishedAt: lastSuccess.finished_at,
-      departments: lastSuccess.department_count,
-      users: lastSuccess.people_count,
-      addedUsers: lastSuccess.new_people_count
-    } : null,
-    message: status === 'failed' ? '同步失败，请检查飞书应用的通讯录权限和连接状态。' : ''
+    snapshot: view.snapshot, departments: view.departments, users: directoryUsers(accounts, grants, view.people)
+  };
+}
+
+function syncRun(run) {
+  if (!run) return null;
+  return {
+    id: run.id,
+    status: run.state,
+    createdAt: run.created_at,
+    startedAt: run.started_at,
+    finishedAt: run.finished_at,
+    scope: run.scope,
+    departments: run.department_count,
+    users: run.people_count,
+    addedUsers: run.new_people_count,
+    changedUsers: run.changed_people_count,
+    missingUsers: run.missing_people_count,
+    outsideScopeUsers: run.outside_scope_count,
+    failureReason: run.failure_reason,
+    coalesced: run.coalesced === true
   };
 }
 
 async function getSync(api, { signal } = {}) {
   const response = await api(syncPath + '?limit=2', { signal });
-  const current = response.current ?? response.latest_attempt;
-  // A withdrawn scope leaves last_success_at but conceals the prior snapshot.
-  // Show previous counts only when that snapshot is still visible.
-  let lastSuccess;
-  if (response.visible && response.snapshot_version != null) {
-    lastSuccess = response.items.find(run => run.id === response.snapshot_version);
-    if (!lastSuccess) {
-      lastSuccess = await api(syncPath + '/' + encodeURIComponent(response.snapshot_version), { signal });
-    }
-  }
-  return syncState(current, lastSuccess, response.last_success_at);
+  const snapshot = directoryStatus(response);
+  const lastSuccess = snapshot.visible ? response.items.find(run => run.id === snapshot.snapshotVersion) : null;
+  return { ...snapshot, run: syncRun(response.current ?? response.latest_attempt), lastSuccess: syncRun(lastSuccess) };
+}
+
+async function getSyncSummary(api, snapshotVersion, signal) {
+  return syncRun(await api(syncPath + '/' + encodeURIComponent(snapshotVersion), { signal }));
 }
 
 async function startSync(api, { signal } = {}) {
-  const run = await write(api, syncPath, { method: 'POST', signal });
-  return syncState(run);
+  return syncRun(await write(api, syncPath, { method: 'POST', signal }));
 }
 
 const writeErrors = new Map([
@@ -299,13 +298,13 @@ function provisionAccount(api, segment, signal) {
 // Normalizes the admin view's data at the HTTP boundary. Navigation and client
 // filtering never grant capabilities, which remain controlled by the API.
 export function systemAPI(api) {
-  return async (path, { method = 'GET', body, signal } = {}) => {
+  return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion } = {}) => {
     if (method === 'GET') {
       switch (path) {
-        case system + '/users': return listUsers(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
         case system + '/audit': return listAudit(api, { signal });
-        case directory + '/departments': return listDepartments(api, { signal });
+        case directory + '/view': return directoryView(api, { signal, onSnapshot });
+        case directory + '/sync-summary': return getSyncSummary(api, snapshotVersion, signal);
         case directory + '/sync': return getSync(api, { signal });
       }
     }

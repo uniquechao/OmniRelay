@@ -1,6 +1,23 @@
+import { isDirectoryConflict } from './system-api.js';
+
 const system = '/api/v1/system';
 const titles = { users:'用户管理', roles:'角色权限', audit:'审计日志' };
 const statuses = { active:'已启用', disabled:'已停用', unprovisioned:'尚未开通' };
+const directoryStatuses = { active:'在职', inactive:'未启用', resigned:'已离职', unknown:'未知' };
+function syncFailure(reason, scopeHidden) {
+  if (/paginat|page|分页/i.test(reason ?? '')) return '飞书目录分页不完整，请重试同步。';
+  if (/credentials are missing/i.test(reason ?? '')) return '飞书应用凭据未配置，请联系管理员。';
+  if (scopeHidden || /authorization scope changed|unsupported groups/i.test(reason ?? '')) {
+    return '飞书通讯录授权已变化，请核对应用的可读范围后重试。';
+  }
+  if (/HTTP 429|request budget|deadline/i.test(reason ?? '')) return '飞书响应超时或请求受限，请稍后重试。';
+  if (/transport unavailable|HTTP 5[0-9]{2}|retries exhausted/i.test(reason ?? '')) return '飞书服务暂不可用，请稍后重试。';
+  if (/invalid|inconsistent|incomplete|orphaned|unexpected|duplicate/i.test(reason ?? '')) {
+    return '飞书目录数据未通过校验，请重试同步。';
+  }
+  return '同步未完成，请检查飞书应用的通讯录授权和连接状态后重试。';
+}
+const activeRun = run => ['queued','running'].includes(run?.status);
 const scopes = { org:'组织级', project:'项目级' };
 const eventKinds = { login:'身份认证', account:'用户管理', role:'角色授权', config:'系统配置', directory:'组织同步' };
 const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并' };
@@ -98,6 +115,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   if (!Object.hasOwn(titles,section)) throw new Error('未知的系统管理页面');
   const { escape, mountList, openDialog, toast } = window.OmniRelayUI;
   const usersPage = section === 'users';
+  const maySync = user?.adminCapabilities?.directory_sync ?? user?.roles?.includes('system_admin');
   const ifUsers = html => usersPage ? html : '';
   const request = (path,options) => api(system + path, { signal, ...options });
   const userPath = id => '/users/' + encodeURIComponent(id);
@@ -105,6 +123,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   element.innerHTML = '<header class="head admin-heading"><h1 id="page-heading" tabindex="-1">' + titles[section] + '</h1>' +
     ifUsers('<div class="system-heading-actions"><button class="button primary" type="button" data-directory-sync title="同步飞书组织与用户">同步</button>' +
     '<button class="button" type="button" data-directory-details>同步详情</button></div>') + '</header>' +
+    ifUsers('<div class="list-toolbar-line" data-directory-notice hidden><span class="aux" role="status"></span>' +
+    '<button class="button" type="button" data-directory-retry hidden>重试</button></div>') +
     ifUsers('<div class="directory-layout"><details class="directory-org" open><summary>组织结构</summary>' +
     '<div class="directory-tree" data-directory-tree></div></details>') +
     '<section id="system-list"><p class="empty" role="status">加载中…</p></section>' + ifUsers('</div>');
@@ -116,11 +136,14 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const syncButton = page.querySelector('[data-directory-sync]');
   const syncDetails = page.querySelector('[data-directory-details]');
   const treeHost = page.querySelector('[data-directory-tree]');
+  const notice = page.querySelector('[data-directory-notice]');
+  const retry = page.querySelector('[data-directory-retry]');
   const dialogs = new Set();
   let userDrawer;
   let navigationPrompt;
   if (usersPage) {
     page.querySelector('.directory-org').open = !matchMedia('(max-width: 720px)').matches;
+    syncButton.hidden = !maySync;
     syncButton.disabled = true;
     syncDetails.disabled = true;
   }
@@ -179,8 +202,18 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   let lastDetailsMarkup = '';
   let loadingSync = false;
   let requestingSync = false;
-  let refreshingDirectory = false;
+  let directoryMeta;
+  let displayedVersion;
+  let readForbidden = false;
+  let syncForbidden = false;
+  let directoryError = false;
+  let syncError = false;
+  let syncRevision = 0;
+  let syncRequest = 0;
+  let summaryRequest;
   let listVersion = 0;
+  let directoryRequest;
+  let reloadingAfterConflict = false;
   let mounted;
   const refresh = () => mounted.refresh();
   const findUser = id => rows.find(record => String(record.id) === id);
@@ -206,15 +239,19 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     const shared = { key:'system-' + section, label:titles[section], selection:false, rows };
     if (section === 'users') return {
       ...shared, itemLabel:'用户或账号', rowLabel:record => record.name,
-      includes:record => !selectedId || (record.departmentIds ?? []).some(id => selectedDepartments?.has(String(id))),
+      includes:record => !directoryMeta?.visible || !selectedId || (record.departmentIds ?? []).some(id => selectedDepartments?.has(String(id))),
       search:record => [record.name,record.id,record.org,sourceOf(record),...userRoles(record)].join(' '),
       filters:[{ key:'status', label:'账号状态', options:statuses }],
       columns:[
-        column('name','用户',record => '<strong>' + escape(record.name) + '</strong><small class="admin-cell-sub">' +
-          escape(record.status === 'unprovisioned' ? sourceOf(record) : record.id + ' · ' + sourceOf(record)) + '</small>',record => record.name),
+        column('name','用户',record => {
+          const summary = [record.status === 'unprovisioned' ? '' : record.id,sourceOf(record),record.org].filter(Boolean).join(' · ');
+          return '<strong>' + escape(record.name) + '</strong><small class="admin-cell-sub" title="' + escape(summary) + '">' +
+            escape(summary) + '</small>';
+        },record => record.name),
         column('org','组织',record => escape(record.org || '—'),record => record.org || '',true),
         column('roles','角色',record => escape(userRoles(record).join('、') || '未授权'),null,true),
-        column('status','状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知'),record => record.status),
+        column('status','账号状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知') +
+          (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : ''),record => record.status),
         column('actions','操作',record => '<div class="admin-actions">' + action('user',record.id,'查看') +
           (!isCurrent(record) && ['active','disabled'].includes(record.status) ?
             action('toggle',record.id,record.status === 'active' ? '停用' : '启用',record.status === 'active') : '') + '</div>')
@@ -250,7 +287,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   }
 
   function replaceRows(next) {
-    rows.splice(0,rows.length,...next);
+    rows.length = 0;
+    for (const row of next) rows.push(row);
     if (mounted) refresh();
     else mounted = mountList(list, configuration());
   }
@@ -260,31 +298,102 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   }
   function paintTree(departments) {
     if (!departments.some(item => String(item.id) === selectedId)) selectedId = '';
+    const focused = treeHost.contains(document.activeElement);
     selectedDepartments = organizationTree(treeHost,departments,selectedId,(id,descendants) => {
       if (id === selectedId) return;
       selectedId = id;
       selectedDepartments = descendants;
-      mounted.resetPage();
+      mounted?.resetPage();
     });
+    if (focused) treeHost.querySelector('[aria-pressed="true"]')?.focus();
+  }
+  function clearDirectory() {
+    displayedVersion = undefined;
+    selectedDepartments = undefined;
+    const focusTree = treeHost.contains(document.activeElement);
+    const focusRow = list.querySelector('tbody')?.contains(document.activeElement);
+    for (const dialog of dialogs) {
+      if (dialog !== detailsTarget?.closest('dialog') && dialog.open) dialog.close('cancel');
+    }
+    treeHost.replaceChildren();
+    if (mounted) replaceRows([]);
+    else list.replaceChildren();
+    if (focusTree || focusRow) heading.focus();
+  }
+  function observeDirectory(next) {
+    const changed = directoryMeta?.snapshotVersion !== next.snapshotVersion;
+    if (changed) {
+      syncRevision++;
+      summaryRequest = undefined;
+      if (displayedVersion !== undefined) clearDirectory();
+    }
+    directoryMeta = next;
+    return changed;
+  }
+  function denyDirectory() {
+    readForbidden = true;
+    ++listVersion;
+    directoryRequest?.abort();
+    clearTimeout(pollTimer);
+    directoryMeta = undefined;
+    sync = null;
+    clearDirectory();
+    detailsTarget?.closest('dialog')?.close('cancel');
+    updateSyncControls();
   }
   async function refreshUsers() {
+    directoryRequest?.abort();
+    const controller = new AbortController();
+    directoryRequest = controller;
+    const requestSignal = signal ? AbortSignal.any([signal,controller.signal]) : controller.signal;
     const version = ++listVersion;
-    const next = await request('/users');
-    if (inPage() && version === listVersion) replaceRows(next);
-  }
-  async function refreshDirectory() {
-    if (refreshingDirectory) return;
-    refreshingDirectory = true;
-    try {
-      const departments = await request('/directory/departments');
-      if (!inPage()) return;
-      paintTree(departments);
-      await refreshUsers();
-    } catch (error) {
-      if (inPage()) toast('error',messageOf(error,'无法刷新组织与用户，请重试。'));
-    } finally {
-      refreshingDirectory = false;
+    const current = () => inPage() && !readForbidden && version === listVersion;
+    for (let attempt = 0; current(); attempt++) {
+      try {
+        const view = await request('/directory/view',{
+          signal:requestSignal,
+          onSnapshot(next) {
+            if (current()) {
+              observeDirectory(next);
+              updateSyncControls();
+            }
+          }
+        });
+        if (!current()) return;
+        if (view.snapshot.visible && displayedVersion !== view.snapshot.snapshotVersion) paintTree(view.departments);
+        displayedVersion = view.snapshot.snapshotVersion;
+        replaceRows(view.users);
+        directoryError = false;
+        reloadingAfterConflict = false;
+        updateSyncControls();
+        return true;
+      } catch (error) {
+        if (!current()) return;
+        if (error.status === 403 || error.status === 401) {
+          denyDirectory();
+          return;
+        }
+        if (isDirectoryConflict(error)) {
+          clearDirectory();
+          directoryMeta = undefined;
+          summaryRequest = undefined;
+          ++syncRevision;
+          if (attempt < 2) {
+            reloadingAfterConflict = true;
+            updateSyncControls();
+            continue;
+          }
+        }
+        reloadingAfterConflict = false;
+        directoryError = true;
+        if (!mounted) list.replaceChildren();
+        updateSyncControls();
+        throw error;
+      }
     }
+  }
+  function reloadDirectory() {
+    void refreshUsers().catch(() => {});
   }
 
   function busyDialog(dialog, pending) {
@@ -404,7 +513,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       restoreFocus:() => inPage() && !replacementDrawer ? focusAction('user',record.id) : undefined,
       body:group('账号信息',details([
         ['账号编号',record.status === 'unprovisioned' ? '尚未开通' : record.id],['所属组织',record.org || '—'],
-        ['身份来源',sourceOf(record)],['状态',statuses[record.status] ?? '未知',statusTone(record.status)]
+        ['身份来源',sourceOf(record)],['账号状态',statuses[record.status] ?? '未知',statusTone(record.status)],
+        ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : [])
       ]) + provision) + group('角色授权','<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
       isDirty:() => dirty(),
       onClose() {
@@ -543,7 +653,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         confirm:'确认开通', trigger,
         async change() {
           const created = await request(userPath(record.id) + '/provision',{ method:'POST' });
-          if (!inPage()) return;
+          if (!inPage() || !dialog.open) return;
           try {
             await refreshUsers();
             refreshed = created?.id ? findUser(String(created.id)) : undefined;
@@ -551,7 +661,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
             if (inPage()) toast('warning','账号已开通，用户列表刷新失败。请重新打开用户管理。');
             return;
           }
-          if (inPage()) toast('success',record.name + '的账号已开通。');
+          if (inPage() && dialog.open) toast('success',record.name + '的账号已开通。');
         },
         onConfirmed() {
           if (!inPage() || !dialog.open) return;
@@ -602,123 +712,185 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     });
   }
 
+  function scopeLabel(scope) {
+    if (!scope) return '—';
+    if (scope.entire_org) return '整组织';
+    return scope.department_roots + ' 个授权部门 · ' + scope.explicit_people + ' 位单独授权人员';
+  }
+  const count = (value, unit) => Number.isInteger(value) ? value + ' ' + unit : '—';
+  function runCounts(run) {
+    return [
+      ['部门',count(run?.departments,'个')],['人员',count(run?.users,'人')],
+      ['新增人员',count(run?.addedUsers,'人')],['变更人员',count(run?.changedUsers,'人')],
+      ['目录缺失',count(run?.missingUsers,'人')],['授权范围外',count(run?.outsideScopeUsers,'人')]
+    ];
+  }
   function updateSyncControls() {
-    if (!inPage()) return;
-    const running = sync?.status === 'running';
-    syncButton.disabled = requestingSync || running || sync?.status === 'unconfigured';
-    syncButton.textContent = requestingSync || running ? '同步中…' : '同步';
-    syncDetails.disabled = false;
+    if (!inPage() || !usersPage) return;
+    const run = sync?.run;
+    const active = activeRun(run);
+    const waiting = run?.status === 'queued';
+    const visible = directoryMeta?.visible;
+    const lastTime = directoryMeta?.lastSuccessAt;
+    const visibility = visible
+      ? run?.status === 'failed' ? '本轮同步失败，仍可浏览上次同步的目录。'
+        : active ? '同步期间可浏览上次同步的目录。' : ''
+      : lastTime ? '飞书通讯录授权已变化，旧目录已隐藏。'
+        : directoryMeta ? '尚无可见的飞书目录，首次同步成功后可浏览。' : '';
+    const error = readForbidden ? '当前账号没有查看飞书目录的权限。' :
+      directoryError ? '无法刷新组织与人员，请重试。' :
+      reloadingAfterConflict ? '组织目录已更新，正在重新加载…' :
+      syncError ? '暂时无法获取同步状态，请重试。' : '';
+    const status = active ? waiting ? '同步排队中…' : '同步进行中…' :
+      !visible && run?.status === 'failed' ? '本轮同步失败，请查看同步详情。' : '';
+    const noticeText = [status,error,readForbidden ? '' : visibility].filter(Boolean).join(' ');
+    notice.hidden = !noticeText;
+    if (notice.firstElementChild.textContent !== noticeText) notice.firstElementChild.textContent = noticeText;
+    const hideRetry = readForbidden || !(directoryError || syncError);
+    if (hideRetry && document.activeElement === retry) heading.focus();
+    retry.hidden = hideRetry;
+    syncButton.hidden = !maySync || syncForbidden || readForbidden;
+    syncButton.disabled = requestingSync || active || !directoryMeta;
+    syncButton.textContent = requestingSync ? '提交中…' : waiting ? '等待同步…' : active ? '同步中…' : '同步';
+    syncDetails.disabled = readForbidden;
     if (!detailsTarget) return;
     const labels = {
-      idle:['pending','暂无同步记录'], running:['progress','进行中'], success:['success','已完成'],
-      failed:['danger','同步失败'], unconfigured:['pending','未配置']
+      queued:['pending','等待同步'], running:['progress','进行中'],
+      succeeded:['success','已完成'], failed:['danger','同步失败']
     };
-    const [tone,label] = labels[sync?.status] ?? ['pending',loadingSync ? '正在查询' : '无法获取同步状态'];
-    const phase = sync?.phase || label;
-    const raw = sync?.progress;
-    const percent = Number.isFinite(raw) ? Math.max(0,Math.min(100,raw)) : null;
-    const statusTime = running && sync.startedAt ? '开始于 ' + showTime(sync.startedAt) :
-      sync?.finishedAt ? '完成于 ' + showTime(sync.finishedAt) : '';
-    const subtitle = [percent !== null && (running || sync?.status === 'success') ? percent + '%' : '',statusTime].filter(Boolean).join(' · ');
-    const last = sync?.lastSuccess ?? (sync?.status === 'success' ? sync : null);
-    const lastTime = last?.finishedAt || sync?.lastSuccessAt;
+    const [tone,label] = labels[run?.status] ?? ['pending',syncError ? '无法获取同步状态' : loadingSync ? '正在查询…' : '暂无同步记录'];
+    const phase = {
+      running:run?.scope ? '读取飞书组织与人员' : '核对飞书通讯录授权',
+      succeeded:'组织与人员已更新',
+      failed:'飞书目录未更新'
+    }[run?.status] ?? label;
+    const statusTime = run?.finishedAt ? '完成于 ' + showTime(run.finishedAt) :
+      run?.startedAt ? '开始于 ' + showTime(run.startedAt) :
+      run?.createdAt ? '排队于 ' + showTime(run.createdAt) : '';
+    const failure = run?.status === 'failed' ? syncFailure(run.failureReason,!visible && Boolean(lastTime)) : '';
+    const last = visible && sync?.snapshotVersion === directoryMeta.snapshotVersion ? sync.lastSuccess : null;
     const markup = '<section class="directory-sync-status"><div><strong>' + escape(phase) + '</strong>' +
-      badge(tone,label) + '</div>' + (running || sync?.status === 'success' ?
-        '<progress ' + (percent !== null ? 'value="' + percent + '" ' : '') + 'max="100" aria-label="同步进度"></progress>' : '') +
-      (subtitle ? '<span class="aux">' + subtitle + '</span>' : '') +
-      (running && Number.isInteger(sync.departments) && Number.isInteger(sync.users) ?
-        '<p class="aux">已处理组织 ' + sync.departments + ' 个 · 用户 ' + sync.users + ' 人</p>' : '') +
-      (sync?.message ? '<p class="aux">' + escape(sync.message) + '</p>' : '') + '</section>' +
-      group('上次同步结果',lastTime ? details([
-        ['开始时间',showTime(last?.startedAt)],['完成时间',showTime(lastTime)],
-        ['组织',Number.isInteger(last?.departments) ? last.departments + ' 个' : '—'],
-        ['用户',Number.isInteger(last?.users) ? last.users + ' 人' : '—'],
-        ...Number.isInteger(last?.addedDepartments) ? [['新增组织',last.addedDepartments + ' 个']] : [],
-        ...Number.isInteger(last?.addedUsers) ? [['新增用户',last.addedUsers + ' 人']] : []
-      ]) : '<p class="aux">暂无成功同步记录。</p>');
+      badge(tone,label) + '</div>' + (active || run?.status === 'succeeded'
+        ? '<progress ' + (active ? '' : 'value="100" ') + 'max="100" aria-label="同步进度"></progress>' : '') +
+      (statusTime ? '<p class="aux">' + escape(statusTime) + '</p>' : '') +
+      (failure ? '<p class="aux">失败原因：' + escape(failure) + '</p>' : '') +
+      (visibility ? '<p class="aux">' + escape(visibility) + '</p>' : '') + '</section>' +
+      group('同步安排',details([
+        ['最近成功',showTime(lastTime)],['下次同步',showTime(directoryMeta?.nextRunAt)],
+        ['可见目录授权范围',scopeLabel(directoryMeta?.scope)]
+      ])) +
+      (run ? group('本轮同步',details([['本轮授权范围',scopeLabel(run.scope)], ...runCounts(run)])) : '') +
+      (last && last.id !== run?.id ? group('上次可见快照',details(runCounts(last))) : '');
     if (markup !== lastDetailsMarkup) {
       detailsTarget.innerHTML = markup;
       lastDetailsMarkup = markup;
     }
   }
-  function schedulePoll() {
+  function schedulePoll(delay = activeRun(sync?.run) ? 1200 : 5000) {
     clearTimeout(pollTimer);
-    if (inPage() && sync?.status === 'running') pollTimer = setTimeout(readSync,1200);
-  }
-  function applySync(next) {
-    const previous = sync;
-    sync = next;
-    updateSyncControls();
-    schedulePoll();
-    if (next.status === 'success' && previous?.status === 'running') {
-      toast('success','组织与用户同步完成。');
-      void refreshDirectory();
-    }
-    if (next.status === 'failed' && previous?.status === 'running') {
-      toast('error',next.message || '组织与用户同步失败，请查看同步详情。');
-    }
+    if (inPage() && !readForbidden) pollTimer = setTimeout(readSync,delay);
   }
   async function readSync() {
-    if (loadingSync || requestingSync || !inPage()) return;
+    if (loadingSync || requestingSync || readForbidden || !inPage()) return;
+    clearTimeout(pollTimer);
+    const requestID = ++syncRequest;
+    const revision = syncRevision;
+    const current = () => inPage() && !readForbidden && requestID === syncRequest;
     loadingSync = true;
     try {
-      const data = await request('/directory/sync');
-      if (inPage() && !requestingSync) applySync(data);
+      const next = await request('/directory/sync');
+      if (!current() || revision !== syncRevision) return;
+      const previous = sync?.run;
+      const changed = observeDirectory(next);
+      if (!changed && next.visible && !next.lastSuccess && sync?.snapshotVersion === next.snapshotVersion) {
+        next.lastSuccess = sync.lastSuccess;
+      }
+      sync = next;
+      syncError = false;
+      if (changed) reloadDirectory();
+      if (activeRun(previous) && next.run?.id === previous.id && !activeRun(next.run)) {
+        if (next.run.status === 'succeeded') toast('success','组织与人员同步完成。');
+        if (next.run.status === 'failed') toast('error','组织与人员同步失败，请查看同步详情。');
+      }
+      updateSyncControls();
+      readPreviousSummary();
     } catch (error) {
-      if (inPage() && sync?.status === 'running' && !requestingSync) pollTimer = setTimeout(readSync,3500);
+      if (!current()) return;
+      if (error.status === 403 || error.status === 401) denyDirectory();
+      else syncError = true;
     } finally {
       loadingSync = false;
-      updateSyncControls();
+      if (current()) {
+        updateSyncControls();
+        schedulePoll(syncError ? 3500 : undefined);
+      }
     }
   }
+  function readPreviousSummary() {
+    if (!detailsTarget || !sync?.visible || sync.lastSuccess || sync.snapshotVersion !== directoryMeta?.snapshotVersion) return;
+    const version = sync.snapshotVersion;
+    if (summaryRequest === version) return;
+    summaryRequest = version;
+    void request('/directory/sync-summary',{ snapshotVersion:version }).then(result => {
+      if (!inPage() || summaryRequest !== version || directoryMeta?.snapshotVersion !== version || sync?.snapshotVersion !== version) return;
+      sync.lastSuccess = result;
+      updateSyncControls();
+    }).catch(error => {
+      if (!inPage() || summaryRequest !== version) return;
+      summaryRequest = undefined;
+      if (error.status === 403 || error.status === 401) denyDirectory();
+    });
+  }
   async function startSync() {
+    if (readForbidden || syncForbidden || !maySync || requestingSync) return;
+    ++syncRequest;
+    clearTimeout(pollTimer);
     requestingSync = true;
     updateSyncControls();
     syncDetails.focus();
     try {
-      const data = await request('/directory/sync',{ method:'POST' });
-      if (inPage()) applySync(data);
+      const run = await request('/directory/sync',{ method:'POST' });
+      if (!inPage() || readForbidden) return;
+      sync = { ...sync, run };
+      toast(run.coalesced ? 'info' : 'success',run.coalesced ? '已有同步任务，已并入该任务。' : '已提交同步请求。');
     } catch (error) {
-      if (inPage()) toast('error',messageOf(error,'无法启动同步，请重试。'));
+      if (!inPage() || readForbidden || error.status === 401) return;
+      if (error.status === 403) syncForbidden = true;
+      toast('error',error.status === 403 ? '当前账号无法启动同步，请重新登录后再试。' : '无法启动同步，请重试。');
     } finally {
       requestingSync = false;
       updateSyncControls();
+      schedulePoll(0);
     }
   }
   function showSyncDetails() {
     const dialog = showDialog({
       title:'同步详情', description:'飞书组织与用户', drawer:'standard', tone:'info',
       body:'<div class="directory-sync-detail" data-sync-detail role="status"></div>',
-      restoreFocus:() => syncDetails.isConnected ? syncDetails : focusHeading(),
+      restoreFocus:() => inPage() && !syncDetails.disabled ? syncDetails : focusHeading(),
       onClose:() => { detailsTarget = undefined; }
     });
     dialog.classList.add('user-detail-drawer');
     detailsTarget = dialog.querySelector('[data-sync-detail]');
     lastDetailsMarkup = '';
     updateSyncControls();
-    if (!sync) void readSync();
+    readPreviousSummary();
+    void readSync();
   }
 
   async function load() {
     list.innerHTML = '<p class="empty" role="status">加载中…</p>';
     try {
       if (usersPage) {
-        const [next,roles,departments] = await Promise.all([
-          request('/users'),request('/roles'),request('/directory/departments')
-        ]);
+        replaceCatalog(await request('/roles'));
         if (!inPage()) return;
-        replaceCatalog(roles);
-        paintTree(departments);
-        replaceRows(next);
-        syncButton.addEventListener('click',startSync);
-        syncDetails.addEventListener('click',showSyncDetails);
-        void readSync();
+        await refreshUsers();
       } else {
         const next = await request('/' + section);
         if (inPage()) replaceRows(next);
       }
     } catch (error) {
-      if (!inPage()) return;
+      if (!inPage() || (usersPage && directoryError)) return;
       list.innerHTML = '<div class="empty"><p role="alert"></p><button class="button" type="button">重试</button></div>';
       list.querySelector('p').textContent = messageOf(error,'加载失败，请重试。');
       list.querySelector('button').addEventListener('click',load);
@@ -737,6 +909,18 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       case 'event': showEvent(record,trigger); break;
     }
   });
+  if (usersPage) {
+    syncButton.addEventListener('click',startSync);
+    syncDetails.addEventListener('click',showSyncDetails);
+    retry.addEventListener('click',() => {
+      if (directoryError) reloadDirectory();
+      void readSync();
+    });
+  }
   await load();
+  if (usersPage && inPage()) {
+    updateSyncControls();
+    void readSync();
+  }
   return { confirmNavigation };
 }

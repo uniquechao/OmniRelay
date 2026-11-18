@@ -74,7 +74,7 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 
 飞书以 `error=access_denied` 回调时使用 `cancelled`。通过事务验证后，未知授权错误、缺少授权码或换码和用户信息接口暂时不可用时使用 `unavailable`。应用诊断仅记录固定错误码。入口代理的访问日志及 APM 应使用路径模板，禁采 `/auth/feishu/callback` 查询串、OAuth 请求和响应正文、认证头与 Cookie；出站换码及用户信息请求也适用这些采集约束。
 
-目录沿用现有扁平结构，`snapshot_version` 为正整数或 null，`visible` 为布尔。不可见时版本和 scope 为 null，部门和人员 items 必须为空，历史任务及最近成功时间可保留。people 按 open_id 去重，departments 为全部可见路径。directory_status 为 `unknown/active/inactive/resigned`，account_status 为 `unprovisioned/active/inactive`，未开通 account_id 为 null，目录状态不会自动授予本地账号权限。
+目录沿用现有扁平结构，`snapshot_version` 为正整数或 null，`visible` 为布尔。不可见时版本和 scope 为 null，部门和人员 items 必须为空，历史任务及最近成功时间可保留。people 按 open_id 去重，departments 为全部可见路径。部门及人员归属中的 path 均为从上级到当前部门的非空名称数组，例如 `["研发", "运维"]`。directory_status 为 `unknown/active/inactive/resigned`，account_status 为 `unprovisioned/active/inactive`，未开通 account_id 为 null，目录状态不会自动授予本地账号权限。
 
 部门、人员和同步历史使用同一 snapshot_version；翻页携带，409 后丢弃混版结果重载。sync-runs POST 是扁平 run 加 coalesced，非嵌套 task；ID 为数字。初次无快照和撤权隐藏都 visible=false，靠 last_success_at 与 latest_attempt 区分。临时失败允许 visible=true 保留合法旧快照；已确认范围变化须先隐藏，后续完整发布才恢复。failure_reason 是现有接口的脱敏显示字符串，本条不引入新目录失败枚举。
 
