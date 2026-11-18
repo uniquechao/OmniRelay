@@ -46,8 +46,8 @@ func TestConfigServeDefaultsAndMigrationCredentialBoundary(t *testing.T) {
 	if _, err := readConfig(func(key string) string { return env[key] }, false); err != nil {
 		t.Fatalf("migration should only need its database credentials: %v", err)
 	}
-	if _, err := readConfig(func(key string) string { return env[key] }, true); err == nil {
-		t.Fatal("server accepted missing Feishu secret")
+	if cfg, err := readConfig(func(key string) string { return env[key] }, true); err != nil || cfg.appSecret != "" {
+		t.Fatal("server should expose missing Feishu credentials")
 	}
 }
 
@@ -81,5 +81,30 @@ func TestConfigTLSRequiresCertificateAndKeyTogether(t *testing.T) {
 	env["OMNIRELAY_TLS_CERT_FILE"] = "/certificates/tls.crt"
 	if _, err := readConfig(func(key string) string { return env[key] }, true); err == nil {
 		t.Fatal("accepted a certificate without the TLS private key")
+	}
+}
+
+func TestConfigFeishuBotGenerationAndHeartbeat(t *testing.T) {
+	env := goodEnvironment()
+	get := func(key string) string { return env[key] }
+	cfg, err := readConfig(get, true)
+	if err != nil || cfg.credentialsGeneration != 1 || cfg.botHeartbeatTTL != 30*time.Second {
+		t.Fatalf("unexpected default Bot settings: %d %v %v", cfg.credentialsGeneration, cfg.botHeartbeatTTL, err)
+	}
+	for _, invalid := range []string{"0", "-1", "01", "+1", "9223372036854775808", "private-value"} {
+		env["OMNIRELAY_FEISHU_CREDENTIALS_GENERATION"] = invalid
+		if _, err := readConfig(get, true); err == nil || strings.Contains(err.Error(), invalid) {
+			t.Errorf("expected sanitized generation error")
+		}
+	}
+	env["OMNIRELAY_FEISHU_CREDENTIALS_GENERATION"] = "12"
+	env["OMNIRELAY_FEISHU_BOT_HEARTBEAT_TTL"] = "0s"
+	if _, err := readConfig(get, true); err == nil {
+		t.Fatal("accepted zero heartbeat TTL")
+	}
+	env["OMNIRELAY_FEISHU_BOT_HEARTBEAT_TTL"] = "45s"
+	cfg, err = readConfig(get, true)
+	if err != nil || cfg.credentialsGeneration != 12 || cfg.botHeartbeatTTL != 45*time.Second {
+		t.Fatalf("unexpected custom Bot settings: %d %v %v", cfg.credentialsGeneration, cfg.botHeartbeatTTL, err)
 	}
 }

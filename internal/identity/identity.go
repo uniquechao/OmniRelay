@@ -69,8 +69,8 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	if pool == nil {
 		return nil, errors.New("identity database is required")
 	}
-	if strings.TrimSpace(cfg.AppID) == "" || strings.TrimSpace(cfg.AppSecret) == "" || strings.TrimSpace(cfg.TenantKey) == "" {
-		return nil, errors.New("Feishu app ID, app secret and tenant key are required")
+	if strings.TrimSpace(cfg.AppID) == "" || strings.TrimSpace(cfg.TenantKey) == "" {
+		return nil, errors.New("Feishu app ID and tenant key are required")
 	}
 	origin, err := url.Parse(cfg.PublicOrigin)
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil ||
@@ -119,6 +119,8 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/logout", s.logout)
 }
 
+func (s *Service) CallbackURL() string { return s.callback }
+
 func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 	identityHeaders(w)
 	if r.Method != http.MethodGet {
@@ -134,6 +136,10 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 	returnPath, err := localReturnPath(query.Get("return_to"))
 	if err != nil {
 		writeFailure(w, http.StatusBadRequest, "invalid_return_path")
+		return
+	}
+	if s.cfg.AppSecret == "" {
+		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
 	state, browser, verifier := newSecret(), newSecret(), newSecret()
@@ -178,6 +184,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusBadRequest, "invalid_login_transaction")
 		return
 	}
+	if s.cfg.AppSecret == "" {
+		writeFailure(w, http.StatusBadGateway, "feishu_login_unavailable")
+		return
+	}
 	principal, err := s.feishuIdentity(r.Context(), code, verifier)
 	if errors.Is(err, errNotAdmitted) {
 		writeFailure(w, http.StatusForbidden, "login_denied")
@@ -208,32 +218,55 @@ func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, write boo
 	return p, ok
 }
 
+// AuthenticateManagement uses the management API's common authorization errors.
+func (s *Service) AuthenticateManagement(w http.ResponseWriter, r *http.Request, write bool) (Principal, bool) {
+	identityHeaders(w)
+	p, _, status, code := s.authenticateSession(r, write)
+	switch status {
+	case 0:
+		return p, true
+	case http.StatusUnauthorized:
+		code = "unauthorized"
+	case http.StatusForbidden:
+		code = "forbidden"
+	}
+	writeFailure(w, status, code)
+	return Principal{}, false
+}
+
 func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, write bool) (Principal, string, bool) {
 	identityHeaders(w)
-	token := cookieSecret(r, sessionCookie)
-	if token == "" {
-		writeFailure(w, http.StatusUnauthorized, "authentication_required")
-		return Principal{}, "", false
-	}
-	if write || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
-		origins := r.Header.Values("Origin")
-		csrf := r.Header.Values("X-CSRF-Token")
-		if len(origins) != 1 || origins[0] != s.cfg.PublicOrigin || len(csrf) != 1 ||
-			!hmac.Equal([]byte(csrf[0]), []byte(csrfToken(token))) {
-			writeFailure(w, http.StatusForbidden, "invalid_csrf")
-			return Principal{}, "", false
-		}
-	}
-	p, err := s.loadSession(r.Context(), token)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeFailure(w, http.StatusUnauthorized, "authentication_required")
-		return Principal{}, "", false
-	}
-	if err != nil {
-		writeFailure(w, http.StatusServiceUnavailable, "authentication_unavailable")
+	p, token, status, code := s.authenticateSession(r, write)
+	if status != 0 {
+		writeFailure(w, status, code)
 		return Principal{}, "", false
 	}
 	return p, token, true
+}
+
+func (s *Service) authenticateSession(r *http.Request, write bool) (Principal, string, int, string) {
+	token := cookieSecret(r, sessionCookie)
+	if token == "" {
+		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
+	}
+	validCSRF := true
+	if write || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
+		origins := r.Header.Values("Origin")
+		csrf := r.Header.Values("X-CSRF-Token")
+		validCSRF = len(origins) == 1 && origins[0] == s.cfg.PublicOrigin && len(csrf) == 1 &&
+			hmac.Equal([]byte(csrf[0]), []byte(csrfToken(token)))
+	}
+	p, err := s.loadSession(r.Context(), token, validCSRF)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
+	}
+	if err != nil {
+		return Principal{}, "", http.StatusServiceUnavailable, "authentication_unavailable"
+	}
+	if !validCSRF {
+		return Principal{}, "", http.StatusForbidden, "invalid_csrf"
+	}
+	return p, token, 0, ""
 }
 
 func (s *Service) me(w http.ResponseWriter, r *http.Request) {

@@ -34,7 +34,7 @@ type Service struct {
 }
 
 func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
-	if pool == nil || cfg.AppID == "" || cfg.AppSecret == "" || cfg.TenantKey == "" {
+	if pool == nil || cfg.AppID == "" || cfg.TenantKey == "" {
 		return nil, errors.New("directory requires a database and Feishu app and tenant configuration")
 	}
 	if cfg.Interval < 0 || cfg.PageBudget < 0 {

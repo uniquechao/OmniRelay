@@ -282,6 +282,9 @@ func personIDs() url.Values {
 }
 
 func (s *Service) collect(ctx context.Context, progress func(scope, int, int) error) (snapshot, error) {
+	if s.cfg.AppSecret == "" {
+		return snapshot{}, errors.New("Feishu credentials are missing")
+	}
 	base := "https://accounts.feishu.cn"
 	if s.cfg.BaseURL != "" {
 		base = s.cfg.BaseURL
