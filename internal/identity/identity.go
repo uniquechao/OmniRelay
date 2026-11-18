@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -175,40 +176,46 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setCookie(w, browserCookie, "", -1)
-	if len(query["error"]) != 0 {
-		redirect(w, "/#/login?error=feishu", http.StatusSeeOther)
+	if len(query["error"]) == 1 && query.Get("error") == "access_denied" && len(query["code"]) == 0 {
+		redirectLoginError(w, r, "cancelled")
 		return
 	}
 	code := query.Get("code")
-	if len(query["code"]) != 1 || code == "" || len(code) > 1024 {
-		writeFailure(w, http.StatusBadRequest, "invalid_login_transaction")
-		return
-	}
-	if s.cfg.AppSecret == "" {
-		writeFailure(w, http.StatusBadGateway, "feishu_login_unavailable")
+	if len(query["error"]) != 0 || len(query["code"]) != 1 || code == "" || len(code) > 1024 || s.cfg.AppSecret == "" {
+		redirectLoginError(w, r, "unavailable")
 		return
 	}
 	principal, err := s.feishuIdentity(r.Context(), code, verifier)
 	if errors.Is(err, ErrNotAdmitted) {
-		writeFailure(w, http.StatusForbidden, "login_denied")
+		redirectLoginError(w, r, "denied")
 		return
 	}
 	if err != nil {
-		writeFailure(w, http.StatusBadGateway, "feishu_login_unavailable")
+		redirectLoginError(w, r, "unavailable")
 		return
 	}
 	token := newSecret()
 	err = s.createSession(r.Context(), principal, token, cookieSecret(r, sessionCookie))
 	if errors.Is(err, ErrNotAdmitted) {
-		writeFailure(w, http.StatusForbidden, "login_denied")
+		redirectLoginError(w, r, "denied")
 		return
 	}
 	if err != nil {
-		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
+		redirectLoginError(w, r, "unavailable")
 		return
 	}
+	// In-flight transactions can contain paths saved before the allowlist changed.
+	target, err := localReturnPath(returnPath)
+	if err != nil {
+		target = "/"
+	}
 	setCookie(w, sessionCookie, token, int(s.cfg.SessionTTL.Seconds()))
-	redirect(w, returnPath, http.StatusSeeOther)
+	redirect(w, target, http.StatusSeeOther)
+}
+
+func redirectLoginError(w http.ResponseWriter, r *http.Request, code string) {
+	slog.InfoContext(r.Context(), "Feishu OAuth login failed", "code", code)
+	redirect(w, "/#/login?error="+code, http.StatusSeeOther)
 }
 
 // Authenticate validates the current server session and writes a sanitized response
@@ -304,17 +311,14 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func localReturnPath(raw string) (string, error) {
-	if raw == "" {
+	switch raw {
+	case "":
 		return "/", nil
-	}
-	u, err := url.Parse(raw)
-	invalid := func(r rune) bool { return r <= 31 || r == 127 || r == '\\' }
-	if err != nil || len(raw) > 2048 || u.IsAbs() || u.Host != "" || !strings.HasPrefix(raw, "/") ||
-		!strings.HasPrefix(u.Path, "/") || strings.Contains(u.Path, "//") ||
-		strings.IndexFunc(raw, invalid) >= 0 || strings.IndexFunc(u.Path, invalid) >= 0 {
+	case "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot":
+		return raw, nil
+	default:
 		return "", errors.New("invalid workbench return path")
 	}
-	return u.String(), nil
 }
 
 func newSecret() string {

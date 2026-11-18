@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -27,6 +30,15 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	if dsn == "" {
 		t.Skip("requires isolated PostgreSQL")
 	}
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	previousWriter, previousFlags := log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
 	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
 	pool := backendTestPool(t, ctx, dsn)
@@ -83,9 +95,22 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatalf("missing cookie %s", name)
 		return nil
 	}
-	login := func(code string, status int) (*http.Cookie, identity.Principal, string) {
+	const returnPath = "/#/system/feishu-bot"
+	checkFailure := func(res *httptest.ResponseRecorder, reason string) {
 		t.Helper()
-		start := do("GET", "/auth/feishu/start?return_to=%2F%23%2Fworkbench", "", nil, "")
+		wantStatus(res, http.StatusSeeOther)
+		if res.Header().Get("Location") != "/#/login?error="+reason || res.Body.Len() != 0 {
+			t.Fatalf("unexpected OAuth failure response for %s", reason)
+		}
+		cookies := res.Result().Cookies()
+		if len(cookies) != 1 || cookies[0].Name != "__Host-omnirelay_oauth" || cookies[0].Value != "" || cookies[0].MaxAge >= 0 {
+			t.Fatal("OAuth failure did not only clear the browser proof")
+		}
+	}
+	var sensitive []string
+	login := func(code, reason string) (*http.Cookie, identity.Principal, string) {
+		t.Helper()
+		start := do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(returnPath), "", nil, "")
 		wantStatus(start, http.StatusFound)
 		authorization, err := url.Parse(start.Header().Get("Location"))
 		if err != nil || authorization.Host != "accounts.feishu.cn" ||
@@ -93,22 +118,21 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 			t.Fatal("missing Feishu state or PKCE challenge")
 		}
 		proof := findCookie(start, "__Host-omnirelay_oauth")
-		callback := "/auth/feishu/callback?" + url.Values{"code": {code}, "state": {authorization.Query().Get("state")}}.Encode()
+		state := authorization.Query().Get("state")
+		callback := "/auth/feishu/callback?" + url.Values{"code": {code}, "state": {state}}.Encode()
 		finish := do("GET", callback, "", proof, "")
-		wantStatus(finish, status)
-		if status == http.StatusForbidden {
-			for _, cookie := range finish.Result().Cookies() {
-				if cookie.Name == "__Host-omnirelay_session" && cookie.Value != "" {
-					t.Fatal("denied login issued a session cookie")
-				}
-			}
+		sensitive = append(sensitive, callback, state, proof.Value, "fixture-access-token-"+code)
+		wantStatus(do("GET", callback, "", proof, ""), http.StatusBadRequest)
+		if reason != "" {
+			checkFailure(finish, reason)
 			return nil, identity.Principal{}, ""
 		}
-		if finish.Header().Get("Location") != "/#/workbench" || finish.Header().Get("Referrer-Policy") != "no-referrer" {
+		wantStatus(finish, http.StatusSeeOther)
+		if finish.Header().Get("Location") != returnPath || finish.Header().Get("Referrer-Policy") != "no-referrer" {
 			t.Fatal("unexpected redirect or referrer policy")
 		}
-		wantStatus(do("GET", callback, "", proof, ""), http.StatusBadRequest)
 		session := findCookie(finish, "__Host-omnirelay_session")
+		sensitive = append(sensitive, session.Value)
 		me := do("GET", "/api/v1/me", "", session, "")
 		wantStatus(me, http.StatusOK)
 		var response struct {
@@ -129,23 +153,41 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
+	for _, path := range []string{"https://offsite.test/", "/%2Foffsite.test", "/#/workbench?next=//offsite.test"} {
+		wantStatus(do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(path), "", nil, ""), http.StatusBadRequest)
+	}
 	begin := do("GET", "/auth/feishu/start", "", nil, "")
 	wantStatus(begin, http.StatusFound)
 	authURL, err := url.Parse(begin.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelPath := "/auth/feishu/callback?" + url.Values{"error": {"access_denied"}, "state": {authURL.Query().Get("state")}}.Encode()
+	const providerDiagnostic = "private-fixture-provider-diagnostic"
+	cancelPath := "/auth/feishu/callback?" + url.Values{"error": {"access_denied"}, "error_description": {providerDiagnostic}, "state": {authURL.Query().Get("state")}}.Encode()
 	proof := findCookie(begin, "__Host-omnirelay_oauth")
-	cancelled := do("GET", cancelPath, "", proof, "")
-	wantStatus(cancelled, http.StatusSeeOther)
-	if cancelled.Header().Get("Location") != "/#/login?error=feishu" {
-		t.Fatal("cancelled Feishu authorization did not return to the login page")
+	sensitive = append(sensitive, cancelPath, authURL.Query().Get("state"), proof.Value,
+		providerDiagnostic, "fixture-code-userinfo-outage", "fixture-only")
+	invalid := do("GET", cancelPath, "", nil, "")
+	wantStatus(invalid, http.StatusBadRequest)
+	if invalid.Header().Get("Location") != "" || len(invalid.Header().Values("Set-Cookie")) != 0 {
+		t.Fatal("invalid transaction redirected or issued a cookie")
 	}
+	wantStatus(do("GET", cancelPath+"&state="+url.QueryEscape(authURL.Query().Get("state")), "", proof, ""), http.StatusBadRequest)
+	checkFailure(do("GET", cancelPath, "", proof, ""), "cancelled")
 	wantStatus(do("GET", cancelPath, "", proof, ""), http.StatusBadRequest)
+	login("fixture-code-userinfo-outage", "unavailable")
+	login("fixture-code-foreign-tenant", "denied")
+	login("fixture-code-foreign-app", "denied")
+	var sessions int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM web_sessions").Scan(&sessions); err != nil || sessions != 0 {
+		t.Fatalf("failed callbacks left %d sessions: %v", sessions, err)
+	}
 	wantStatus(do("GET", "/readyz", "", nil, ""), http.StatusNoContent)
 	wantStatus(do("GET", "/api/v1/system/directory/people", "", nil, ""), http.StatusUnauthorized)
-	admin, _, csrf := login("ou_admin", http.StatusSeeOther)
+	const botAPI = "/api/v1/system/feishu-bot"
+	wantStatus(do("GET", botAPI, "", nil, ""), http.StatusUnauthorized)
+	admin, _, csrf := login("ou_admin", "")
+	wantStatus(do("GET", botAPI, "", admin, ""), http.StatusOK)
 	peoplePath := "/api/v1/system/directory/people?department_id=team"
 	for {
 		people := do("GET", peoplePath, "", admin, "")
@@ -159,12 +201,13 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		}
 	}
 
-	login("ou_member", http.StatusForbidden)
+	login("ou_member", "denied")
 	accountsPath := "/api/v1/system/accounts"
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, ""), http.StatusForbidden)
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusCreated)
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", http.StatusSeeOther)
+	member, target, memberCSRF := login("ou_member", "")
+	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)
 	wantStatus(do("POST", syncPath, "", admin, csrf), http.StatusAccepted)
@@ -172,7 +215,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	grantPath := "/api/v1/system/role-grants"
 	grant := do("POST", grantPath, fmt.Sprintf(`{"accountId":%q,"role":"audit_viewer"}`, target.AccountID), admin, csrf)
 	wantStatus(grant, http.StatusCreated)
-	member, _, _ = login("ou_member", http.StatusSeeOther)
+	member, _, _ = login("ou_member", "")
 	wantStatus(do("GET", "/api/v1/system/audit-events", "", member, ""), http.StatusOK)
 	var binding struct{ ID string }
 	if err := json.Unmarshal(grant.Body.Bytes(), &binding); err != nil || binding.ID == "" {
@@ -180,15 +223,28 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	}
 	wantStatus(do("DELETE", grantPath+"/"+binding.ID, "", admin, csrf), http.StatusNoContent)
 	wantStatus(do("GET", "/api/v1/me", "", member, ""), http.StatusUnauthorized)
-	member, _, _ = login("ou_member", http.StatusSeeOther)
+	member, _, _ = login("ou_member", "")
 	wantStatus(do("GET", "/api/v1/system/audit-events", "", member, ""), http.StatusForbidden)
 	accountPath := accountsPath + "/" + target.AccountID
 	wantStatus(do("PATCH", accountPath, `{"active":false}`, admin, ""), http.StatusForbidden)
 	wantStatus(do("PATCH", accountPath, `{"active":false}`, admin, csrf), http.StatusOK)
 	wantStatus(do("GET", "/api/v1/me", "", member, ""), http.StatusUnauthorized)
-	login("ou_member", http.StatusForbidden)
+	login("ou_member", "denied")
 	wantStatus(do("POST", "/auth/logout", "", admin, csrf), http.StatusNoContent)
 	wantStatus(do("GET", "/api/v1/me", "", admin, ""), http.StatusUnauthorized)
+	stop()
+	<-workersDone
+	output := logs.String()
+	for _, value := range sensitive {
+		if strings.Contains(output, value) {
+			t.Fatal("backend logs captured OAuth request or credential data")
+		}
+	}
+	for _, code := range []string{"cancelled", "denied", "unavailable"} {
+		if !strings.Contains(output, "code="+code) {
+			t.Fatalf("missing sanitized diagnostic for %s", code)
+		}
+	}
 }
 
 func backendTestPool(t *testing.T, ctx context.Context, dsn string) *pgxpool.Pool {
@@ -237,15 +293,24 @@ func (feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 			if r.Form.Get("code_verifier") == "" || r.Form.Get("redirect_uri") != fixtureOrigin+"/auth/feishu/callback" {
 				return nil, fmt.Errorf("incorrect OAuth exchange")
 			}
-			token = r.Form.Get("code")
+			token = "fixture-access-token-" + r.Form.Get("code")
 		}
 		body = fmt.Sprintf(`{"code":0,"access_token":%q,"token_type":"Bearer"}`, token)
 	case "/open-apis/authen/v1/user_info":
-		openID := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if openID != "ou_admin" && openID != "ou_member" {
+		openID := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer fixture-access-token-")
+		switch openID {
+		case "fixture-code-userinfo-outage":
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(
+				`{"code":20050,"msg":"private-fixture-provider-diagnostic"}`))}, nil
+		case "fixture-code-foreign-tenant":
+			body = `{"code":0,"data":{"tenant_key":"other_tenant","open_id":"ou_admin"}}`
+		case "fixture-code-foreign-app":
+			body = `{"code":0,"data":{"tenant_key":"tenant_fixture","app_id":"other_app","open_id":"ou_admin"}}`
+		case "ou_admin", "ou_member":
+			body = fmt.Sprintf(`{"code":0,"data":{"tenant_key":"tenant_fixture","open_id":%q,"name":"Example user"}}`, openID)
+		default:
 			return nil, fmt.Errorf("unknown fixture credential")
 		}
-		body = fmt.Sprintf(`{"code":0,"data":{"tenant_key":"tenant_fixture","open_id":%q,"name":"Example user"}}`, openID)
 	case "/open-apis/contact/v3/scopes":
 		body = `{"code":0,"data":{"department_ids":["team"],"has_more":false}}`
 	case "/open-apis/contact/v3/departments/team":

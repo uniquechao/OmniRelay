@@ -53,6 +53,9 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		TokenType   string `json:"token_type"`
 	}
 	status, err := s.feishuJSON(req, &token)
+	if status >= http.StatusInternalServerError || status == http.StatusTooManyRequests {
+		return Principal{}, errFeishu
+	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return Principal{}, ErrNotAdmitted
 	}
@@ -90,7 +93,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		} `json:"data"`
 	}
 	status, err = s.feishuJSON(req, &user)
-	if err != nil || user.Code == nil {
+	if err != nil || user.Code == nil || status >= http.StatusInternalServerError || status == http.StatusTooManyRequests {
 		return Principal{}, errFeishu
 	}
 	switch *user.Code {

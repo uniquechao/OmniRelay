@@ -70,6 +70,10 @@ POST `/api/v1/system/feishu-bot/checks` 使用 `system.read`，仍须 Origin 和
 
 OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 到 `/#/login?error=cancelled|denied|unavailable`。取消为 cancelled；未开通、停用、异组织为 denied；平台暂不可用为 unavailable。state 无效、过期、重复或浏览器不匹配为 400，不回跳也不建立会话。`error=feishu` 仅作为前端兼容输入样例，不再作为新后端错误目标。成功仍先请求 `/api/v1/me` 确认会话，合法内部 return_to 才能恢复；无权路由须重新核验。固定失败目标不拼接用户提供的外部 URL。
 
+`return_to` 省略时回到 `/`，可显式指定 `/`、`/#/workbench`、`/#/system/users`、`/#/system/roles`、`/#/system/audit` 或 `/#/system/feishu-bot`。例如 `return_to=%2F%23%2Fsystem%2Ffeishu-bot` 允许返回 Bot 配置页，管理 API 仍逐次鉴权。带额外查询参数、外部主机或未经允许的路径返回 400 `invalid_return_path`。
+
+飞书以 `error=access_denied` 回调时使用 `cancelled`。通过事务验证后，未知授权错误、缺少授权码或换码和用户信息接口暂时不可用时使用 `unavailable`。应用诊断仅记录固定错误码。入口代理的访问日志及 APM 应使用路径模板，禁采 `/auth/feishu/callback` 查询串、OAuth 请求和响应正文、认证头与 Cookie；出站换码及用户信息请求也适用这些采集约束。
+
 目录沿用现有扁平结构，`snapshot_version` 为正整数或 null，`visible` 为布尔。不可见时版本和 scope 为 null，部门和人员 items 必须为空，历史任务及最近成功时间可保留。people 按 open_id 去重，departments 为全部可见路径。directory_status 为 `unknown/active/inactive/resigned`，account_status 为 `unprovisioned/active/inactive`，未开通 account_id 为 null，目录状态不会自动授予本地账号权限。
 
 部门、人员和同步历史使用同一 snapshot_version；翻页携带，409 后丢弃混版结果重载。sync-runs POST 是扁平 run 加 coalesced，非嵌套 task；ID 为数字。初次无快照和撤权隐藏都 visible=false，靠 last_success_at 与 latest_attempt 区分。临时失败允许 visible=true 保留合法旧快照；已确认范围变化须先隐藏，后续完整发布才恢复。failure_reason 是现有接口的脱敏显示字符串，本条不引入新目录失败枚举。
