@@ -2,7 +2,7 @@
 
 依据：[接入设计 §2–5](../specs/omni-relay-feishu-integration.md)、[工程标准](feishu-integration-standards.md)。本条负责固定供前后端复用的目标协议，不包含 Bot 领域、OAuth 修补或目录改造。下文标记“实施约定”的内容用于补齐设计留白；其余保留设计规定值。
 
-Bot 管理接口已接入 Go 服务。OAuth 错误仍统一回 `error=feishu`，目录响应字段按 `internal/directory/http.go` 固定。
+Go 服务已接入 Bot 管理接口与 OAuth 固定错误回跳。目录响应字段按 `internal/directory/http.go` 固定。
 
 ## 文件与运行方式
 
@@ -72,6 +72,8 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 
 `return_to` 省略时回到 `/`，可显式指定 `/`、`/#/workbench`、`/#/system/users`、`/#/system/roles`、`/#/system/audit` 或 `/#/system/feishu-bot`。例如 `return_to=%2F%23%2Fsystem%2Ffeishu-bot` 允许返回 Bot 配置页，管理 API 仍逐次鉴权。带额外查询参数、外部主机或未经允许的路径返回 400 `invalid_return_path`。
 
+前端在当前标签页保留白名单路由，支持取消、失败、刷新和浏览器后退后重试。固定回跳显示本地化操作提示，未知错误使用通用提示。会话确认后清除返回目标，并依据 `/api/v1/me` 的权限恢复页面或显示无权状态。显式退出清除返回目标。浏览器从后退缓存恢复时重新检查会话和权限，CSRF 仅保存在应用内存。
+
 飞书以 `error=access_denied` 回调时使用 `cancelled`。通过事务验证后，未知授权错误、缺少授权码或换码和用户信息接口暂时不可用时使用 `unavailable`。应用诊断仅记录固定错误码。入口代理的访问日志及 APM 应使用路径模板，禁采 `/auth/feishu/callback` 查询串、OAuth 请求和响应正文、认证头与 Cookie；出站换码及用户信息请求也适用这些采集约束。
 
 目录沿用现有扁平结构，`snapshot_version` 为正整数或 null，`visible` 为布尔。不可见时版本和 scope 为 null，部门和人员 items 必须为空，历史任务及最近成功时间可保留。people 按 open_id 去重，departments 为全部可见路径。部门及人员归属中的 path 均为从上级到当前部门的非空名称数组，例如 `["研发", "运维"]`。directory_status 为 `unknown/active/inactive/resigned`，account_status 为 `unprovisioned/active/inactive`，未开通 account_id 为 null，目录状态不会自动授予本地账号权限。
@@ -85,6 +87,17 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 ## 验证边界
 
 离线样例校验严格字段集合、类型、枚举、时间、ETag、生命周期、目录可见性、同版与去重。设置 `OMNIRELAY_TEST_DATABASE_URL` 指向隔离 PostgreSQL 后，执行 `go test -v ./cmd/omnirelay ./internal/feishu ./migrations` 验证 Bot 管理 HTTP、适配器、任务并发与迁移。飞书适配测试为真实请求构造与响应解析注入测试传输层。预发布飞书应用、浏览器和 SDK 验收见[跨角色验收与预发布清单](feishu-integration-acceptance.md)。
+
+### 登录浏览器回归
+
+在项目根目录运行。浏览器测试使用 Chrome 与 `playwright-core@1.58.2`。设置 `OMNIRELAY_PLAYWRIGHT_MODULE` 指向已安装的模块，使用系统 Chrome 时设置 `OMNIRELAY_CHROME` 指向可执行文件。契约样例测试还需要 OpenSSL。联调需要将 `OMNIRELAY_TEST_DATABASE_URL` 指向支持建表的隔离 PostgreSQL。集成测试在独立 schema 中运行。
+
+```sh
+node --test --test-name-pattern='取消与失败|后退缓存|拒绝未知|密码登录' tests/integration/feishu_login_browser.test.mjs
+go test -v ./cmd/omnirelay -run 'TestBackendFeishu(AdmissionAndRevocation|Browser)$'
+```
+
+联调在本地 HTTPS 中运行，飞书授权页和飞书出站响应使用测试替身。浏览器会经过实际 Go 回调、会话写入、Bot 权限检查及退出接口。可通过 `OMNIRELAY_BROWSER_SCREENSHOTS` 指定项目内目录，保存取消提示的桌面浅色与窄屏深色截图。
 
 ## Go 入站受理
 

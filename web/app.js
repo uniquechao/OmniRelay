@@ -21,20 +21,36 @@ let view;
 let renderedHash;
 let checkingNavigation = false;
 const oauthReturnKey = 'omnirelay.feishu.return-route';
-let returnRoute = '#/workbench';
-try {
-  if (location.hash.startsWith('#/login?error=')) {
-    returnRoute = safeRoute(sessionStorage.getItem(oauthReturnKey));
-  }
-  sessionStorage.removeItem(oauthReturnKey);
-} catch {}
+const workbenchRoute = '#/workbench';
+const loginRoute = '#/login';
+let returnRoute = workbenchRoute;
+let sessionCheck;
+
+function isLoginRoute(hash) {
+  return hash === loginRoute || hash.startsWith(loginRoute + '?');
+}
+
+function readReturnRoute() {
+  try { return safeRoute(sessionStorage.getItem(oauthReturnKey)); }
+  catch { return returnRoute; }
+}
+
+function rememberReturnRoute(hash) {
+  returnRoute = safeRoute(hash);
+  try { sessionStorage.setItem(oauthReturnKey, returnRoute); } catch {}
+}
+
+function clearReturnRoute() {
+  returnRoute = workbenchRoute;
+  try { sessionStorage.removeItem(oauthReturnKey); } catch {}
+}
 
 const login = mountLogin(loginPage, {
   onSuccess(nextSession) {
     establishSession(nextSession).then(render).catch(() => start());
   },
   returnTo() {
-    try { sessionStorage.setItem(oauthReturnKey, returnRoute); } catch {}
+    rememberReturnRoute(readReturnRoute());
     return '/' + returnRoute;
   }
 });
@@ -45,7 +61,7 @@ mountAccount({
   async onLogout() {
     if (view?.confirmNavigation && !await view.confirmNavigation()) return;
     await logout();
-    showLogin();
+    showLogin({ preserveTarget: false });
   },
   async onSessionChanged(nextSession) {
     await establishSession(nextSession);
@@ -67,33 +83,39 @@ async function protectedAPI(path, options) {
 const adminAPI = systemAPI(protectedAPI);
 const botAPI = feishuBotAPI(protectedAPI);
 
-function showLogin() {
+function showLogin({ preserveTarget = true } = {}) {
+  sessionCheck?.abort();
   session = null;
   setSession(null);
   const hash = location.hash;
-  if (hash && !hash.startsWith('#/login')) {
-    returnRoute = safeRoute(hash);
-    location.replace('#/login');
+  if (!preserveTarget) clearReturnRoute();
+  else if (hash && !isLoginRoute(hash)) rememberReturnRoute(hash);
+  else returnRoute = readReturnRoute();
+
+  if (!preserveTarget || !isLoginRoute(hash)) {
+    history.replaceState(history.state, '', loginRoute);
   }
   render();
 }
 
 function safeRoute(hash) {
   const section = hash?.split('/')[2];
-  return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : '#/workbench';
+  return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : workbenchRoute;
 }
 
 function permission(user, section) {
   return Boolean(user.adminCapabilities?.[section === 'feishu-bot' ? 'feishu_bot' : section]);
 }
 
-async function establishSession(nextSession) {
-  const adminCapabilities = nextSession.access?.admin ?? await readAdminCapabilities(api);
+async function establishSession(nextSession, signal) {
+  const adminCapabilities = nextSession.access?.admin ?? await readAdminCapabilities(api, signal);
+  signal?.throwIfAborted();
   nextSession.user = {
     ...nextSession.user,
     adminCapabilities,
     roles: nextSession.access?.roles ?? []
   };
+  setSession(nextSession);
   session = nextSession;
 }
 
@@ -126,7 +148,6 @@ function goToAdministration(user) {
 async function render() {
   routeRequest?.abort();
   view = null;
-  renderedHash = safeRoute(location.hash);
   routeRequest = new AbortController();
   const { signal } = routeRequest;
   sessionStatus.hidden = true;
@@ -134,17 +155,16 @@ async function render() {
   loginPage.hidden = Boolean(session);
   if (!session) {
     page.replaceChildren();
-    login.activate(new URLSearchParams(location.hash.split('?')[1]).get('error'));
     loginPage.querySelector('#login-heading').focus();
+    login.activate(new URLSearchParams(location.hash.split('?')[1]).get('error'));
     return;
   }
-  if (location.hash.startsWith('#/login')) {
-    page.replaceChildren();
-    location.replace(returnRoute);
-    return;
-  }
+  const currentHash = location.hash;
+  const hash = isLoginRoute(currentHash) ? readReturnRoute() : safeRoute(currentHash);
+  if (currentHash && currentHash !== hash) history.replaceState(history.state, '', hash);
+  clearReturnRoute();
+  renderedHash = hash;
   updateAccount(session.user);
-  const hash = safeRoute(location.hash);
   const section = hash.split('/')[2];
   const title = section ? titles[section] : '工作台总览';
   const allowed = key => permission(session.user, key);
@@ -196,13 +216,24 @@ async function render() {
 }
 
 async function start() {
+  sessionCheck?.abort();
+  sessionCheck = new AbortController();
+  const { signal } = sessionCheck;
+  routeRequest?.abort();
+  view = null;
+  page.replaceChildren();
+  shell.hidden = true;
+  loginPage.hidden = true;
+  session = undefined;
+  setSession(null);
   sessionStatus.hidden = false;
   retrySession.hidden = true;
   sessionStatus.querySelector('p').textContent = '正在检查会话…';
   try {
-    await establishSession(await getSession());
-    await render();
+    await establishSession(await getSession({ signal }), signal);
+    if (!signal.aborted) await render();
   } catch (error) {
+    if (signal.aborted) return;
     if (error.status === 401) showLogin();
     else {
       sessionStatus.querySelector('p').textContent = '暂时无法连接工作台。';
@@ -215,8 +246,12 @@ retrySession.addEventListener('click', start);
 mobileNav.addEventListener('change', () => { location.hash = '#/' + mobileNav.value; });
 addEventListener('hashchange', async () => {
   if (session === undefined || checkingNavigation) return;
+  if (!session) {
+    showLogin();
+    return;
+  }
   const activeView = view;
-  if (session && activeView?.confirmNavigation) {
+  if (activeView?.confirmNavigation) {
     checkingNavigation = true;
     let allowed = false;
     try { allowed = await activeView.confirmNavigation(); }
@@ -231,13 +266,6 @@ addEventListener('hashchange', async () => {
   render();
 });
 addEventListener('pageshow', event => {
-  if (event.persisted) {
-    routeRequest?.abort();
-    page.replaceChildren();
-    shell.hidden = true;
-    loginPage.hidden = true;
-    session = undefined;
-    start();
-  }
+  if (event.persisted) start();
 });
 start();

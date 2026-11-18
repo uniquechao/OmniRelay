@@ -54,10 +54,11 @@ export async function api(path, { method = 'GET', body, signal, ifMatch, idempot
   return result(data);
 }
 
-export async function getSession() {
-  const session = await api(apiBase + 'me');
-  setSession(session);
-  const principal = session.principal;
+export async function getSession({ signal } = {}) {
+  const session = await api(apiBase + 'me', { signal });
+  const principal = session?.principal;
+  const token = session?.csrf_token ?? session?.csrfToken;
+  if (!principal?.account_id || typeof token !== 'string' || !token) throw new ApiError(502);
   return {
     ...session,
     user: { ...principal, id: principal.account_id }
@@ -65,7 +66,11 @@ export async function getSession() {
 }
 
 export async function logout() {
-  await api(authBase + 'logout', { method: 'POST' });
+  try {
+    await api(authBase + 'logout', { method: 'POST' });
+  } catch (error) {
+    if (error.status !== 401) throw error;
+  }
   setSession(null);
 }
 
@@ -190,8 +195,9 @@ export function mountLogin(page, { onSuccess, returnTo = () => '/#/workbench' })
       clearFeedback();
       if (!hasHTTPS()) {
         showFeedback(httpsRequired, { tone: 'warning' });
-      } else if (feishuErrors.has(error)) {
-        showFeedback(feishuErrors.get(error), { tone: 'warning' });
+      } else if (error) {
+        showFeedback(feishuErrors.get(error) ?? feishuErrors.get('feishu'), { tone: 'warning' });
+        feedback.scrollIntoView({ block: 'nearest', behavior: 'instant' });
       }
     }
   };

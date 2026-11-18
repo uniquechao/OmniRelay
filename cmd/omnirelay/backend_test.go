@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -315,7 +317,88 @@ func backendTestPool(t *testing.T, ctx context.Context, dsn string) *pgxpool.Poo
 	return pool
 }
 
-type feishuFixture struct{ resigned atomic.Bool }
+type feishuFixture struct {
+	resigned       atomic.Bool
+	callbackOrigin string
+}
+
+func TestBackendFeishuBrowser(t *testing.T) {
+	if os.Getenv("OMNIRELAY_PLAYWRIGHT_MODULE") == "" {
+		t.Skip("未配置浏览器联调依赖")
+	}
+	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("浏览器联调需要隔离 PostgreSQL")
+	}
+	server := httptest.NewUnstartedServer(nil)
+	t.Cleanup(server.Close)
+	origin := "https://" + server.Listener.Addr().String()
+	pool := backendTestPool(t, t.Context(), dsn)
+	cfg := configuration{
+		publicOrigin: origin, appID: "cli_fixture", appSecret: "fixture-only",
+		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour,
+		credentialsGeneration: 1, botHeartbeatTTL: 30 * time.Second,
+	}
+	handler, _, err := newBackend(t.Context(), pool, cfg, &feishuFixture{callbackOrigin: origin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Config.Handler = browserFeishuProvider(handler, origin)
+	server.StartTLS()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "node", "--test", "--test-name-pattern", "Go OAuth", "tests/integration/feishu_login_browser.test.mjs")
+	command.Dir = "../.."
+	command.Env = append(os.Environ(), "OMNIRELAY_BROWSER_ORIGIN="+origin)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("浏览器联调失败 %v\n%s", err, output)
+	} else {
+		t.Logf("%s", output)
+	}
+}
+
+func browserFeishuProvider(backend http.Handler, origin string) http.Handler {
+	provider := strings.Replace(origin, "127.0.0.1", "localhost", 1) + "/test-authorize"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/feishu/start":
+			result := httptest.NewRecorder()
+			backend.ServeHTTP(result, r)
+			for key, values := range result.Header() {
+				w.Header()[key] = values
+			}
+			if result.Code == http.StatusFound {
+				location, err := url.Parse(result.Header().Get("Location"))
+				if err != nil || location.Host != "accounts.feishu.cn" {
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				w.Header().Set("Location", provider+"?"+location.RawQuery)
+			}
+			w.WriteHeader(result.Code)
+			_, _ = w.Write(result.Body.Bytes())
+		case "/test-authorize":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			query := url.Values{"state": {r.URL.Query().Get("state")}}
+			for _, option := range []struct{ label, code string }{
+				{"cancelled", ""}, {"denied", "fixture-code-foreign-tenant"},
+				{"unavailable", "fixture-code-userinfo-outage"}, {"success", "ou_admin"},
+			} {
+				if option.code == "" {
+					query.Set("error", "access_denied")
+				} else {
+					query.Del("error")
+					query.Set("code", option.code)
+				}
+				callback := origin + "/auth/feishu/callback?" + query.Encode()
+				_, _ = fmt.Fprintf(w, "<a href=\"%s\">%s</a> ", html.EscapeString(callback), option.label)
+			}
+		default:
+			backend.ServeHTTP(w, r)
+		}
+	})
+}
 
 func (f *feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 	var body string
@@ -326,7 +409,11 @@ func (f *feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		token := "tenant-fixture"
 		if r.Form.Get("grant_type") == "authorization_code" {
-			if r.Form.Get("code_verifier") == "" || r.Form.Get("redirect_uri") != fixtureOrigin+"/auth/feishu/callback" {
+			origin := f.callbackOrigin
+			if origin == "" {
+				origin = fixtureOrigin
+			}
+			if r.Form.Get("code_verifier") == "" || r.Form.Get("redirect_uri") != origin+"/auth/feishu/callback" {
 				return nil, fmt.Errorf("incorrect OAuth exchange")
 			}
 			token = "fixture-access-token-" + r.Form.Get("code")
