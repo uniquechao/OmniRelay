@@ -59,7 +59,7 @@ func TestFeishuRejectsUnverifiedUserInfo(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testConfig()
 			cfg.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Path == "/oauth/v3/token" {
+				if r.URL.Path == "/open-apis/authen/v2/oauth/token" {
 					return providerResponse(200, `{"code":0,"access_token":"user-access-token","token_type":"Bearer"}`), nil
 				}
 				return providerResponse(200, tc.body), nil
@@ -96,7 +96,7 @@ func TestFeishuDoesNotFollowCredentialRedirects(t *testing.T) {
 func TestFeishuRejectsTokenExchangeForAnotherApp(t *testing.T) {
 	cfg := testConfig()
 	cfg.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != "/oauth/v3/token" {
+		if r.URL.Path != "/open-apis/authen/v2/oauth/token" {
 			t.Fatal("looked up a profile after a rejected token exchange")
 		}
 		return providerResponse(400, `{"code":20024,"error_description":"private provider diagnostic"}`), nil
@@ -123,7 +123,7 @@ func TestFeishuOutageTakesPrecedenceOverProviderErrorCode(t *testing.T) {
 	for _, failTokenExchange := range []bool{true, false} {
 		cfg := testConfig()
 		cfg.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Path == "/oauth/v3/token" {
+			if r.URL.Path == "/open-apis/authen/v2/oauth/token" {
 				if failTokenExchange {
 					return providerResponse(http.StatusTooManyRequests, `{"code":20010}`), nil
 				}
@@ -201,14 +201,14 @@ func TestOAuthSessionLifecycleWithPostgres(t *testing.T) {
 	var challenge string
 	cfg.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.String() {
-		case "https://accounts.feishu.cn/oauth/v3/token":
+		case "https://open.feishu.cn/open-apis/authen/v2/oauth/token":
 			exchanges.Add(1)
 			var payload map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Error(err)
 			}
 			verifier := sha256.Sum256([]byte(payload["code_verifier"]))
-			if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" ||
+			if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json; charset=utf-8" ||
 				base64.RawURLEncoding.EncodeToString(verifier[:]) != challenge ||
 				payload["client_id"] != cfg.AppID || payload["client_secret"] != cfg.AppSecret ||
 				payload["grant_type"] != "authorization_code" || payload["code"] != "code-ok" ||

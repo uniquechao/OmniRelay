@@ -36,9 +36,9 @@ func TestWebSetupRequiresOAuthAndSavesCredentialsOnce(t *testing.T) {
 		providerCalls.Add(1)
 		var body string
 		switch r.URL.Path {
-		case "/oauth/v3/token":
+		case "/open-apis/authen/v2/oauth/token":
 			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || r.Header.Get("Content-Type") != "application/json" ||
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || r.Header.Get("Content-Type") != "application/json; charset=utf-8" ||
 				payload["grant_type"] != "authorization_code" || payload["client_id"] != credentials.AppID ||
 				payload["client_secret"] != credentials.AppSecret || payload["redirect_uri"] != origin+"/auth/feishu/callback" ||
 				len(payload["code_verifier"]) != 43 {

@@ -12,10 +12,10 @@ import (
 	"strings"
 )
 
-// Use the OAuth v3 token endpoint so Feishu enforces PKCE on both legs.
+// Pair the browser authorization endpoint with Feishu’s v2 JSON user-token exchange.
 const (
 	authorizeEndpoint = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
-	tokenEndpoint     = "https://accounts.feishu.cn/oauth/v3/token"
+	tokenEndpoint     = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
 	userInfoEndpoint  = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 )
 
@@ -79,7 +79,6 @@ func (s *Service) authorizationURL(state, verifier string) string {
 }
 
 func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Principal, error) {
-	// Feishu v3 documents JSON as well as form encoding for authorization-code exchange.
 	payload, err := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     s.cfg.AppID,
@@ -95,7 +94,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	if err != nil {
 		return Principal{}, errFeishu
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	var token struct {
 		Code        *int   `json:"code"`
 		AccessToken string `json:"access_token"`
