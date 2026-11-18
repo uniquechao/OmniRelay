@@ -48,7 +48,7 @@ POST `/api/v1/system/feishu-bot/checks` 使用 `system.read`，仍须 Origin 和
 5. `OMNIRELAY_FEISHU_CREDENTIALS_GENERATION=1` 是非敏感、单调递增的部署版本字符串，轮换 App Secret 时所有副本原子更新并递增，不使用秘密值或其哈希。新键仅合并当前代次活动任务；旧键仍回原 ID。读取、领取、续租和提交必须核对代次，禁止旧代次任务更新当前状态。旧活动任务由协调/租约恢复终结为 failed，失败码为 provider_temporarily_unavailable；不新增 cancelled 检测状态。
 6. 同键不同指纹返回 409 `idempotency_conflict`，不得覆盖绑定。当前合法正文只有 `{}`，非法正文先返回 400，因此该冲突主要是后续协议扩展的防护，不将非法正文改报 409。并发键绑定与活动任务唯一性依靠数据库事务，不能只用内存缓存。
 
-部署样例在 `config/backend.env.example`。服务启动前，以独立迁移角色运行 `omnirelay migrate` 应用 `0005_feishu_bot.sql`。App ID 和租户标识用于隔离数据，必须配置。缺少 App Secret 时，已有本地账号仍可管理 Bot，检测返回 `credentials_missing`，飞书登录和目录同步需要有效凭据。配置变更写入 `feishu_bot.configure` 审计事件，包含操作者、应用资源和变更版本。
+部署样例在 `config/backend.env.example`。服务启动前，以独立迁移角色运行 `omnirelay migrate` 应用迁移至 `0006_feishu_inbox.sql`。App ID 和租户标识用于隔离数据，必须配置。缺少 App Secret 时，已有本地账号仍可管理 Bot，检测返回 `credentials_missing`，飞书登录和目录同步需要有效凭据。配置变更写入 `feishu_bot.configure` 审计事件，包含操作者、应用资源和变更版本。
 
 数据库拒绝旧凭据代次重新启用。检测任务的领取租约为 30 秒，Worker 完成令牌阶段后续租。异常退出后，同一代次的实例可在租约过期后重新领取。配置变更及凭据换代会清除当前连接的心跳和收信时间。幂等窗口固定为 24 小时。
 
@@ -77,3 +77,25 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 ## 验证边界
 
 离线样例校验严格字段集合、类型、枚举、时间、ETag、生命周期、目录可见性、同版与去重。设置 `OMNIRELAY_TEST_DATABASE_URL` 指向隔离 PostgreSQL 后，执行 `go test -v ./cmd/omnirelay ./internal/feishu ./migrations` 验证 Bot 管理 HTTP、适配器、任务并发与迁移。飞书适配测试为真实请求构造与响应解析注入测试传输层。预发布飞书应用、浏览器和 SDK 验收见[跨角色验收与预发布清单](feishu-integration-acceptance.md)。
+
+## Go 入站受理
+
+`orchestrator.InboxAcceptor` 接收经过连接适配器校验的 `InboundEvent`，其中 `TenantID` 是飞书 `tenant_key`，`ChatKind` 为 `p2p` 或 `group`，`ThreadID` 和 `ReplyToMessageID` 可空。适配器使用自己的收信时间填充 `ReceivedAt`，并在该条连接建立时绑定 `ConnectionFence`。事件来源、发送者类型及群 @ 目标由适配器核验。
+
+```go
+event := orchestrator.InboundEvent{
+    AppID: "cli_example", TenantID: "tenant_example",
+    EventID: "evt_example", MessageID: "om_message",
+    ChatID: "oc_group", ThreadID: "omt_topic", ReplyToMessageID: "om_parent",
+    ChatKind: orchestrator.ChatGroup, SenderOpenID: "ou_member",
+    ReceivedAt: time.Date(2026, 11, 18, 8, 22, 0, 0, time.UTC),
+    Text: "查询项目进度", Connection: fence,
+}
+result, err := inbox.AcceptInbound(ctx, event)
+```
+
+- 连接协调器获得 Kubernetes Lease 后，通过 PostgreSQL 的 `ConnectionFence` 读取版本和代次，以该快照调用 `StartConnection` 激活并取得新代次。每条回调捕获该代次。仍持有 Kubernetes Lease 时才允许续期，确认连接健康后调用 `RenewConnection`。失去 Lease 时停止回调并用绑定的代次调用 `EndConnection`。数据库持有权会按数据库时间过期；旧代次不能续期或结束新连接。激活、结束、开关和凭据换代均清空收信时间。
+- 受理先检查部署作用域与持有权，再按 `(app_id, tenant_id, message_id)` 去重。同一真实消息重投返回原 `WorkID`，保留首次受理内容和准入结论。切换代次后，由当前持有者收到历史重投时仍返回原 ID。历史重投不更新当前代次收信时间。状态中的 `last_message_at` 采用 PostgreSQL 记录本次受理的时间。
+- 同组织的可信消息同时写入原始事件和工作记录。已启用账号对应 `pending_route`；未开通或停用的账号对应 `admission_denied`，工作不绑定本地账号，也不占待路由容量。两种结果都证明当前连接收到了真实消息。后续路由须重新核验账号及权限。
+- 异组织、异应用或无效事件，以及关闭配置、过期版本、旧代次或过期持有权，均返回错误且不写入。待路由容量按组织和应用计算，去重后只检查新建的待路由工作。容量耗尽返回 `ErrInboxFull`，存储或提交失败返回 `ErrInboxUnavailable`。任何错误都返回空结果。回调只在 `err == nil` 时确认数据库受理。
+- 服务启动前使用独立迁移角色应用 `0006_feishu_inbox.sql`。待路由容量由装配层传给 `NewFeishuInbox`。受理最多使用 2.5 秒，留出长连接回调处理余量。

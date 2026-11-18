@@ -103,7 +103,7 @@ func TestFeishuRejectsTokenExchangeForAnotherApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.feishuIdentity(t.Context(), "one-time-code", "verifier"); !errors.Is(err, errNotAdmitted) {
+	if _, err := svc.feishuIdentity(t.Context(), "one-time-code", "verifier"); !errors.Is(err, ErrNotAdmitted) {
 		t.Fatalf("expected a generic denial for a code from another app, got %v", err)
 	}
 }

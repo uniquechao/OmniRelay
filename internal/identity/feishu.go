@@ -54,14 +54,14 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	}
 	status, err := s.feishuJSON(req, &token)
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return Principal{}, errNotAdmitted
+		return Principal{}, ErrNotAdmitted
 	}
 	if err != nil || token.Code == nil {
 		return Principal{}, errFeishu
 	}
 	switch *token.Code {
 	case 20003, 20004, 20008, 20010, 20024, 20049, 20065, 20066, 20071:
-		return Principal{}, errNotAdmitted
+		return Principal{}, ErrNotAdmitted
 	}
 	if status != http.StatusOK || *token.Code != 0 || token.AccessToken == "" || !strings.EqualFold(token.TokenType, "Bearer") {
 		return Principal{}, errFeishu
@@ -95,7 +95,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 	}
 	switch *user.Code {
 	case 20008, 20021, 20022, 20023:
-		return Principal{}, errNotAdmitted
+		return Principal{}, ErrNotAdmitted
 	}
 	if status != http.StatusOK || *user.Code != 0 {
 		return Principal{}, errFeishu
@@ -107,7 +107,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		(data.AppID != "" && data.AppID != s.cfg.AppID) ||
 		data.Disabled || (data.Active != nil && !*data.Active) ||
 		data.Status.Frozen || data.Status.Resigned || (data.Status.Activated != nil && !*data.Status.Activated) {
-		return Principal{}, errNotAdmitted
+		return Principal{}, ErrNotAdmitted
 	}
 	return Principal{
 		TenantKey: data.TenantKey, AppID: s.cfg.AppID, OpenID: data.OpenID,

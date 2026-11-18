@@ -36,6 +36,20 @@ RETURNING pkce_verifier, return_path
 	return verifier, returnPath, err
 }
 
+// ResolveFeishuAccount resolves a verified Feishu identity to a preprovisioned,
+// active account and locks it against deactivation until the transaction ends.
+func ResolveFeishuAccount(ctx context.Context, tx pgx.Tx, tenantKey, appID, openID string) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `
+SELECT id FROM accounts WHERE tenant_key = $1 AND app_id = $2 AND open_id = $3 AND active
+FOR NO KEY UPDATE
+`, tenantKey, appID, openID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotAdmitted
+	}
+	return id, err
+}
+
 func (s *Service) createSession(ctx context.Context, p Principal, token, previousToken string) error {
 	// Clear expired rows before taking the account lock shared with deactivation.
 	if _, err := s.pool.Exec(ctx, `
@@ -53,16 +67,13 @@ WHERE token_digest IN (
 		return err
 	}
 	defer tx.Rollback(ctx)
-	// Refresh the preprovisioned account and lock it through session creation.
-	err = tx.QueryRow(ctx, `
-UPDATE accounts SET name = $4, avatar_url = $5, updated_at = CURRENT_TIMESTAMP
-WHERE tenant_key = $1 AND app_id = $2 AND open_id = $3 AND active
-RETURNING id
-`, p.TenantKey, p.AppID, p.OpenID, p.Name, p.AvatarURL).Scan(&p.AccountID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errNotAdmitted
-	}
+	p.AccountID, err = ResolveFeishuAccount(ctx, tx, p.TenantKey, p.AppID, p.OpenID)
 	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE accounts SET name = $2, avatar_url = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1
+`, p.AccountID, p.Name, p.AvatarURL); err != nil {
 		return err
 	}
 	if previousToken != "" {
