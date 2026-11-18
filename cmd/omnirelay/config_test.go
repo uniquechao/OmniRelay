@@ -108,3 +108,17 @@ func TestConfigFeishuBotGenerationAndHeartbeat(t *testing.T) {
 		t.Fatalf("unexpected custom Bot settings: %d %v %v", cfg.credentialsGeneration, cfg.botHeartbeatTTL, err)
 	}
 }
+
+func TestConfigFeishuBotLeaseRequiresNamespaceAndPodUID(t *testing.T) {
+	env := goodEnvironment()
+	get := func(key string) string { return env[key] }
+	env["OMNIRELAY_FEISHU_BOT_LEASE_NAMESPACE"] = "staging"
+	if _, err := readConfig(get, true); err == nil {
+		t.Fatal("accepted Lease namespace without a Pod UID")
+	}
+	env["OMNIRELAY_FEISHU_BOT_POD_UID"] = "pod-fixture"
+	cfg, err := readConfig(get, true)
+	if err != nil || cfg.botLeaseNamespace != "staging" || cfg.botPodUID != "pod-fixture" {
+		t.Fatalf("unexpected Lease config: %s %s %v", cfg.botLeaseNamespace, cfg.botPodUID, err)
+	}
+}

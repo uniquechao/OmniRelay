@@ -12,10 +12,21 @@ import (
 // ConnectionFence reads the configuration snapshot used for connection activation.
 func (s *FeishuBot) ConnectionFence(ctx context.Context) (orchestrator.ConnectionFence, error) {
 	var fence orchestrator.ConnectionFence
-	err := s.pool.QueryRow(ctx, `SELECT version, connection_generation FROM feishu_bot_configs
-		WHERE tenant_key=$1 AND app_id=$2 AND credentials_generation=$3 AND enabled`,
-		s.config.TenantKey, s.config.AppID, s.generation).Scan(&fence.ConfigVersion, &fence.ConnectionGeneration)
-	return fence, connectionError(err)
+	var enabled bool
+	var generation int64
+	err := s.pool.QueryRow(ctx, `SELECT version, connection_generation, enabled, credentials_generation
+		FROM feishu_bot_configs WHERE tenant_key=$1 AND app_id=$2`,
+		s.config.TenantKey, s.config.AppID).Scan(&fence.ConfigVersion, &fence.ConnectionGeneration, &enabled, &generation)
+	if err != nil {
+		return orchestrator.ConnectionFence{}, connectionError(err)
+	}
+	if generation != s.generation {
+		return orchestrator.ConnectionFence{}, system.ErrStaleGeneration
+	}
+	if !enabled {
+		return orchestrator.ConnectionFence{}, orchestrator.ErrStaleConnection
+	}
+	return fence, nil
 }
 
 // StartConnection replaces the snapshot generation after the coordinator acquires
@@ -39,6 +50,7 @@ func (s *FeishuBot) StartConnection(ctx context.Context, snapshot orchestrator.C
 
 const connectionMatch = `tenant_key=$1 AND app_id=$2 AND enabled AND version=$3 AND connection_generation=$4`
 const liveConnection = connectionMatch + ` AND connection_lease_until>clock_timestamp()`
+const receivingConnection = liveConnection + ` AND connection_state IN ('connecting', 'connected')`
 
 // RenewConnection publishes a healthy heartbeat while the coordinator still owns
 // the external lease. An expired database lease must start a fresh generation.
@@ -46,12 +58,26 @@ func (s *FeishuBot) RenewConnection(ctx context.Context, fence orchestrator.Conn
 	return s.updateConnection(ctx, fence, `WITH instant AS (SELECT clock_timestamp() AS at)
 		UPDATE feishu_bot_configs SET connection_state='connected', last_heartbeat_at=at,
 		connection_lease_until=at+$5::bigint*interval '1 microsecond'
-		FROM instant WHERE `+liveConnection, s.heartbeat.Microseconds())
+		FROM instant WHERE `+receivingConnection, s.heartbeat.Microseconds())
+}
+
+// KeepConnecting maintains ownership while the SDK is still dialing.
+func (s *FeishuBot) KeepConnecting(ctx context.Context, fence orchestrator.ConnectionFence) error {
+	return s.updateConnection(ctx, fence, `UPDATE feishu_bot_configs
+		SET connection_lease_until=clock_timestamp()+$5::bigint*interval '1 microsecond'
+		WHERE `+liveConnection+` AND connection_state='connecting'`, s.heartbeat.Microseconds())
+}
+
+// MarkReconnecting closes the admission window while another dial is pending.
+func (s *FeishuBot) MarkReconnecting(ctx context.Context, fence orchestrator.ConnectionFence) error {
+	return s.updateConnection(ctx, fence, `UPDATE feishu_bot_configs SET connection_state='reconnecting',
+		last_heartbeat_at=NULL, connection_lease_until=clock_timestamp()+$5::bigint*interval '1 microsecond'
+		WHERE `+receivingConnection, s.heartbeat.Microseconds())
 }
 
 // EndConnection fences late callbacks when the coordinator releases or loses ownership.
 func (s *FeishuBot) EndConnection(ctx context.Context, fence orchestrator.ConnectionFence) error {
-	return s.updateConnection(ctx, fence, `UPDATE feishu_bot_configs SET `+resetConnection+
+	return s.updateConnection(ctx, fence, `UPDATE feishu_bot_configs SET connection_state='unavailable', `+resetConnection+
 		` WHERE `+connectionMatch+` AND connection_lease_until IS NOT NULL`)
 }
 

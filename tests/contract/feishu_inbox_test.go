@@ -477,3 +477,46 @@ func acceptWhileBlocked(t *testing.T, f inboxFixture, event orchestrator.Inbound
 	t.Fatal("callback did not wait on the expected PostgreSQL transaction")
 	return nil
 }
+
+func TestFeishuConnectionTransitionStateAndFencing(t *testing.T) {
+	f := newInboxFixture(t, 2)
+	ctx := t.Context()
+	state := func(want string) {
+		t.Helper()
+		status, err := f.bot.Status(ctx)
+		must(t, err)
+		if status.Connection.State != want {
+			t.Fatalf("got %s, want %s", status.Connection.State, want)
+		}
+	}
+	state("connected")
+	old := f.event.Connection
+	must(t, f.bot.MarkReconnecting(ctx, old))
+	state("reconnecting")
+	f.reject(t, f.event, orchestrator.ErrStaleConnection)
+	if err := f.bot.RenewConnection(ctx, old); !errors.Is(err, orchestrator.ErrStaleConnection) {
+		t.Fatalf("disconnected session renewed its heartbeat: %v", err)
+	}
+
+	current, err := f.bot.StartConnection(ctx, old)
+	must(t, err)
+	state("connecting")
+	must(t, f.bot.KeepConnecting(ctx, current))
+	if err := f.bot.MarkReconnecting(ctx, old); !errors.Is(err, orchestrator.ErrStaleConnection) {
+		t.Fatalf("old holder overwrote current generation: %v", err)
+	}
+	must(t, f.bot.RenewConnection(ctx, current))
+	state("connected")
+	_, err = f.pool.Exec(ctx, `UPDATE feishu_bot_configs
+		SET last_heartbeat_at=clock_timestamp()-interval '31 seconds', connection_lease_until=clock_timestamp()`)
+	must(t, err)
+	state("unavailable")
+	_, err = f.bot.Configure(ctx, identity.Principal{}, `"bot-1"`, false)
+	must(t, err)
+	state("disabled")
+	var persisted string
+	must(t, f.pool.QueryRow(ctx, "SELECT connection_state FROM feishu_bot_configs").Scan(&persisted))
+	if persisted != "disabled" {
+		t.Fatalf("persisted state = %s", persisted)
+	}
+}

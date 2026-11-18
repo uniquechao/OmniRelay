@@ -16,6 +16,7 @@ type configuration struct {
 	pageBudget                             int
 	credentialsGeneration                  int64
 	botHeartbeatTTL                        time.Duration
+	botLeaseNamespace, botPodUID           string
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
@@ -70,6 +71,11 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 		if err != nil || cfg.botHeartbeatTTL <= 0 {
 			return configuration{}, errors.New("OMNIRELAY_FEISHU_BOT_HEARTBEAT_TTL must be a positive duration")
 		}
+	}
+	cfg.botLeaseNamespace = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_LEASE_NAMESPACE"))
+	cfg.botPodUID = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_POD_UID"))
+	if (cfg.botLeaseNamespace == "") != (cfg.botPodUID == "") {
+		return configuration{}, errors.New("Feishu Bot Lease namespace and Pod UID must be configured together")
 	}
 	if addr := strings.TrimSpace(getenv("OMNIRELAY_LISTEN_ADDR")); addr != "" {
 		cfg.listenAddr = addr

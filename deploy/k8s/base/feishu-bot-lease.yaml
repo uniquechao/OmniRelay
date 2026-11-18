@@ -1,0 +1,31 @@
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: omnirelay-feishu-bot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: omnirelay-feishu-bot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: omnirelay-feishu-bot
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["omnirelay-feishu-bot"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: omnirelay-feishu-bot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: omnirelay-feishu-bot
+subjects:
+  - kind: ServiceAccount
+    name: omnirelay-feishu-bot

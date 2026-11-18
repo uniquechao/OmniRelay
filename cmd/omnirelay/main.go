@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/migrations"
 	"golang.org/x/term"
@@ -22,6 +23,12 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) == 2 && os.Args[1] == feishu.WorkerCommand {
+		if feishu.ServeSDKWorker(ctx) != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(ctx, os.Args[1:]); err != nil {
 		slog.Error("OmniRelay startup or shutdown failed", "error", err.Error())
 		os.Exit(1)

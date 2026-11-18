@@ -61,7 +61,7 @@ func (s *FeishuInbox) AcceptInbound(ctx context.Context, event orchestrator.Inbo
 		// Account resolution or writes may have waited. Recheck the lease using
 		// database time before recording receipt in the same transaction.
 		tag, err := tx.Exec(ctx, `UPDATE feishu_bot_configs
-			SET last_message_at=GREATEST(last_message_at, clock_timestamp()) WHERE `+liveConnection,
+			SET last_message_at=GREATEST(last_message_at, clock_timestamp()) WHERE `+receivingConnection,
 			event.TenantID, event.AppID, event.Connection.ConfigVersion, event.Connection.ConnectionGeneration)
 		if err == nil && tag.RowsAffected() == 0 {
 			return orchestrator.ErrStaleConnection
@@ -90,7 +90,7 @@ func (s *FeishuInbox) validEvent(event orchestrator.InboundEvent) bool {
 
 func checkLiveConnection(ctx context.Context, tx pgx.Tx, event orchestrator.InboundEvent) error {
 	var held bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feishu_bot_configs WHERE `+liveConnection+`)`,
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feishu_bot_configs WHERE `+receivingConnection+`)`,
 		event.TenantID, event.AppID, event.Connection.ConfigVersion, event.Connection.ConnectionGeneration).Scan(&held)
 	if err == nil && !held {
 		return orchestrator.ErrStaleConnection
