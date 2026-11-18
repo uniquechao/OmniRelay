@@ -1,0 +1,321 @@
+[
+  {
+    "name": "new",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [],
+    "active_tasks": [],
+    "expected": {
+      "id": "new-task",
+      "reused": false
+    }
+  },
+  {
+    "name": "same-key-active",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "other-key-active",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-b",
+    "now_seconds": 100,
+    "bindings": [],
+    "active_tasks": [
+      {
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "same-key-terminal",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": 10,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "active-over-24h",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 90000,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "terminal-before-boundary",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 86409,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": 10,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "terminal-at-boundary",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 86410,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": 10,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [],
+    "expected": {
+      "id": "new-task",
+      "reused": false
+    }
+  },
+  {
+    "name": "old-key-after-rotation",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "2",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": 10,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [
+      {
+        "id": "task-2",
+        "generation": "2",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "expected": {
+      "id": "task-1",
+      "reused": true
+    }
+  },
+  {
+    "name": "new-key-after-rotation",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "2",
+    "key": "key-b",
+    "now_seconds": 100,
+    "bindings": [],
+    "active_tasks": [
+      {
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "expected": {
+      "id": "new-task",
+      "reused": false
+    }
+  },
+  {
+    "name": "new-key-current-generation",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "2",
+    "key": "key-b",
+    "now_seconds": 100,
+    "bindings": [],
+    "active_tasks": [
+      {
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      },
+      {
+        "id": "task-2",
+        "generation": "2",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_example"
+      }
+    ],
+    "expected": {
+      "id": "task-2",
+      "reused": true
+    }
+  },
+  {
+    "name": "other-tenant-key",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_other",
+        "app_id": "cli_example"
+      }
+    ],
+    "active_tasks": [
+      {
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_other",
+        "app_id": "cli_example"
+      }
+    ],
+    "expected": {
+      "id": "new-task",
+      "reused": false
+    }
+  },
+  {
+    "name": "other-app-key",
+    "source": {
+      "tenant_key": "tenant_example",
+      "app_id": "cli_example"
+    },
+    "generation": "1",
+    "key": "key-a",
+    "now_seconds": 100,
+    "bindings": [
+      {
+        "key": "key-a",
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_other"
+      }
+    ],
+    "active_tasks": [
+      {
+        "id": "task-1",
+        "generation": "1",
+        "finished_seconds": null,
+        "tenant_key": "tenant_example",
+        "app_id": "cli_other"
+      }
+    ],
+    "expected": {
+      "id": "new-task",
+      "reused": false
+    }
+  }
+]

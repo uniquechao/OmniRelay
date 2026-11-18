@@ -1,0 +1,58 @@
+[
+  {
+    "name": "cancelled",
+    "transaction_valid": true,
+    "status": 303,
+    "location": "/#/login?error=cancelled",
+    "session_created": false
+  },
+  {
+    "name": "denied",
+    "transaction_valid": true,
+    "status": 303,
+    "location": "/#/login?error=denied",
+    "session_created": false
+  },
+  {
+    "name": "unavailable",
+    "transaction_valid": true,
+    "status": 303,
+    "location": "/#/login?error=unavailable",
+    "session_created": false
+  },
+  {
+    "name": "legacy",
+    "transaction_valid": null,
+    "status": 303,
+    "location": "/#/login?error=feishu",
+    "session_created": false
+  },
+  {
+    "name": "invalid-state",
+    "transaction_valid": false,
+    "status": 400,
+    "location": null,
+    "session_created": false
+  },
+  {
+    "name": "expired-state",
+    "transaction_valid": false,
+    "status": 400,
+    "location": null,
+    "session_created": false
+  },
+  {
+    "name": "replayed-state",
+    "transaction_valid": false,
+    "status": 400,
+    "location": null,
+    "session_created": false
+  },
+  {
+    "name": "wrong-browser",
+    "transaction_valid": false,
+    "status": 400,
+    "location": null,
+    "session_created": false
+  }
+]

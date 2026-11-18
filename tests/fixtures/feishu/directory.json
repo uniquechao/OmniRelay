@@ -1,0 +1,454 @@
+[
+  {
+    "name": "initial",
+    "departments": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": null,
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [],
+      "total": 0
+    },
+    "people": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": null,
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [],
+      "total": 0
+    },
+    "runs": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": null,
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [],
+      "total": 0,
+      "current": null,
+      "latest_attempt": null
+    }
+  },
+  {
+    "name": "visible",
+    "departments": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "id": "od_eng",
+          "parent_id": "",
+          "name": "研发",
+          "path": "研发",
+          "has_children": true
+        }
+      ],
+      "total": 1
+    },
+    "people": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "open_id": "ou_example",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "unknown",
+          "account_id": null,
+          "account_status": "unprovisioned",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_1",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "active",
+          "account_id": "account-example-1",
+          "account_status": "active",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_2",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "inactive",
+          "account_id": "account-example-2",
+          "account_status": "inactive",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_3",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "resigned",
+          "account_id": "account-example-3",
+          "account_status": "active",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        }
+      ],
+      "total": 4
+    },
+    "runs": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "id": 17,
+          "trigger": "manual",
+          "state": "succeeded",
+          "created_at": "2026-11-17T20:00:00Z",
+          "started_at": "2026-11-17T20:00:00Z",
+          "finished_at": "2026-11-17T20:00:01Z",
+          "department_count": 2,
+          "people_count": 4,
+          "missing_people_count": 0,
+          "outside_scope_count": 0,
+          "new_people_count": 4,
+          "changed_people_count": 0,
+          "scope": {
+            "department_roots": 1,
+            "explicit_people": 1,
+            "entire_org": false
+          }
+        }
+      ],
+      "total": 1,
+      "current": null,
+      "latest_attempt": {
+        "id": 17,
+        "trigger": "manual",
+        "state": "succeeded",
+        "created_at": "2026-11-17T20:00:00Z",
+        "started_at": "2026-11-17T20:00:00Z",
+        "finished_at": "2026-11-17T20:00:01Z",
+        "department_count": 2,
+        "people_count": 4,
+        "missing_people_count": 0,
+        "outside_scope_count": 0,
+        "new_people_count": 4,
+        "changed_people_count": 0,
+        "scope": {
+          "department_roots": 1,
+          "explicit_people": 1,
+          "entire_org": false
+        }
+      }
+    }
+  },
+  {
+    "name": "failed-visible",
+    "departments": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "id": "od_eng",
+          "parent_id": "",
+          "name": "研发",
+          "path": "研发",
+          "has_children": true
+        }
+      ],
+      "total": 1
+    },
+    "people": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "open_id": "ou_example",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "unknown",
+          "account_id": null,
+          "account_status": "unprovisioned",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_1",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "active",
+          "account_id": "account-example-1",
+          "account_status": "active",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_2",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "inactive",
+          "account_id": "account-example-2",
+          "account_status": "inactive",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        },
+        {
+          "open_id": "ou_example_3",
+          "name": "测试成员",
+          "avatar_url": "",
+          "directory_status": "resigned",
+          "account_id": "account-example-3",
+          "account_status": "active",
+          "departments": [
+            {
+              "id": "od_eng",
+              "path": "研发"
+            },
+            {
+              "id": "od_ops",
+              "path": "研发/运维"
+            }
+          ],
+          "platform_roles": []
+        }
+      ],
+      "total": 4
+    },
+    "runs": {
+      "snapshot_version": 17,
+      "scope": {
+        "department_roots": 1,
+        "explicit_people": 1,
+        "entire_org": false
+      },
+      "visible": true,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "id": 18,
+          "trigger": "manual",
+          "state": "failed",
+          "created_at": "2026-11-17T20:00:00Z",
+          "started_at": "2026-11-17T20:00:00Z",
+          "finished_at": "2026-11-17T20:00:01Z",
+          "department_count": 2,
+          "people_count": 1,
+          "missing_people_count": 0,
+          "outside_scope_count": 0,
+          "new_people_count": 1,
+          "changed_people_count": 0,
+          "scope": {
+            "department_roots": 1,
+            "explicit_people": 1,
+            "entire_org": false
+          },
+          "failure_reason": "分页不完整"
+        }
+      ],
+      "total": 1,
+      "current": null,
+      "latest_attempt": {
+        "id": 18,
+        "trigger": "manual",
+        "state": "failed",
+        "created_at": "2026-11-17T20:00:00Z",
+        "started_at": "2026-11-17T20:00:00Z",
+        "finished_at": "2026-11-17T20:00:01Z",
+        "department_count": 2,
+        "people_count": 1,
+        "missing_people_count": 0,
+        "outside_scope_count": 0,
+        "new_people_count": 1,
+        "changed_people_count": 0,
+        "scope": {
+          "department_roots": 1,
+          "explicit_people": 1,
+          "entire_org": false
+        },
+        "failure_reason": "分页不完整"
+      }
+    }
+  },
+  {
+    "name": "scope-hidden",
+    "departments": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [],
+      "total": 0
+    },
+    "people": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [],
+      "total": 0
+    },
+    "runs": {
+      "snapshot_version": null,
+      "scope": null,
+      "visible": false,
+      "last_success_at": "2026-11-17T20:00:00Z",
+      "next_run_at": "2026-11-17T21:00:00Z",
+      "interval_seconds": 3600,
+      "items": [
+        {
+          "id": 18,
+          "trigger": "manual",
+          "state": "failed",
+          "created_at": "2026-11-17T20:00:00Z",
+          "started_at": "2026-11-17T20:00:00Z",
+          "finished_at": "2026-11-17T20:00:01Z",
+          "department_count": 2,
+          "people_count": 1,
+          "missing_people_count": 0,
+          "outside_scope_count": 0,
+          "new_people_count": 1,
+          "changed_people_count": 0,
+          "scope": {
+            "department_roots": 1,
+            "explicit_people": 1,
+            "entire_org": false
+          },
+          "failure_reason": "授权范围变化"
+        }
+      ],
+      "total": 1,
+      "current": null,
+      "latest_attempt": {
+        "id": 18,
+        "trigger": "manual",
+        "state": "failed",
+        "created_at": "2026-11-17T20:00:00Z",
+        "started_at": "2026-11-17T20:00:00Z",
+        "finished_at": "2026-11-17T20:00:01Z",
+        "department_count": 2,
+        "people_count": 1,
+        "missing_people_count": 0,
+        "outside_scope_count": 0,
+        "new_people_count": 1,
+        "changed_people_count": 0,
+        "scope": {
+          "department_roots": 1,
+          "explicit_people": 1,
+          "entire_org": false
+        },
+        "failure_reason": "授权范围变化"
+      }
+    }
+  }
+]
