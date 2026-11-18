@@ -23,12 +23,14 @@ import (
 )
 
 func TestReturnPathStaysOnWorkbench(t *testing.T) {
-	for _, path := range []string{"", "/", "/projects?view=all", "/#/workbench", "/文档"} {
+	for _, path := range []string{"", "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot"} {
 		if _, err := localReturnPath(path); err != nil {
 			t.Errorf("valid path %q was rejected", path)
 		}
 	}
-	for _, path := range []string{"https://evil.test", "//evil.test", "///evil.test", "/\\evil.test", "/%5cevil.test", "/%2fevil.test", "/one/..//evil.test", "/path%0d%0aInjected", "/\tevil.test"} {
+	for _, path := range []string{"https://evil.test", "//evil.test", "///evil.test", "/\\evil.test", "/%5cevil.test", "/%2fevil.test", "/one/..//evil.test", "/path%0d%0aInjected", "/\tevil.test",
+		"/auth/logout", "/api/v1/me", "/#/login", "/?next=https://evil.test#/workbench", "/#/workbench?next=https://evil.test",
+		"/#//evil.test", "/#/system/feishu-bot/../users", "/#/%77orkbench", "/#/workbench%0d%0aInjected"} {
 		if target, err := localReturnPath(path); err == nil {
 			t.Errorf("unsafe path %q was accepted as %q", path, target)
 		}
@@ -105,6 +107,28 @@ func TestFeishuRejectsTokenExchangeForAnotherApp(t *testing.T) {
 	}
 	if _, err := svc.feishuIdentity(t.Context(), "one-time-code", "verifier"); !errors.Is(err, ErrNotAdmitted) {
 		t.Fatalf("expected a generic denial for a code from another app, got %v", err)
+	}
+}
+
+func TestFeishuOutageTakesPrecedenceOverProviderErrorCode(t *testing.T) {
+	for _, failTokenExchange := range []bool{true, false} {
+		cfg := testConfig()
+		cfg.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == "/oauth/v3/token" {
+				if failTokenExchange {
+					return providerResponse(http.StatusTooManyRequests, `{"code":20010}`), nil
+				}
+				return providerResponse(http.StatusOK, `{"code":0,"access_token":"user-access-token","token_type":"Bearer"}`), nil
+			}
+			return providerResponse(http.StatusServiceUnavailable, `{"code":20022}`), nil
+		})
+		svc, err := New(&pgxpool.Pool{}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.feishuIdentity(t.Context(), "one-time-code", "verifier"); !errors.Is(err, errFeishu) {
+			t.Fatalf("expected an upstream failure, got %v", err)
+		}
 	}
 }
 
@@ -205,10 +229,13 @@ func TestOAuthSessionLifecycleWithPostgres(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	svc.Register(mux)
-	request := func(method, path string, cookie *http.Cookie, origin, token string) *httptest.ResponseRecorder {
+	request := func(method, path string, cookie *http.Cookie, origin, token string, additionalCookies ...*http.Cookie) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, cfg.PublicOrigin+path, nil)
 		if cookie != nil {
 			r.AddCookie(cookie)
+		}
+		for _, additional := range additionalCookies {
+			r.AddCookie(additional)
 		}
 		if origin != "" {
 			r.Header.Set("Origin", origin)
@@ -252,7 +279,7 @@ func TestOAuthSessionLifecycleWithPostgres(t *testing.T) {
 	requireDenied := func(path string, browser *http.Cookie) {
 		t.Helper()
 		w := request("GET", path, browser, "", "")
-		if w.Code != 403 || w.Body.String() != "{\"error\":\"login_denied\"}\n" {
+		if w.Code != 303 || w.Header().Get("Location") != "/#/login?error=denied" || w.Body.Len() != 0 {
 			t.Fatalf("expected the generic login denial, got status %d", w.Code)
 		}
 		for _, cookie := range w.Result().Cookies() {
@@ -346,14 +373,33 @@ SELECT token_digest = convert_to($1, 'UTF8'), token_digest = $2 FROM web_session
 	}
 
 	path, browser = start()
+	if _, err := pool.Exec(t.Context(), "UPDATE oauth_login_transactions SET return_path = '/legacy-path?view=all'"); err != nil {
+		t.Fatal(err)
+	}
 	w := request("GET", path, browser, "", "")
-	if w.Code != 303 {
+	if w.Code != 303 || w.Header().Get("Location") != "/" {
 		t.Fatalf("returning account was not reused: %d %s", w.Code, w.Body.String())
 	}
 	for _, c := range w.Result().Cookies() {
 		if c.Value != "" {
 			session = c
 		}
+	}
+	previousSession := session
+	path, browser = start()
+	w = request("GET", path, browser, "", "", previousSession)
+	if w.Code != 303 || w.Header().Get("Location") != "/#/workbench" {
+		t.Fatalf("session replacement returned %d", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			session = c
+		}
+	}
+	if session == previousSession || session.Value == previousSession.Value ||
+		request("GET", "/api/v1/me", previousSession, "", "").Code != 401 ||
+		request("GET", "/api/v1/me", session, "", "").Code != 200 {
+		t.Fatal("OAuth did not replace the previous session")
 	}
 	if _, err := pool.Exec(t.Context(), "UPDATE web_sessions SET idle_expires_at = clock_timestamp() - interval '1 second'"); err != nil {
 		t.Fatal(err)
@@ -399,7 +445,7 @@ UPDATE web_sessions SET expires_at = clock_timestamp() - interval '1 second', id
 		t.Fatalf("disabled account retained session, received %d", w.Code)
 	}
 	path, browser = start()
-	if w := request("GET", path, browser, "", ""); w.Code != 403 {
+	if w := request("GET", path, browser, "", ""); w.Code != 303 || w.Header().Get("Location") != "/#/login?error=denied" {
 		t.Fatalf("disabled account obtained a session, received %d", w.Code)
 	}
 }
