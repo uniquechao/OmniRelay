@@ -131,6 +131,12 @@ def run(b, submission=False):
         require(type(b['coalesced']) is bool and b['state'] in {'queued', 'running'})
 
 
+def department_path(value):
+    require(type(value) is list and bool(value))
+    for name in value:
+        text(name)
+
+
 def directory(b, kind):
     extras = ['items', 'total'] + (['current', 'latest_attempt'] if kind == 'runs' else [])
     fields(b, STATUS_FIELDS + extras)
@@ -155,8 +161,9 @@ def directory(b, kind):
             key = item['id']
         elif kind == 'departments':
             fields(item, ['id', 'parent_id', 'name', 'path', 'has_children'])
-            for k in ['id', 'name', 'path']:
+            for k in ['id', 'name']:
                 text(item[k])
+            department_path(item['path'])
             require(type(item['parent_id']) is str and type(item['has_children']) is bool)
             key = item['id']
         else:
@@ -173,7 +180,7 @@ def directory(b, kind):
             for d in item['departments']:
                 fields(d, ['id', 'path'])
                 text(d['id'])
-                text(d['path'])
+                department_path(d['path'])
             for role in item['platform_roles']:
                 text(role)
             key = item['open_id']
@@ -352,6 +359,12 @@ class FeishuContract(unittest.TestCase):
         b['items'] = load('directory')[1]['people']['items']
         with self.assertRaises(ValueError):
             directory(b, 'people')
+
+        for invalid in ['研发/运维', [], ['研发', 5]]:
+            b = copy.deepcopy(load('directory')[1]['people'])
+            b['items'][0]['departments'][0]['path'] = invalid
+            with self.subTest(path=invalid), self.assertRaises(ValueError):
+                directory(b, 'people')
 
 
 if __name__ == '__main__':
