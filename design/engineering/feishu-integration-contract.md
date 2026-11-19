@@ -170,3 +170,28 @@ result, err := inbox.AcceptInbound(ctx, event)
 - 同组织的可信消息同时写入原始事件和工作记录。已启用账号对应 `pending_route`；未开通或停用的账号对应 `admission_denied`，工作不绑定本地账号，也不占待路由容量。两种结果都证明当前连接收到了真实消息。后续路由须重新核验账号及权限。
 - 异组织、异应用或无效事件，以及关闭配置、过期版本、旧代次或过期持有权，均返回错误且不写入。待路由容量按组织和应用计算，去重后只检查新建的待路由工作。容量耗尽返回 `ErrInboxFull`，存储或提交失败返回 `ErrInboxUnavailable`。任何错误都返回空结果。回调只在 `err == nil` 时确认数据库受理。
 - 服务启动前使用独立迁移角色应用 `0006_feishu_inbox.sql`。待路由容量由装配层传给 `NewFeishuInbox`。受理最多使用 2.5 秒，留出长连接回调处理余量。
+
+## 项目权威接口和八栏（F1）
+
+OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署方通过 `OMNIRELAY_OMNIGRID_ORIGIN` 和 `OMNIRELAY_OMNIGRID_IDENTITIES_FILE` 提供 HTTPS 权威源和只读挂载的映射文件。映射文件为 JSON 数组，每项包含 `account_id`、`open_id`、`user_id` 和该用户本人委托的 OmniGrid API `token`。适配器通过 `/api/v1/auth/me` 核对凭据主体和非服务账号身份。映射加载于启动时，撤销令牌后后续请求立即失效。个人令牌仅用于固定的读取接口。接口配置缺失时项目接口返回 503。
+
+`ProjectAccessResolver` 要求正式、有效的成员绑定和当前 `read` 动作。分派核对 `confirm_tasks`，原生项目管理核对 `manage_access`。本地接入管理委派绑定成员 ID 与 OmniGrid 的不透明权限版本。权限版本变动时委派重新核发，此版本也可能随业务日变化。项目目录按 `q`、`status` 筛选，先过滤成员和项目动作，再按 `page`、`page_size` 分页并返回同一集合的 `total`。
+
+栏目路径使用 `/api/v1/projects/{projectID}/` 前缀。OmniGrid 使用真实读取者裁剪来源、列表总数和衍生条目。OmniRelay 在回传前复核项目及栏目版本，过程中授权或来源变化返回 409。
+
+| 栏目 | 路径 | 权威边界 |
+| --- | --- | --- |
+| 概览 | `overview` | OmniGrid 工作台档案及里程碑 |
+| 成员 | `members` | OmniGrid 项目名单 |
+| 群聊 | `chats` | OmniRelay 的项目群关联与飞书按读取者核验的群源，消息沿用机器人记录接口 |
+| 会议纪要 | `meetings` | OmniGrid 本人授权的纪要投影 |
+| 文档 | `docs` | OmniGrid 本人授权的飞书资料投影 |
+| 日报 | `reports`、`reports/briefings` | OmniGrid 正式成员提交和覆盖范围，OmniRelay 简报生成与 E1 投递 |
+| 任务 | `tasks` | OmniGrid 正式看板 |
+| 飞书 Bot | `feishu` | OmniRelay 项目接入、目标群、版本化计划及可见的最近简报回执 |
+
+群关联和目标群按租户及应用区分。选择目标群会建立关联，换目标群保留原群的关联。接入设置要求 `project.settings`，写入携带原 `version`，首次使用 0。计划记录 IANA 时区、本地执行时间和启用状态。计划存储和手动发布是独立动作。
+
+`POST feishu/check` 要求 `project.settings`，检查其它账号还要求 `account.read`。输入包含 `account_id`（缺省为自己）、`action`（`project.read`、`project.assign`、`project.settings`）和 `public_scope`（`project_only` 或 `submission_count`）。结果独立报告 Bot、群成员、账号、项目动作和公开范围。校验保持只读，飞书探测采用读取接口，OmniGrid 按原行为维护 API 令牌使用时间。
+
+成员日报缺少来源覆盖时沿用上游的未知状态。简报每项目每业务日生成一条记录，固定生成者、数据版本、可见提交数和当时目标。默认仅预览。启用 E1 且项目管理者明确配置 `public_submission_count` 后，手动发布可向当前目标群发送业务日期和经批准的提交数。E1 发出前复核当前账号、项目动作、日报来源版本、目标群及内容。计划版本或目标变更后旧简报不会改投。投递与生成独立，未知回执通过 `POST reports/briefings/{runID}/reconcile` 查询原操作。

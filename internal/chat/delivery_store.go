@@ -101,7 +101,8 @@ func (s *Service) loadDelivery(ctx context.Context, k deliveryKey, owner, target
 }
 
 func (s *Service) finishDelivery(ctx context.Context, k deliveryKey, p deliveryPart) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state=$5,reason=$6,message_id=nullif($7,'')
+	tag, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state=$5,reason=$6,message_id=nullif($7,''),
+		confirmed_at=CASE WHEN $5='success' THEN now() END
 		WHERE (tenant_key,app_id,operation_key,position)=($1,$2,$3,$4) AND state='pending'`,
 		k.tenant, k.app, k.operation, p.position, p.state, p.reason, p.messageID)
 	if err == nil && tag.RowsAffected() != 1 {

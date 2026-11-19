@@ -59,6 +59,13 @@ type ReceiptSources struct {
 	Business   BusinessReceiptSource
 }
 
+// ConfigureBusinessReceipts installs the startup provider when none was injected.
+func (s *Service) ConfigureBusinessReceipts(source BusinessReceiptSource) {
+	if s.receipts.Business == nil {
+		s.receipts.Business = source
+	}
+}
+
 // Read both authorities for the authorized page. The delivery ledger owns the
 // stable mapping, so chat does not create a second association or cache grants.
 func (s ReceiptSources) project(ctx context.Context, actor identity.Principal, items []messageItem) {

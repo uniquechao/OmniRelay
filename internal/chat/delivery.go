@@ -299,7 +299,7 @@ func (s *Service) deliveryStatus(ctx context.Context, actor identity.Principal, 
 			!s.delivery.ConfirmDelivery(ctx, target, part.Kind, result.Sender.OpenID, part.messageID) {
 			continue
 		}
-		_, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state='success',reason=''
+		_, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state='success',reason='',confirmed_at=now()
 			WHERE (tenant_key,app_id,operation_key,position,message_id)=($1,$2,$3,$4,$5) AND state='unknown'`,
 			k.tenant, k.app, k.operation, part.Position, part.messageID)
 		if err != nil {
