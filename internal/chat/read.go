@@ -23,8 +23,9 @@ const visibleMessages = `m.tenant_key=$1 AND m.app_id=$2 AND m.chat_id=ANY($3::t
 
 type conversationItem struct {
 	conversation
-	LastMessageAt *time.Time                  `json:"last_message_at"`
-	Person        *directory.PersonProjection `json:"person,omitempty"`
+	ProjectAssignment *ProjectAssignment          `json:"project_assignment,omitempty"`
+	LastMessageAt     *time.Time                  `json:"last_message_at"`
+	Person            *directory.PersonProjection `json:"person,omitempty"`
 }
 
 func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p identity.Principal, scope authorizedScope) {
@@ -47,8 +48,10 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 			bool_or($5<>'' AND (strpos(lower(search_text),lower($5))>0 OR strpos(lower(sender_name),lower($5))>0)) AS matched_message
 		FROM feishu_chat_messages m WHERE ` + visibleMessages + ` AND NOT deleted GROUP BY chat_id
 	), matched AS (
-		SELECT c.chat_id,c.kind,c.name,c.peer_open_id,l.last_message_at
+		SELECT c.chat_id,c.kind,c.name,c.peer_open_id,l.last_message_at,
+			coalesce(a.project_id,''),coalesce(a.primary_group,false),coalesce(a.version,0)
 		FROM feishu_chat_conversations c LEFT JOIN latest l USING (chat_id)
+		LEFT JOIN project_chat_assignments a USING (tenant_key,app_id,chat_id)
 		WHERE c.tenant_key=$1 AND c.app_id=$2 AND c.chat_id=ANY($3::text[])
 			AND ($4='' OR c.kind=$4)
 			AND ($5='' OR strpos(lower(c.name),lower($5))>0 OR l.matched_message)
@@ -67,7 +70,12 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (conversationItem, error) {
 		var item conversationItem
-		err := row.Scan(&item.ID, &item.Kind, &item.Name, &item.Peer, &item.LastMessageAt)
+		var assignment ProjectAssignment
+		err := row.Scan(&item.ID, &item.Kind, &item.Name, &item.Peer, &item.LastMessageAt,
+			&assignment.ProjectID, &assignment.Primary, &assignment.Version)
+		if item.Kind == orchestrator.ChatGroup {
+			item.ProjectAssignment = &assignment
+		}
 		if item.LastMessageAt != nil {
 			t := item.LastMessageAt.UTC()
 			item.LastMessageAt = &t
@@ -98,6 +106,22 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 		}
 		for i, index := range indexes {
 			items[index].Person = &people[i]
+		}
+	}
+	projectReadable := make(map[string]bool)
+	for i := range items {
+		assignment := items[i].ProjectAssignment
+		if assignment == nil || assignment.ProjectID == "" {
+			continue
+		}
+		allowed, checked := projectReadable[assignment.ProjectID]
+		if !checked {
+			visible, authErr := s.check(ctx, p, "project.read", assignment.ProjectID)
+			allowed = visible && authErr == nil
+			projectReadable[assignment.ProjectID] = allowed
+		}
+		if !allowed {
+			items[i].ProjectAssignment = nil
 		}
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "scope": scopeName(scope.Admin)})

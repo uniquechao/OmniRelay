@@ -21,6 +21,7 @@ type Bot interface {
 
 type Chat interface {
 	ProjectGroup(context.Context, identity.Principal, string) (chat.Group, error)
+	ProjectGroupForMutation(context.Context, pgx.Tx, identity.Principal, string) (chat.Group, error)
 	SendBriefing(context.Context, identity.Principal, string, string, chat.DeliveryContent, chat.BusinessReceiptKey, chat.BriefingAuthority) (chat.DeliveryStatus, error)
 	BriefingDeliveryStatus(context.Context, identity.Principal, string, string) (chat.DeliveryStatus, error)
 }
@@ -80,18 +81,18 @@ func (s *Service) setSettings(ctx context.Context, actor identity.Principal, id 
 	if err != nil || hour.Format("15:04") != cfg.Time {
 		return settings{}, errInput
 	}
-	if cfg.Target != "" {
-		if !identifier.MatchString(cfg.Target) {
-			return settings{}, errInput
-		}
-		if _, err := s.chat.ProjectGroup(ctx, actor, cfg.Target); err != nil {
-			return settings{}, err
-		}
+	if cfg.Target != "" && !identifier.MatchString(cfg.Target) {
+		return settings{}, errInput
 	}
-	if err := s.require(ctx, actor, "project.settings", id); err != nil {
-		return settings{}, err
-	}
-	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err = s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+		if cfg.Target != "" {
+			if _, err := s.chat.ProjectGroupForMutation(ctx, tx, actor, cfg.Target); err != nil {
+				return err
+			}
+		}
+		if err := s.requireSettingsMutation(ctx, tx, actor, id); err != nil {
+			return err
+		}
 		const columns = `tenant_key,app_id,project_id,target_chat_id,timezone,local_time,plan_enabled,public_submission_count,version`
 		stmt := `UPDATE project_relay_settings SET target_chat_id=nullif($4,''),timezone=$5,local_time=$6,
 			plan_enabled=$7,public_submission_count=$8,version=version+1
@@ -114,14 +115,21 @@ func (s *Service) setSettings(ctx context.Context, actor identity.Principal, id 
 			return err
 		}
 		if cfg.Target != "" {
-			tag, err := tx.Exec(ctx, `INSERT INTO project_chat_links (tenant_key,app_id,project_id,chat_id)
-				VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_key,app_id,chat_id)
-				DO UPDATE SET project_id=EXCLUDED.project_id WHERE project_chat_links.project_id=EXCLUDED.project_id`,
-				actor.TenantKey, actor.AppID, id, cfg.Target)
+			prior, err := assignment(ctx, tx, actor, cfg.Target)
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() != 1 {
+			switch prior.ProjectID {
+			case "":
+				if err := writeAssignment(ctx, tx, actor, cfg.Target, id); err != nil {
+					return err
+				}
+				if err := auditAssignment(ctx, tx, actor, "project.chat.assign", cfg.Target, prior.Version+1,
+					map[string]string{"project_id": id, "previous_project_id": ""}); err != nil {
+					return err
+				}
+			case id:
+			default:
 				return errConflict
 			}
 		}

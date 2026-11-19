@@ -171,6 +171,12 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, action, proje
 	return s.check(ctx, s.pool, p, action, projectID)
 }
 
+// CheckInOrganizationMutation rechecks current authority in a transaction
+// opened by WithOrganizationMutation.
+func (s *Service) CheckInOrganizationMutation(ctx context.Context, tx pgx.Tx, p identity.Principal, action, projectID string) (bool, error) {
+	return s.check(ctx, tx, p, action, projectID)
+}
+
 func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, action, projectID string) (bool, error) {
 	if !s.inScope(p) {
 		return false, nil

@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -336,21 +337,22 @@ func (s *Service) revokeRole(ctx context.Context, actor identity.Principal, gran
 }
 
 type AuditEvent struct {
-	ID                 int64     `json:"id"`
-	ActorAccountID     string    `json:"actorAccountId"`
-	Action             string    `json:"action"`
-	ResourceType       string    `json:"resourceType"`
-	ResourceID         string    `json:"resourceId"`
-	Result             string    `json:"result"`
-	ChangeVersion      int64     `json:"changeVersion"`
-	CorrelationID      string    `json:"correlationId"`
-	CreatedAt          time.Time `json:"createdAt"`
-	DirectorySyncRunID *int64    `json:"directorySyncRunId,omitempty"`
+	ID                 int64           `json:"id"`
+	ActorAccountID     string          `json:"actorAccountId"`
+	Action             string          `json:"action"`
+	ResourceType       string          `json:"resourceType"`
+	ResourceID         string          `json:"resourceId"`
+	Result             string          `json:"result"`
+	ChangeVersion      int64           `json:"changeVersion"`
+	CorrelationID      string          `json:"correlationId"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	Details            json.RawMessage `json:"details,omitempty"`
+	DirectorySyncRunID *int64          `json:"directorySyncRunId,omitempty"`
 }
 
 func (s *Service) listAudit(ctx context.Context, before *int64, limit int) ([]AuditEvent, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, coalesce(actor_account_id,''), action, resource_type,
-		resource_id, result, change_version, correlation_id, created_at, directory_sync_run_id FROM audit_events
+		resource_id, result, change_version, correlation_id, created_at, directory_sync_run_id, details FROM audit_events
 		WHERE tenant_key=$1 AND app_id=$2 AND ($3::bigint IS NULL OR id<$3) ORDER BY id DESC LIMIT $4`,
 		s.tenantKey, s.appID, before, limit)
 	if err != nil {
@@ -359,7 +361,7 @@ func (s *Service) listAudit(ctx context.Context, before *int64, limit int) ([]Au
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AuditEvent, error) {
 		var event AuditEvent
 		err := row.Scan(&event.ID, &event.ActorAccountID, &event.Action, &event.ResourceType, &event.ResourceID,
-			&event.Result, &event.ChangeVersion, &event.CorrelationID, &event.CreatedAt, &event.DirectorySyncRunID)
+			&event.Result, &event.ChangeVersion, &event.CorrelationID, &event.CreatedAt, &event.DirectorySyncRunID, &event.Details)
 		return event, err
 	})
 }

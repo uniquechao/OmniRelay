@@ -195,11 +195,15 @@ func (s *Service) send(ctx context.Context, actor identity.Principal, target, op
 }
 
 func (s *Service) deliveryAccount(ctx context.Context, actor identity.Principal) error {
+	return s.activeAccount(ctx, s.pool, actor)
+}
+
+func (s *Service) activeAccount(ctx context.Context, db rowQuerier, actor identity.Principal) error {
 	if actor.TenantKey != s.tenant || actor.AppID != s.app || actor.AccountID == "" || actor.OpenID == "" {
 		return ErrAccessLost
 	}
 	var active bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM accounts
+	err := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM accounts
 		WHERE (tenant_key,app_id,id,open_id)=($1,$2,$3,$4) AND active)`,
 		s.tenant, s.app, actor.AccountID, actor.OpenID).Scan(&active)
 	if err == nil && !active {
