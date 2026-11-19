@@ -145,3 +145,23 @@ func TestConfigAllowsWebSetupWithNoFeishuEnvironment(t *testing.T) {
 		t.Fatal("web setup must require a valid setup key")
 	}
 }
+
+func TestConfigOAuthProxyTrustRequiresTLS(t *testing.T) {
+	env := goodEnvironment()
+	get := func(key string) string { return env[key] }
+	token := strings.Repeat("ab", 32)
+	env["OMNIRELAY_OAUTH_PROXY_TOKEN"] = token
+	if _, err := readConfig(get, true); err == nil {
+		t.Fatal("accepted OAuth proxy trust without listener TLS")
+	}
+	env["OMNIRELAY_TLS_CERT_FILE"] = "/certificates/tls.crt"
+	env["OMNIRELAY_TLS_KEY_FILE"] = "/certificates/tls.key"
+	cfg, err := readConfig(get, true)
+	if err != nil || cfg.oauthProxyToken != token {
+		t.Fatal("could not configure authenticated OAuth proxy")
+	}
+	env["OMNIRELAY_OAUTH_PROXY_TOKEN"] = "private-invalid-token"
+	if _, err := readConfig(get, true); err == nil || strings.Contains(err.Error(), env["OMNIRELAY_OAUTH_PROXY_TOKEN"]) {
+		t.Fatal("invalid OAuth proxy token was accepted or exposed")
+	}
+}

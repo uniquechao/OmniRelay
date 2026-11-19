@@ -51,6 +51,12 @@ spec:
                 name: omnirelay-feishu
                 optional: true
           env:
+            - name: OMNIRELAY_OAUTH_PROXY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: omnirelay-oauth-proxy
+                  key: token
+                  optional: true
             - name: OMNIRELAY_S3_ENDPOINT
               value: https://minio.omni.svc:9000
             - name: OMNIRELAY_S3_BUCKET

@@ -54,6 +54,23 @@ deploy/k8s/scripts/configure-object-storage-access.sh "$context"
 
 Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文只包含 Go 源码、Web 资源和模块清单，避免把目标主机的 `private/` 目录传给构建器。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
 
+## 飞书 OAuth 入口来源
+
+Go 默认按 TCP 对端地址限制飞书登录发起。目标主机通过 Nginx、SSH 与私有 NodePort 转发时，多个用户可能共用同一个 TCP 对端。生产和预发布应在私有入口配置中启用以下信任方式。
+
+1. 在目标主机生成独立的 32 字节随机令牌并编码为十六进制。通过私有配置把相同值提供给 Nginx 和 `Secret/omnirelay-oauth-proxy` 的 `token` 键。Go 清单会从该键读取 `OMNIRELAY_OAUTH_PROXY_TOKEN`。创建或轮换 Secret 后重建 Go Pod，使环境变量生效。
+2. 在私有覆盖中为 Go 配置 `OMNIRELAY_TLS_CERT_FILE` 和 `OMNIRELAY_TLS_KEY_FILE`。Nginx 经 SSH 隧道使用 HTTPS 连接 Go，并校验上游证书链和服务名。保留 Web NodePort 的私有访问限制。
+3. 在实际代理到 Go 的 Nginx `location` 内覆盖两项头部，并保留该路由原有的代理头设置。客户端 IP 来自 Nginx 观察到的 `$remote_addr`。如前面另有负载均衡，只对已核实的上游地址启用 Nginx 的真实 IP 恢复。令牌由私有 include 注入，入口日志、APM 和响应均须排除令牌及 OAuth 查询串。
+
+```nginx
+proxy_set_header X-Omnirelay-Client-IP $remote_addr;
+proxy_set_header X-Omnirelay-Proxy-Token "<通过私有 include 注入>";
+```
+
+在目标环境确认普通请求提供的同名头会被覆盖，并用不同测试来源验证发起额度隔离。Go 仅在 TLS 直接连接上接受携带正确令牌的单个 IP 头。令牌缺失、错误或头部格式异常时，回退到 TCP 对端地址。Go 不读取 `Forwarded`、`X-Forwarded-For` 或 `X-Real-IP` 来分配额度。
+
+每实例每分钟最多接受 120 次发起，每个来源最多 20 次。新发起的回跳携带与浏览器绑定的短期签名，已验证数据库事务使用独立的每分钟 240 次额度。升级或凭据轮换前发起的旧事务仍可在有限的未验证回跳额度内完成。各副本应使用相同飞书凭据并保持时钟同步。
+
 ## 飞书 Bot Lease
 
 在 Go 副本所在命名空间预先应用 `base/feishu-bot-lease.yaml`。每个副本使用同一个 Lease，ServiceAccount 仅可读取和更新这个 Lease。

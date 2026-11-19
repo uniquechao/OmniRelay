@@ -19,6 +19,7 @@ type configuration struct {
 	botHeartbeatTTL                        time.Duration
 	botLeaseNamespace, botPodUID           string
 	setupKey                               []byte
+	oauthProxyToken                        string
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
@@ -58,6 +59,16 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 	cfg.tlsKeyFile = strings.TrimSpace(getenv("OMNIRELAY_TLS_KEY_FILE"))
 	if (cfg.tlsCertFile == "") != (cfg.tlsKeyFile == "") {
 		return configuration{}, errors.New("OMNIRELAY_TLS_CERT_FILE and OMNIRELAY_TLS_KEY_FILE must be configured together")
+	}
+	cfg.oauthProxyToken = strings.TrimSpace(getenv("OMNIRELAY_OAUTH_PROXY_TOKEN"))
+	if cfg.oauthProxyToken != "" {
+		token, err := hex.DecodeString(cfg.oauthProxyToken)
+		if err != nil || len(token) != 32 {
+			return configuration{}, errors.New("OMNIRELAY_OAUTH_PROXY_TOKEN must contain a 32-byte hex-encoded token")
+		}
+		if cfg.tlsCertFile == "" {
+			return configuration{}, errors.New("OMNIRELAY_OAUTH_PROXY_TOKEN requires TLS on the Go listener")
+		}
 	}
 	cfg.appID = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_APP_ID"))
 	cfg.appSecret = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_APP_SECRET"))
