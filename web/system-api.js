@@ -288,6 +288,7 @@ export function systemAPI(api) {
   return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion } = {}) => {
     if (method === 'GET') {
       switch (path) {
+        case system + '/connections': return api(path, { signal });
         case system + '/role-catalog': return roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
         case system + '/audit': return listAudit(api, { signal });

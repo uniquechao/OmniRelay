@@ -8,17 +8,18 @@ const system = '/api/v1/system';
 const accounts = system + '/accounts';
 const grants = system + '/role-grants';
 const bot = system + '/feishu-bot';
+const connections = system + '/connections';
 const sync = system + '/directory/sync-runs';
 const mePath = '/api/v1/me';
 const permissionKeys = [
   'account.read', 'account.manage', 'role.read', 'role.manage', 'directory.read',
-  'directory.sync', 'system.read', 'system.configure', 'system.operate', 'audit.read'
+  'directory.sync', 'system.read', 'system.configure', 'system.operate', 'audit.read', 'chat.read_all'
 ];
 const operatorPermissions = [
   'account.read', 'role.read', 'directory.read', 'directory.sync',
   'system.read', 'system.operate', 'audit.read'
 ];
-const systemSections = ['users', 'roles', 'audit', 'feishu-bot'];
+const systemSections = ['users', 'roles', 'feishu-bot', 'settings', 'audit'];
 const matrix = [
   ['admin', 'system_admin', 'workbench', permissionKeys, systemSections, true],
   ['operator', 'system_operator', 'system/users', operatorPermissions, systemSections, false],
@@ -95,13 +96,19 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     for (const [path, action] of [
       [accounts, 'account.read'], [system + '/roles', 'role.read'], [grants, 'role.read'],
       [system + '/audit-events', 'audit.read'], [system + '/directory/departments', 'directory.read'],
-      [sync, 'directory.read'], [bot, 'system.read']
+      [sync, 'directory.read'], [bot, 'system.read'], [connections, 'system.read']
     ]) {
       await request(context, 'GET', path, permissions.includes(action) ? 200 : 403);
     }
     if (!sections.includes('users')) {
       await page.goto(origin + '/#/system/users');
       await page.waitForURL('**/#/' + route);
+    }
+    if (!sections.includes('settings')) {
+      for (const alias of ['settings', 'system/bot']) {
+        await page.goto(origin + '/#/' + alias);
+        await page.waitForURL('**/#/' + route);
+      }
     }
     const write = (method, path, status, data, headers) =>
       request(context, method, path, status, { data, headers, csrf: session.csrf_token });
@@ -126,6 +133,36 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   const target = historical.session.principal.account_id;
   const read = (path, actor = admin) => request(actor.context, 'GET', path, 200).then(response => response.json());
   const accountId = actor => actor.session.principal.account_id;
+
+  const entry = await admin.context.newPage();
+  await entry.goto(origin + '/#/settings');
+  await entry.waitForURL('**/#/system/settings');
+  await entry.getByText('未接入', { exact: true }).first().waitFor();
+  assert.equal(await entry.locator('#system-nav').getAttribute('open'), '');
+  assert.equal(await entry.locator('#system-nav [aria-current=page]').getAttribute('data-system'), 'settings');
+  await entry.getByRole('link', { name: '飞书 Bot 配置', exact: true }).click();
+  await entry.waitForURL('**/#/system/feishu-bot');
+  await entry.locator('#bot-form').waitFor();
+  await entry.goBack();
+  await entry.waitForURL('**/#/system/settings');
+  await entry.getByRole('heading', { name: '连接设置' }).waitFor();
+  await entry.goForward();
+  await entry.waitForURL('**/#/system/feishu-bot');
+  await entry.locator('#bot-form').waitFor();
+  await entry.close();
+
+  const returning = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } });
+  const mobile = await returning.newPage();
+  await mobile.goto(origin + '/#/system/bot');
+  await mobile.waitForURL('**/#/login');
+  await login(mobile, 'admin', 'system/feishu-bot');
+  await mobile.locator('#bot-form').waitFor();
+  assert.equal(await mobile.locator('#mobile-nav').inputValue(), 'system/feishu-bot');
+  await mobile.locator('#mobile-nav').selectOption('system/settings');
+  await mobile.waitForURL('**/#/system/settings');
+  await mobile.getByText('未接入', { exact: true }).first().waitFor();
+  assert.equal(await mobile.locator('#mobile-nav').inputValue(), 'system/settings');
+  await returning.close();
   assert.deepEqual(operator.session.access.permissions, projectOperator.session.access.permissions);
 
   const { items: catalog } = await read(system + '/roles');
@@ -245,6 +282,8 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   secondTab.setDefaultTimeout(8000);
   await navigate(secondTab, 'system/feishu-bot');
   await secondTab.locator('#bot-test').waitFor();
+  await navigate(operator.page, 'system/settings');
+  await operator.page.getByText('未接入', { exact: true }).first().waitFor();
   await admin.write('DELETE', grants + '/' + operatorGrant.id, 204);
   await operator.write('POST', bot + '/checks', 401, {}, { 'Idempotency-Key': 'stale-session' });
   for (const tab of [operator.page, secondTab]) {
@@ -255,6 +294,11 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     assert.equal(await tab.locator('#bot-test').isVisible(), false);
   }
   await login(secondTab, 'operator', 'workbench');
+  await operator.page.reload();
+  await operator.page.waitForURL('**/#/workbench');
+  await operator.page.getByRole('heading', { name: '工作台总览' }).waitFor();
+  assert.equal(await operator.page.locator('[data-system=settings]').isVisible(), false);
+  await request(operator.context, 'GET', connections, 403);
   await request(operator.context, 'GET', bot, 403);
   assert.deepEqual((await read(mePath, operator)).access.roles, ['system_user']);
   await secondTab.locator('.rail .account-trigger').click();
