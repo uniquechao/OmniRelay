@@ -101,7 +101,7 @@ func (s *ChatSource) get(ctx context.Context, path string, params url.Values, ta
 		return chat.ErrAccessLost
 	}
 	switch code {
-	case 230002, 230006, 230013, 231203, 232010, 232011, 232014, 232024, 99991672:
+	case 230002, 230006, 230013, 230027, 231203, 232010, 232011, 232014, 232024, 99991672:
 		return chat.ErrAccessLost
 	case 230073, 230110:
 		return chat.ErrPartial

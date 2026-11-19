@@ -14,13 +14,15 @@ import (
 )
 
 type Service struct {
-	pool        *pgxpool.Pool
-	tenant, app string
-	generation  int64
-	source      Source
-	people      *directory.Service
-	receipts    ReceiptSources
-	check       func(context.Context, identity.Principal, string, string) (bool, error)
+	pool            *pgxpool.Pool
+	tenant, app     string
+	generation      int64
+	source          Source
+	people          *directory.Service
+	receipts        ReceiptSources
+	delivery        DeliverySource
+	deliveryEnabled bool
+	check           func(context.Context, identity.Principal, string, string) (bool, error)
 }
 
 func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source,
