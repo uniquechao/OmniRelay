@@ -2,10 +2,17 @@ import { api, getSession, logout, mountLogin, setSession } from './login.js';
 import { mountAdmin } from './admin.js';
 import { feishuBotAPI, systemAPI } from './system-api.js';
 import { mountFeishuBot } from './feishu-bot.js';
+import { mountConnectionSettings } from './connection-settings.js';
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
 
-const titles = { users: '用户管理', roles: '角色权限', audit: '审计日志', 'feishu-bot': '飞书 Bot 配置' };
+const titles = {
+  users: '用户管理', roles: '角色权限', 'feishu-bot': '飞书 Bot 配置', settings: '连接设置', audit: '审计日志'
+};
+const legacyRoutes = new Map([
+  ['#/settings', '#/system/settings'],
+  ['#/system/bot', '#/system/feishu-bot']
+]);
 const ui = window.OmniRelayUI;
 const shell = document.querySelector('.shell');
 const page = document.getElementById('page');
@@ -115,6 +122,7 @@ function showLogin({ preserveTarget = true } = {}) {
 }
 
 function safeRoute(hash) {
+  hash = legacyRoutes.get(hash) ?? hash;
   const section = hash?.split('/')[2];
   if (hash === workbenchRoute) return hash;
   return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : '';
@@ -125,7 +133,7 @@ function permission(user, section) {
 }
 
 function allowedRoute(hash) {
-  if (!safeRoute(hash)) return false;
+  if (!hash) return false;
   return hash === workbenchRoute ? session.user.navigation?.workbench === true : permission(session.user, hash.split('/')[2]);
 }
 
@@ -218,8 +226,8 @@ async function render() {
     return;
   }
   const currentHash = location.hash;
-  const requested = isLoginRoute(currentHash) ? readReturnRoute() : currentHash;
-  const fallback = session.access?.default_route?.replace(/^\//, '');
+  const requested = isLoginRoute(currentHash) ? readReturnRoute() : safeRoute(currentHash);
+  const fallback = safeRoute(session.access?.default_route?.replace(/^\//, ''));
   const hash = allowedRoute(requested) ? requested : allowedRoute(fallback) ? fallback : '';
   if (hash && currentHash !== hash) history.replaceState(history.state, '', hash);
   clearReturnRoute();
@@ -245,17 +253,17 @@ async function render() {
   const brand = shell.querySelector('.brand');
   if (allowedRoute(fallback)) brand.href = fallback;
   else brand.removeAttribute('href');
+  if (hash === workbenchRoute) overview.setAttribute('aria-current', 'page');
+  else overview.removeAttribute('aria-current');
   if (!hash) {
     page.textContent = '当前账号没有可访问的页面。';
     breadcrumb.replaceChildren();
     mobileNav.selectedIndex = -1;
     return;
   }
-  if (!section) overview.setAttribute('aria-current', 'page');
-  else overview.removeAttribute('aria-current');
   drawBreadcrumb(title, section ? '系统管理' : '工作空间');
   mobileNav.value = hash.slice(2);
-  page.dataset.layout = section && section !== 'feishu-bot' ? 'list' : 'content';
+  page.dataset.layout = section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
   if (!section) goToAdministration(session.user);
   else if (section === 'feishu-bot') {
@@ -265,6 +273,8 @@ async function render() {
       canOperate: permissions['system.operate'] === true,
       canSyncDirectory: permissions['directory.sync'] === true && allowed('users')
     });
+  } else if (section === 'settings') {
+    mountConnectionSettings(page, options => adminAPI('/api/v1/system/connections', options), signal);
   } else {
     try {
       const admin = await mountAdmin(page, section, adminAPI, { user: session.user, signal });
