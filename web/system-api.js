@@ -52,9 +52,10 @@ function groupGrants(grants) {
   return byAccount;
 }
 
-function directoryFields(person) {
+function directoryFields(person, account) {
   const departments = person?.departments ?? [];
   return {
+    personKey: person?.person_key ?? account?.personKey,
     departmentIds: [...new Set(departments.map(item => item.id))],
     org: departments.map(item => item.path.join(' / ')).join('；'),
     directoryStatus: person?.directory_status
@@ -75,7 +76,7 @@ function directoryUsers(accounts, grants, people) {
       systemRoles: account.active ? account.systemRoles ?? [] : [],
       roles: accountGrants.get(account.id) ?? [],
       projects: [],
-      ...directoryFields(person)
+      ...directoryFields(person, account)
     };
   });
   const unprovisioned = people.filter(person => person.account_status === 'unprovisioned')

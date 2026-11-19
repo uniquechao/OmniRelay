@@ -275,7 +275,7 @@ func (s *Service) getPeople(w http.ResponseWriter, r *http.Request, _ identity.P
 		), page AS (
 			SELECT * FROM filtered ORDER BY lower(name),open_id LIMIT $8 OFFSET $9
 		), detailed AS (
-			SELECT page.*,
+			SELECT page.*, `+identity.FeishuPersonKeySQL("page.open_id")+` AS person_key,
 				COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'path',d.path) ORDER BY d.path,d.id)
 					FROM department_memberships m JOIN departments d
 					ON (d.tenant_key,d.app_id,d.snapshot_version,d.id)=(m.tenant_key,m.app_id,m.snapshot_version,m.department_id)

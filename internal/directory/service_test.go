@@ -242,6 +242,73 @@ func TestSynchronizationClaimsPublicationAndAccess(t *testing.T) {
 		t.Fatalf("unknown status was not independent of provisioning: %s", secondPage.Body.String())
 	}
 
+	// The resource reader supplies the people it is allowed to expose. The
+	// same person can arrive through its account mapping or direct Open ID.
+	resourceAllowed, directoryAllowed := true, true
+	resourceReader := func(_ context.Context, principal identity.Principal, resource string) ([]ResourcePersonRef, bool, error) {
+		if principal != actor || resource != "test-resource" {
+			t.Fatal("unexpected resource authorization input")
+		}
+		return []ResourcePersonRef{
+			{AccountID: actor.AccountID, Name: "Source name"},
+			{OpenID: person.ID, Name: "Source name"},
+			{OpenID: "ou_same", Name: "Source name"},
+			{Name: "Example"},
+			{Name: "Example"},
+		}, resourceAllowed, nil
+	}
+	directoryReader := func(_ context.Context, principal identity.Principal, action, resource string) (bool, error) {
+		if principal != actor || action != "directory.read" || resource != "" {
+			t.Fatal("unexpected directory authorization input")
+		}
+		return directoryAllowed, nil
+	}
+	projectPeople := func() ([]PersonProjection, error) {
+		return agents[0].ReadResourcePeople(ctx, actor, "test-resource", resourceReader, directoryReader)
+	}
+	projected, err := projectPeople()
+	if err != nil || len(projected) != 5 {
+		t.Fatalf("could not project resource people: %+v %v", projected, err)
+	}
+	var pages [2]struct {
+		Items []struct {
+			PersonKey string `json:"person_key"`
+		} `json:"items"`
+	}
+	for i, page := range []*httptest.ResponseRecorder{firstPage, secondPage} {
+		if err := json.Unmarshal(page.Body.Bytes(), &pages[i]); err != nil || len(pages[i].Items) != 1 {
+			t.Fatalf("invalid directory people page: %s", page.Body.String())
+		}
+	}
+	if projected[0].PersonKey == "" || projected[0].PersonKey != pages[0].Items[0].PersonKey ||
+		projected[0].PersonKey != projected[1].PersonKey || projected[2].PersonKey != pages[1].Items[0].PersonKey ||
+		projected[0].PersonKey == projected[2].PersonKey || projected[0].Name != projected[2].Name ||
+		projected[0].Source != "feishu" || len(projected[0].OrganizationPaths) != 2 ||
+		strings.Join(projected[0].OrganizationPaths[1], "/") != "Organization/Sub" ||
+		projected[3].PersonKey != "" || projected[4].PersonKey != "" || projected[4].Name != "Example" {
+		t.Fatalf("identity or multi-department projection mismatch: %+v", projected)
+	}
+	assertMinimal := func() {
+		t.Helper()
+		minimal, err := projectPeople()
+		if err != nil || len(minimal) != 5 {
+			t.Fatalf("could not read minimal projection: %+v %v", minimal, err)
+		}
+		serialized, err := json.Marshal(minimal)
+		if err != nil || strings.Contains(string(serialized), "organization_paths") ||
+			strings.Contains(string(serialized), "ou_actor") || strings.Contains(string(serialized), "account_id") ||
+			minimal[0].PersonKey != projected[0].PersonKey || minimal[0].Name != "Source name" {
+			t.Fatalf("invalid minimal projection: %s %v", serialized, err)
+		}
+	}
+	directoryAllowed = false
+	assertMinimal()
+	directoryAllowed, resourceAllowed = true, false
+	if denied, err := projectPeople(); !errors.Is(err, ErrResourcePeopleForbidden) || denied != nil {
+		t.Fatalf("directory authority granted resource access: %+v %v", denied, err)
+	}
+	resourceAllowed = true
+
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, route+"/sync-runs", nil))
 	if response.Code != http.StatusForbidden {
@@ -413,6 +480,7 @@ func TestSynchronizationClaimsPublicationAndAccess(t *testing.T) {
 			t.Fatalf("hidden directory accepted old pagination: %d %s", response.Code, response.Body.String())
 		}
 	}
+	assertMinimal()
 	emptyScope := fixtureService(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/v3/token":
@@ -439,6 +507,7 @@ func TestSynchronizationClaimsPublicationAndAccess(t *testing.T) {
 	if err != nil || result.OutsideScopeCount != 2 || result.MissingPeopleCount != 0 {
 		t.Fatalf("scope loss was not classified separately: %+v %v", result, err)
 	}
+	assertMinimal()
 }
 
 func allowTestSync(context.Context, pgx.Tx, identity.Principal) (bool, error) {
