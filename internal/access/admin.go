@@ -11,6 +11,7 @@ import (
 
 type Account struct {
 	ID          string    `json:"id"`
+	PersonKey   string    `json:"personKey"`
 	Name        string    `json:"name"`
 	AvatarURL   string    `json:"avatarUrl"`
 	Active      bool      `json:"active"`
@@ -19,11 +20,11 @@ type Account struct {
 	SystemRoles []string  `json:"systemRoles"`
 }
 
-const accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + systemGrantRoles
+var accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + identity.FeishuPersonKeySQL("a.open_id") + ", " + systemGrantRoles
 
 func scanAccount(row pgx.Row, extra ...any) (Account, error) {
 	var a Account
-	fields := []any{&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt, &a.SystemRoles}
+	fields := []any{&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt, &a.PersonKey, &a.SystemRoles}
 	err := row.Scan(append(fields, extra...)...)
 	a.SystemRoles = effectiveSystemRoles(a.Active, a.SystemRoles)
 	return a, err

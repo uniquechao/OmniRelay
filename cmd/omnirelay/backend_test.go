@@ -193,9 +193,27 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	admin, _, csrf := login("ou_admin", returnPath)
 	wantStatus(do("GET", botAPI, "", admin, ""), http.StatusOK)
 	peoplePath := "/api/v1/system/directory/people?department_id=team"
+	var memberPersonKey string
 	for {
 		people := do("GET", peoplePath, "", admin, "")
 		if people.Code == http.StatusOK && strings.Contains(people.Body.String(), "ou_member") {
+			var list struct {
+				Items []struct {
+					OpenID    string `json:"open_id"`
+					PersonKey string `json:"person_key"`
+				}
+			}
+			if err := json.Unmarshal(people.Body.Bytes(), &list); err != nil {
+				t.Fatal(err)
+			}
+			for _, person := range list.Items {
+				if person.OpenID == "ou_member" {
+					memberPersonKey = person.PersonKey
+				}
+			}
+			if memberPersonKey == "" {
+				t.Fatal("directory member has no presentation key")
+			}
 			break
 		}
 		select {
@@ -208,7 +226,14 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	login("ou_member", "denied")
 	accountsPath := "/api/v1/system/accounts"
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, ""), http.StatusForbidden)
-	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusCreated)
+	created := do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf)
+	wantStatus(created, http.StatusCreated)
+	var account struct {
+		PersonKey string `json:"personKey"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &account); err != nil || account.PersonKey != memberPersonKey {
+		t.Fatalf("provisioning changed the presentation key: %s %v", created.Body.String(), err)
+	}
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
 	member, target, memberCSRF := login("ou_member", "/#/workbench")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)

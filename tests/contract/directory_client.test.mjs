@@ -45,6 +45,33 @@ test('组织树、人员及后续分页共用同一快照，账号与目录状�
   assert.equal(new Set(result.users.map(row => row.id)).size, result.users.length);
 });
 
+test('同名人员保留各自标识，目录隐藏后已开通账号仍使用同一标识', async () => {
+  const visible = byName('visible');
+  const hidden = byName('scope-hidden');
+  const people = [
+    visible.people.items.find(person => person.account_id),
+    visible.people.items.find(person => person.account_status === 'unprovisioned')
+  ].map((person, index) => ({ ...person, name: '同名人员', person_key: 'person-' + index }));
+  const [registered] = people;
+  const request = fixture => systemAPI(async path => {
+    if (path.startsWith(base + '/accounts?')) {
+      return { items: [{ id: registered.account_id, name: registered.name, personKey: registered.person_key, active: true }] };
+    }
+    if (path.startsWith(directory + '/departments?')) return { ...fixture.departments, items: [], total: 0 };
+    if (path.startsWith(directory + '/people?')) return fixture.people;
+    return { items: [] };
+  })(directory + '/view');
+  const full = await request({ ...visible, people: { ...visible.people, items: people, total: people.length } });
+  assert.deepEqual(full.users.map(user => user.name), people.map(person => person.name));
+  assert.equal(new Set(full.users.map(user => user.personKey)).size, people.length);
+  assert.equal(full.users[0].personKey, registered.person_key);
+  const restricted = await request(hidden);
+  assert.equal(restricted.users.length, 1);
+  assert.equal(restricted.users[0].personKey, registered.person_key);
+  assert.deepEqual(restricted.users[0].departmentIds, []);
+  assert.equal(restricted.users[0].org, '');
+});
+
 test('原子目录读取拒绝失效或混版结果', async () => {
   const visible = byName('visible');
   const hidden = byName('scope-hidden');
