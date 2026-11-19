@@ -29,6 +29,7 @@ type gridFixture struct {
 	reportChanged    atomic.Bool
 	projectLost      atomic.Bool
 	secondDenied     atomic.Bool
+	readOnlyProject  atomic.Pointer[string]
 	secondRenamed    atomic.Bool
 	sourceLost       atomic.Bool
 	changeDuringRead atomic.Bool
@@ -112,6 +113,10 @@ func (f *gridFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		return
+	}
+	if project := f.readOnlyProject.Load(); project != nil && r.URL.Path == "/api/v1/projects/"+*project+"/state" {
+		body = strings.Replace(body, `"read","manage_access"`, `"read"`, 1)
+		body = strings.Replace(body, `"access":"v1"`, `"access":"v2"`, 1)
 	}
 	_, _ = w.Write([]byte(body))
 }

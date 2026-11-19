@@ -393,6 +393,13 @@ func TestProjectChatReaderScope(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "om_scoped") {
 		t.Fatalf("项目发送未确认 %d %s", w.Code, w.Body)
 	}
+	for _, prefix := range []string{"/api/v1/feishu/chats", "/api/v1/projects/p1/chat-reader"} {
+		receipt := httptest.NewRecorder()
+		mux.ServeHTTP(receipt, httptest.NewRequest("GET", prefix+"/oc_g1/deliveries/project-send", nil))
+		if receipt.Code != http.StatusOK || !strings.Contains(receipt.Body.String(), "om_scoped") {
+			t.Fatalf("发送回执与项目发送结果不一致 %s %d %s", prefix, receipt.Code, receipt.Body)
+		}
+	}
 	if _, err := s.pool.Exec(ctx, `UPDATE project_chat_links SET project_id='p2' WHERE chat_id='oc_g1'`); err != nil {
 		t.Fatal(err)
 	}

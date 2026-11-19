@@ -144,10 +144,22 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 
 	// The transaction must preserve the existing link, primary and plan on failure.
 	exec(fmt.Sprintf(`INSERT INTO project_relay_settings VALUES ('tenant','app','allowed','%s','UTC','18:00',true,true,1)`, replacement.ID))
+	for _, readOnlyID := range []string{"allowed", "second"} {
+		fixture.readOnlyProject.Store(&readOnlyID)
+		list(readOnlyID)
+		expect(call("GET", "/projects/allowed/chat-reader/"+replacement.ID, ""), 200)
+		expect(move(replacement.ID, "second", version), 404)
+		if readOnlyID == "allowed" {
+			expect(primary(old.ID, global(old.ID).Version, 2), 404)
+			expect(move(replacement.ID, "", version), 404)
+		}
+	}
+	fixture.readOnlyProject.Store(nil)
 	fixture.secondDenied.Store(true)
 	expect(move(replacement.ID, "second", version), 404)
 	fixture.secondDenied.Store(false)
 	fixture.projectLost.Store(true)
+	expect(call("GET", "/projects/allowed/chat-reader/"+replacement.ID, ""), 404)
 	expect(move(replacement.ID, "second", version), 404)
 	if got := global(replacement.ID); got != nil {
 		t.Fatalf("revoked project metadata leaked: %+v", got)
