@@ -122,7 +122,7 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 		return result
 	}
 	if value(data.ChatId) != "" && value(data.ChatId) != target {
-		return chat.DeliveryResult{State: "unknown", Reason: "wrong_target_receipt"}
+		return chat.DeliveryResult{State: "failed", Reason: "wrong_target_receipt"}
 	}
 	result.MessageID = value(data.MessageId)
 	if value(data.ChatId) == target && value(data.MsgType) == kind && s.deliverySender(data.Sender, bot) {

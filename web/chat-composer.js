@@ -1,5 +1,6 @@
 const reasons = {
   send_disabled: '此部署尚未开放机器人发送。',
+  wrong_target_receipt: '发送失败：飞书回执的收件会话与目标不符。',
   invalid_target: '当前会话无法接收消息。',
   access_lost: '当前账号或机器人已失去会话权限。',
   mention_not_allowed: '提及的人员已不在群内。',
@@ -72,6 +73,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   const list = get('ul'), panel = get('[role=group]'), recover = get('[data-recover]');
   const drafts = new Map();
   let active, menu, beforeEdit;
+  let composing = false;
   const storageKey = id => draftPrefix + JSON.stringify([draftScope, id]);
   function save(d) {
     if (!draftScope || signal?.aborted) return;
@@ -132,6 +134,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   function show(record) {
     closeMenu();
     beforeEdit = null;
+    composing = false;
     active = null;
     form.hidden = !record;
     if (!record) return;
@@ -353,9 +356,8 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
       editor.focus();
     } else if (kind) void openMenu(button, kind);
   };
-  let composing = false;
-  editor.oncompositionstart = () => { composing = true; };
-  editor.oncompositionend = () => { composing = false; };
+  editor.addEventListener('compositionstart', () => { composing = true; });
+  editor.addEventListener('compositionend', () => { composing = false; });
   form.onkeydown = event => {
     if (composing || event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape' && menu) { menu.focus(); closeMenu(); }

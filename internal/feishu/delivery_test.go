@@ -29,7 +29,7 @@ func TestDeliveryFeishuCreateAndConfirm(t *testing.T) {
 		{"missing evidence", `{"code":0,"data":{"message_id":"om_sent"}}`, 200,
 			chat.DeliveryResult{State: "unknown", Reason: "receipt_unknown", MessageID: "om_sent"}},
 		{"wrong target", `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_other","msg_type":"text",` + sender + `}}`, 200,
-			chat.DeliveryResult{State: "unknown", Reason: "wrong_target_receipt"}},
+			chat.DeliveryResult{State: "failed", Reason: "wrong_target_receipt"}},
 		{"access lost", `{"code":230002}`, 400,
 			chat.DeliveryResult{State: "failed", Reason: "access_lost"}},
 		{"still sending", `{"code":230049}`, 400,
