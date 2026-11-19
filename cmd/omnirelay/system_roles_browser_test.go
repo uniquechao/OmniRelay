@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,7 +91,19 @@ func TestSystemRolesBrowser(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	handler, workers, err := newBackendWithAccess(ctx, pool, cfg, &feishuFixture{}, roles)
+	fixture := &feishuFixture{}
+	var botInfoCalls atomic.Int32
+	transport := botTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/open-apis/bot/v3/info" {
+			return fixture.RoundTrip(r)
+		}
+		body := `{"code":99991672}`
+		if botInfoCalls.Add(1) == 1 {
+			body = `{"code":0,"bot":{"app_name":"Fixture Bot","open_id":"ou_bot","activate_status":2}}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	handler, workers, err := newBackendWithAccess(ctx, pool, cfg, transport, roles)
 	if err != nil {
 		t.Fatal(err)
 	}

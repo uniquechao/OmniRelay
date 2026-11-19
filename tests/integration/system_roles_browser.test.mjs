@@ -149,6 +149,28 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   await entry.goForward();
   await entry.waitForURL('**/#/system/feishu-bot');
   await entry.locator('#bot-form').waitFor();
+  const current = admin.page;
+  await navigate(current, 'system/feishu-bot');
+  await current.locator('#bot-form').waitFor();
+  await current.locator('#bot-enabled').check();
+  const firstSave = current.waitForResponse(res => res.url().endsWith(bot) && res.request().method() === 'PATCH');
+  await current.locator('#bot-save').click();
+  assert.equal((await firstSave).status(), 200);
+  await current.locator('[data-bot=enabled]').filter({ hasText: '已保存为启用' }).waitFor();
+
+  await entry.locator('#bot-enabled').check();
+  const staleSave = entry.waitForResponse(res => res.url().endsWith(bot) && res.request().method() === 'PATCH');
+  await entry.locator('#bot-save').click();
+  assert.equal((await staleSave).status(), 412);
+  await entry.locator('#bot-save-feedback').filter({ hasText: /再次点击「保存」确认/ }).waitFor();
+  assert.equal(await entry.locator('#bot-enabled').isChecked(), true);
+  await entry.locator('#bot-enabled').uncheck();
+  const confirmedSave = entry.waitForResponse(res => res.url().endsWith(bot) && res.request().method() === 'PATCH');
+  await entry.locator('#bot-save').click();
+  const saved = await confirmedSave;
+  assert.equal(saved.status(), 200);
+  assert.equal(saved.headers().etag, '"bot-2"');
+  assert.equal((await saved.json()).enabled, false);
   await entry.close();
 
   const returning = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } });
@@ -223,9 +245,37 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   await navigate(operator.page, 'system/feishu-bot');
   await operator.page.locator('#bot-content').waitFor();
   assert.equal(await operator.page.locator('#bot-form').isVisible(), false);
-  const checkResponse = operator.page.waitForResponse(res => res.url().endsWith(bot + '/checks') && res.request().method() === 'POST');
-  await operator.page.locator('#bot-test').click();
-  assert.equal((await checkResponse).status(), 202);
+  const checkEndpoint = origin + bot + '/checks';
+  let originalKey;
+  let originalTask;
+  await operator.page.route(checkEndpoint, async route => {
+    originalKey = route.request().headers()['idempotency-key'];
+    const response = await route.fetch();
+    originalTask = await response.json();
+    await route.abort();
+  }, { times: 1 });
+
+  const testButton = operator.page.locator('#bot-test');
+  await testButton.click();
+  await testButton.filter({ hasText: '重试检测' }).waitFor();
+  const retry = operator.page.waitForResponse(res => res.url() === checkEndpoint && res.request().method() === 'POST');
+  await testButton.click();
+  const retried = await retry;
+  assert.equal(retried.status(), 202);
+  assert.ok(originalKey && originalTask.id);
+  assert.equal(retried.request().headers()['idempotency-key'], originalKey);
+  assert.equal((await retried.json()).id, originalTask.id);
+  const tokenResult = operator.page.locator('[data-bot=tenant_token]');
+  const botResult = operator.page.locator('[data-bot=bot_info]');
+  await tokenResult.filter({ hasText: '通过' }).waitFor();
+  await botResult.filter({ hasText: '通过' }).waitFor();
+  assert.equal(await operator.page.locator('[data-bot=message]').textContent(), '尚未收到');
+
+  await testButton.click();
+  await botResult.filter({ hasText: '失败' }).waitFor();
+  assert.equal(await tokenResult.textContent(), '通过');
+  assert.match(await operator.page.locator('[data-bot=bot_info_detail]').textContent(), /无法读取 Bot 信息/);
+  assert.match(await operator.page.locator('#bot-test-feedback').textContent(), /机器人能力/);
 
   await navigate(admin.page, 'system/roles');
   const baseRole = admin.page.locator('tr[data-row=system_user]');
