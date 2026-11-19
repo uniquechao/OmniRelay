@@ -134,3 +134,28 @@ func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orches
 		VALUES ($1,$2,$3,$4,$5) RETURNING id`, event.AppID, event.TenantID, event.MessageID, account, state).Scan(&workID)
 	return workID, err
 }
+
+// AcceptChatArchive commits independently of command admission and its capacity.
+func (s *FeishuBot) AcceptChatArchive(ctx context.Context, event orchestrator.InboundEvent,
+	accept func(context.Context, pgx.Tx, orchestrator.ArchiveEvent) error,
+) error {
+	if event.AppID != s.config.AppID || event.TenantID != s.config.TenantKey || event.Archive == nil {
+		return orchestrator.ErrInvalidInbound
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := s.lockGeneration(ctx, tx); err != nil {
+			return connectionError(err)
+		}
+		if err := checkLiveConnection(ctx, tx, event); err != nil {
+			return err
+		}
+		if err := accept(ctx, tx, *event.Archive); err != nil {
+			return err
+		}
+		return checkLiveConnection(ctx, tx, event)
+	})
+	if err != nil {
+		return orchestrator.ErrInboxUnavailable
+	}
+	return nil
+}
