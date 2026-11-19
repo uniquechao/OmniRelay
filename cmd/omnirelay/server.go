@@ -65,7 +65,9 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
 	}
 	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
-	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, feishu.NewChatSource(check, cfg.tenantKey), directoryService, roles.Check, receipts)
+	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
+	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
+	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
 	if cfg.appSecret != "" {
 		workers.chat = chatService

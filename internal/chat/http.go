@@ -80,6 +80,7 @@ func (s *Service) Register(mux *http.ServeMux,
 	mux.HandleFunc("GET "+route+"/{chatID}/messages/{messageID}/context", protect(s.getContext))
 	mux.HandleFunc("GET "+route+"/{chatID}/sync", protect(s.getSync))
 	mux.HandleFunc("POST "+route+"/{chatID}/sync", protect(s.refresh))
+	s.registerDelivery(mux, auth)
 }
 
 func (s *Service) authorize(ctx context.Context, p identity.Principal, id string) (authorizedScope, error) {

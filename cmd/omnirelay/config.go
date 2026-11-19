@@ -17,6 +17,7 @@ type configuration struct {
 	pageBudget                             int
 	credentialsGeneration                  int64
 	botHeartbeatTTL                        time.Duration
+	botSendEnabled                         bool
 	botLeaseNamespace, botPodUID           string
 	setupKey                               []byte
 	oauthProxyToken                        string
@@ -101,6 +102,7 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 		}
 	}
 	cfg.botLeaseNamespace = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_LEASE_NAMESPACE"))
+	cfg.botSendEnabled = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_SEND_ENABLED")) == "true"
 	cfg.botPodUID = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_POD_UID"))
 	if (cfg.botLeaseNamespace == "") != (cfg.botPodUID == "") {
 		return configuration{}, errors.New("Feishu Bot Lease namespace and Pod UID must be configured together")

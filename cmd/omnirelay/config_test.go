@@ -109,6 +109,20 @@ func TestConfigFeishuBotGenerationAndHeartbeat(t *testing.T) {
 	}
 }
 
+func TestConfigFeishuBotSendOptIn(t *testing.T) {
+	env := goodEnvironment()
+	get := func(key string) string { return env[key] }
+	cfg, err := readConfig(get, true)
+	if err != nil || cfg.botSendEnabled {
+		t.Fatalf("expected Bot send to be disabled by default: %v %v", cfg.botSendEnabled, err)
+	}
+	env["OMNIRELAY_FEISHU_BOT_SEND_ENABLED"] = "true"
+	cfg, err = readConfig(get, true)
+	if err != nil || !cfg.botSendEnabled {
+		t.Fatalf("expected explicit Bot send enablement: %v %v", cfg.botSendEnabled, err)
+	}
+}
+
 func TestConfigFeishuBotLeaseRequiresNamespaceAndPodUID(t *testing.T) {
 	env := goodEnvironment()
 	get := func(key string) string { return env[key] }
