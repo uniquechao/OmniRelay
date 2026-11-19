@@ -130,10 +130,14 @@ td a:hover { text-decoration: underline; }
 }
 </style>
 <link rel="stylesheet" href="omni-relay-ui.css">
+<link rel="stylesheet" href="omni-relay-project.css">
+<link rel="stylesheet" href="omni-relay-task-editor.css">
 <link rel="stylesheet" href="vendor/quill-snow-2.0.3.css">
 <link rel="stylesheet" href="omni-relay-content.css">
 <link rel="stylesheet" href="omni-relay-interactions.css">
 <link rel="stylesheet" href="omni-relay-system.css">
+<link rel="stylesheet" href="omni-relay-bot-chat.css">
+<link rel="stylesheet" href="omni-relay-drive.css">
 </head>
 <body>
 <!-- Navigation symbols from the existing OmniGrid icon sprite. -->
@@ -142,11 +146,27 @@ td a:hover { text-decoration: underline; }
   <symbol id="nav-workbench" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v9h13v-9M9.5 19v-5h5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="nav-projects" viewBox="0 0 24 24"><path d="M3.5 7.5h17v11h-17zM3.5 7.5 6 4.5h5l2 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
   <symbol id="nav-logs" viewBox="0 0 24 24"><path d="M5 3.5h10l4 4v13H5zM15 3.5v4h4M8.5 11h7M8.5 15h7M8.5 18h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-  <symbol id="nav-settings" viewBox="0 0 24 24"><path d="M9.7 3.8 10.4 2h3.2l.7 1.8 2 .8 1.8-.8 2.2 2.2-.8 1.8.8 2L22 10.5v3l-1.7.7-.8 2 .8 1.8-2.2 2.2-1.8-.8-2 .8-.7 1.8h-3.2l-.7-1.8-2-.8-1.8.8L3.7 18l.8-1.8-.8-2L2 13.5v-3l1.7-.7.8-2L3.7 6l2.2-2.2 1.8.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="nav-bot-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Zm4 4h8m-8 3.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="nav-components" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
   <symbol id="action-expand" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="action-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="nav-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="9" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 20c0-4 2.2-6 5.5-6s5.5 2 5.5 6M14 15c3.8-.8 6.5 1.2 6.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="chat-filter-icon" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-7 6h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-search-icon" viewBox="0 0 24 24"><path d="M15.5 15.5 21 21M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-project-icon" viewBox="0 0 24 24"><path d="M3.5 8h6l2 2h9v9h-17zm0 0V5h6l2 3h9v2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-star-icon" viewBox="0 0 24 24"><path d="m12 3 2.75 5.57 6.15.89-4.45 4.34 1.05 6.13L12 17.03l-5.5 2.9 1.05-6.13L3.1 9.46l6.15-.89z" fill="var(--chat-star-fill,none)" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="compose-emoji" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 1 0-18 0m5 2c1 1.5 2.3 2 4 2s3-.5 4-2M9 9h.01M15 9h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="compose-mention" viewBox="0 0 24 24"><path d="M15.5 10v4.5c0 2.5 4.5 2.5 4.5-2.5a8 8 0 1 0-4 7m-.5-7a3.5 3.5 0 1 0-7 0 3.5 3.5 0 0 0 7 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="compose-file" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 1 0-18 0m5 0h8m-4-4v8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="compose-expand" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6-6 6M4 14v6h6m-6 0 6-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="compose-send" viewBox="0 0 24 24"><path d="m3 4 18 8-18 8 4-8-4-8Zm4 8h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-info" viewBox="0 0 24 24"><path d="M12 11v5m0-8v.1m9 3.9a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-refresh" viewBox="0 0 24 24"><path d="M20 3v5h-5M4 21v-5h5M4.5 9a8 8 0 0 1 13-4L20 8m-16 8 2.5 3a8 8 0 0 0 13-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="task-close-panel" viewBox="0 0 24 24"><path d="M4 4h16v16H4zm11 0v16m-7-12 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="status-milestone" viewBox="0 0 24 24"><path d="M12 3 21 12 12 21 3 12zM12 9v6m-3-3h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="file-zip" viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zm10 0v5h4M10 5h2m0 2h2m-4 2h2m0 2h2m-4 2h2m-2 2h3v3h-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="file-grid" viewBox="0 0 24 24"><path d="M4 4h16v16H4zm0 5h16M4 14h16M9 9v11m6-11v11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="file-minutes" viewBox="0 0 24 24"><path d="M4 11v2m4-6v10m4-13v16m4-13v10m4-6v2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="status-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5m0 3v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
   <symbol id="status-danger" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m9 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
 </svg>
@@ -161,8 +181,16 @@ td a:hover { text-decoration: underline; }
       <nav class="nav" id="side-navigation" aria-label="工作台主导航">
         <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
         <a href="#/projects" data-nav="projects" aria-label="项目列表"><svg class="icon" aria-hidden="true"><use href="#nav-projects"/></svg><span>项目列表</span></a>
+        <details class="nav-group" id="feishu-nav">
+          <summary aria-label="飞书" aria-controls="feishu-nav-children"><svg class="icon" aria-hidden="true"><use href="#nav-bot-chat"/></svg><span>飞书</span>
+            <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
+          </summary>
+          <div class="nav-children" id="feishu-nav-children">
+            <a href="#/feishu/bot-chats" data-feishu="bot-chats">机器人记录</a>
+            <a href="#/feishu/drive" data-feishu="drive">文件网盘</a>
+          </div>
+        </details>
         <a href="#/runs" data-nav="runs" aria-label="运行记录"><svg class="icon" aria-hidden="true"><use href="#nav-logs"/></svg><span>运行记录</span></a>
-        <a href="#/settings" data-nav="settings" aria-label="连接设置"><svg class="icon" aria-hidden="true"><use href="#nav-settings"/></svg><span>连接设置</span></a>
         <details class="nav-group" id="system-nav">
           <summary aria-label="系统管理"><svg class="icon" aria-hidden="true"><use href="#nav-system"/></svg><span>系统管理</span>
             <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
@@ -170,6 +198,8 @@ td a:hover { text-decoration: underline; }
           <div class="nav-children">
             <a href="#/system/users" data-system="users">用户管理</a>
             <a href="#/system/roles" data-system="roles">角色权限</a>
+            <a href="#/system/bot" data-system="bot">飞书 Bot 配置</a>
+            <a href="#/system/settings" data-system="settings">连接设置</a>
             <a href="#/system/audit" data-system="audit">审计日志</a>
           </div>
         </details>
@@ -219,10 +249,16 @@ td a:hover { text-decoration: underline; }
         <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
         <select class="select" id="mobile-nav" aria-label="工作台主导航">
           <option value="workbench">工作台总览</option><option value="projects">项目列表</option>
-          <option value="runs">运行记录</option><option value="settings">连接设置</option>
+          <optgroup label="飞书">
+            <option value="feishu/bot-chats">机器人记录</option>
+            <option value="feishu/drive">文件网盘</option>
+          </optgroup>
+          <option value="runs">运行记录</option>
           <optgroup label="系统管理">
             <option value="system/users">用户管理</option>
             <option value="system/roles">角色权限</option>
+            <option value="system/bot">飞书 Bot 配置</option>
+            <option value="system/settings">连接设置</option>
             <option value="system/audit">审计日志</option>
           </optgroup>
           <optgroup label="开发者">
@@ -300,8 +336,14 @@ td a:hover { text-decoration: underline; }
   </section>
 </main>
 <script src="omni-relay-ui.js"></script>
+<script src="omni-relay-task-editor.js"></script>
+<script src="omni-relay-project.js"></script>
 <script src="omni-relay-login-motion.js"></script>
 <script src="omni-relay-system.js"></script>
+<script src="omni-relay-bot-settings.js"></script>
+<script src="omni-relay-chat-controls.js"></script>
+<script src="omni-relay-bot-chat.js"></script>
+<script src="omni-relay-drive.js"></script>
 <script src="vendor/quill-2.0.3.js"></script>
 <script src="vendor/markdown-it-15.0.3.min.js"></script>
 <script src="vendor/highlight-11.11.1.min.js"></script>
@@ -354,9 +396,11 @@ extraProjects.forEach(([name, lead, status], index) => {
     latest:exampleProgress[status], summary:'', tasks:[], milestones:[], attention:[], brief:''
   };
 });
-const labels = { workbench:'工作台总览', projects:'项目列表', runs:'运行记录', settings:'连接设置' };
-const tabs = { overview:'项目概览', tasks:'任务', brief:'项目简报', feishu:'飞书 Bot' };
-const statuses = { progress:'进行中', pending:'待开始', success:'已完成', danger:'已阻塞', warning:'待核对', important:'重要' };
+const labels = { workbench:'工作台总览', projects:'项目列表', runs:'运行记录' };
+const feishuPages = { 'bot-chats':'机器人记录', drive:'文件网盘' };
+const tabs = { overview:'项目概览', members:'成员', chats:'群聊', meetings:'会议纪要',
+  docs:'文档', reports:'日报', tasks:'任务', feishu:'飞书 Bot' };
+const statuses = { progress:'进行中', pending:'待开始', success:'已完成', danger:'已阻塞', warning:'待核对', important:'重要', cancelled:'已取消' };
 const page = document.getElementById('page');
 const crumbs = document.getElementById('breadcrumb');
 const mobile = document.getElementById('mobile-nav');
@@ -366,11 +410,18 @@ const railResizer = document.getElementById('rail-resizer');
 const developerNav = document.getElementById('developer-nav');
 const developerPages = OmniRelayDeveloper.pages;
 const systemNav = document.getElementById('system-nav');
-const systemPages = OmniRelaySystem.pages;
+const feishuNav = document.getElementById('feishu-nav');
+const systemPages = { ...OmniRelaySystem.pages, bot:'飞书 Bot 配置', settings:'连接设置' };
+const systemSettingsViews = {
+  bot:() => OmniRelayBotSettings.render(),
+  settings:() => panel('服务连接',
+    facts([['业务数据源','OmniGrid Business API · 未接入'],['Agent 运行环境','DeepSeek Harness · 未接入']]))
+};
 const loginPage = document.getElementById('login-page');
 const compactRail = matchMedia('(max-width: 720px)');
 let railPreference;
 let focusAfterRoute = null;
+let projectListReturn;
 let signedOut = false;
 let returnRoute = '#/workbench';
 
@@ -394,7 +445,7 @@ function setRail(state) {
 railToggle.addEventListener('click', () => {
   setRail(shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed');
 });
-for (const group of [systemNav, developerNav]) {
+for (const group of [feishuNav, systemNav, developerNav]) {
   group.querySelector('summary').addEventListener('click', event => {
     if (shell.dataset.rail !== 'collapsed') return;
     event.preventDefault();
@@ -473,15 +524,20 @@ function table(label, cols, rows) {
       '<td' + (cols[index][1] ? ' class="secondary"' : '') + '>' + cell + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
 }
 
-function taskTable(items, milestone = false) {
+function taskTable(items, milestone = false, id) {
   const cols = [['期限'], [milestone ? '节点任务' : '任务'], ['负责人'], ['状态']];
-  const rows = items.map(([title, owner, due, status, important]) => [
-    '<span class="date">' + due + '</span>', title + (important ? ' ' + chip('important') : ''), owner, chip(status)
-  ]);
+  const rows = items.map(([title, owner, due, status], index) => {
+    const number = id ? projects[id].milestones[index] + 1 : null;
+    const priority = number ? OmniRelayProject.taskDetails(projects[id],id,number).priority : null;
+    const label = number ? '<a href="' + projectUrl(id, 'tasks/' + number) + '">' + title + '</a>' : title;
+    const tag = priority === 'important' || priority === 'urgent' ?
+      ' ' + chip(OmniRelayProject.priorityTone[priority],OmniRelayProject.priorities[priority]) : '';
+    return [OmniRelayProject.deadline(due,status),label + tag,owner,chip(status)];
+  });
   return items.length ? table(milestone ? '关键节点' : '共享任务', cols, rows) : empty('当前状态下没有匹配的任务。');
 }
 
-function projectOverview(project, id) {
+function projectOverview(project, id, settings) {
   const done = project.tasks.filter(task => task[3] === 'success').length;
   const overview = facts([
     ['负责人',project.lead], ['关联飞书群',project.group], ['示例快照',project.update],
@@ -489,37 +545,21 @@ function projectOverview(project, id) {
   ]) + (project.summary ? '<p class="context"><b>Agent 摘要</b>' + project.summary + '</p>' : '');
   const concerns = project.attention.map(([tone, title, description]) =>
     '<li>' + chip(tone) + '<div><strong>' + title + '</strong><p class="aux">' + description + '</p></div></li>').join('');
-  return panel('项目概况', overview) +
-    panel('关键节点', project.milestones.length ? taskTable(project.milestones.map(index => project.tasks[index]), true) : empty('暂无关键节点。'),
+  return panel('项目概况', overview, settings) +
+    panel('关键节点', project.milestones.length ? taskTable(project.milestones.map(index => project.tasks[index]), true, id) : empty('暂无关键节点。'),
       '<a class="button" href="' + projectUrl(id, 'tasks') + '">查看全部任务</a>') +
     panel('当前关注', concerns ? '<ul class="attention">' + concerns + '</ul>' : empty('当前没有记录的关注事项。'));
 }
 
-function projectTasks() {
-  return '<section id="standard-list"></section>';
-}
-
-function projectBrief(project) {
-  const body = project.brief ? facts([['最新简报',project.brief],['目标群',project.group],['状态',chip('success', '示例已生成')]]) :
-    empty('此项目暂无简报。');
-  return panel('项目简报', body, project.brief ? cardLink('打开卡片预览') : '');
-}
-
-function projectFeishu(project) {
-  return panel('飞书 Bot', facts([['应用名称','OmniRelay'],['项目群',project.group],['接入状态',chip('pending','原型未接入')]]))
-    + panel('消息卡片', '<p class="aux">预览群简报、任务查询和分派回执。</p>', cardLink('打开卡片预览'));
-}
-
-function renderProject(id, tab) {
+function renderProject(id, tab, html) {
   const project = projects[id];
-  const views = { overview: projectOverview, tasks: projectTasks, brief: projectBrief, feishu: projectFeishu };
   return '<header class="head"><div class="project-title"><span class="kind">' + project.kind + '</span>' + heading(project.name) +
     chip(project.status) + '</div><a class="button" href="#/projects">返回项目列表</a></header>' +
     '<div class="tabs" role="tablist" aria-label="项目工作台">' + Object.entries(tabs).map(([key,label]) =>
       '<button type="button" id="tab-' + key + '" data-tab="' + key + '" role="tab" aria-controls="project-panel" aria-selected="' +
       (key === tab) + '" tabindex="' + (key === tab ? '0' : '-1') + '">' + label + '</button>').join('') + '</div>' +
     '<section class="stack" id="project-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-' + tab + '">' +
-    views[tab](project, id) + '</section>';
+    html + '</section>';
 }
 
 const column = (key, label, render, sort, secondary = false) => ({ key, label, render, sort, secondary });
@@ -540,23 +580,6 @@ function projectListConfig(area) {
       column('status','阶段', row => chip(row.status), row => statuses[row.status]),
       column('latest','进展速览', row => row.latest, null, true),
       column('lead','负责人', row => row.lead, row => row.lead)
-    ]
-  };
-}
-
-function taskListConfig(id) {
-  const rows = projects[id].tasks.map(([title,owner,due,status,important],index) => (
-    { id:String(index+1), title, owner, due, status, important }
-  ));
-  return {
-    key:'tasks-' + id, label:'共享任务', itemLabel:'任务', rows, rowLabel:row => row.title,
-    search:row => row.title + ' ' + row.owner,
-    filters:[{ key:'status', label:'任务状态', options:stageOptions }],
-    columns:[
-      column('title','任务',row => row.title + (row.important ? ' ' + chip('important') : ''),row => row.title),
-      column('due','期限',row => '<span class="date">' + row.due + '</span>',row => row.due),
-      column('owner','负责人',row => row.owner,row => row.owner),
-      column('status','任务状态',row => chip(row.status),row => statuses[row.status])
     ]
   };
 }
@@ -592,31 +615,38 @@ function showExampleTip(level) {
   OmniRelayUI.toast(level, tipExamples[level]);
 }
 function renderGlobal(area) {
-  const title = '<header class="head">' + heading(labels[area]) + '</header>';
-  const views = {
-    workbench: () => '<section id="standard-list"></section>',
-    projects: () => '<section id="standard-list"></section>',
-    runs: () => '<section id="standard-list"></section>',
-    settings: () => panel('服务连接', facts([['业务数据源','OmniGrid Business API'],['Agent 运行环境','DeepSeek Harness'],['消息通道','飞书应用 Bot']]) +
-      '<p class="context">此工作台为本地原型，服务连接尚未接入。</p>')
-  };
-  return title + views[area]();
+  return '<header class="head">' + heading(labels[area]) + '</header><section id="standard-list"></section>';
 }
 
 function getRoute() {
-  const [area, id, tab] = location.hash.slice(2).split('/');
+  const [area, id, tab, subview] = location.hash.slice(2).split('/');
   if (area === 'login') return { area };
+  if (area === 'bot-chats') return {area:'feishu',feishuPage:'bot-chats'};
+  if (area === 'feishu') return {area,feishuPage:Object.hasOwn(feishuPages,id) ? id : 'bot-chats',chatGroup:tab,chatMessage:subview};
+  if (area === 'settings') return { area:'system', systemPage:'settings' };
   if (area === 'system') return { area, systemPage: Object.hasOwn(systemPages, id) ? id : 'users' };
   if (!location.hash) return { area:'projects', id:'beichen', tab:'overview' };
   if (area === 'developer') return { area, developerPage:Object.hasOwn(developerPages,id) ? id : 'list' };
   if (area === 'projects' && Object.hasOwn(projects, id)) {
-    return { area, id, tab: Object.hasOwn(tabs, tab) ? tab : 'overview' };
+    if (tab === 'brief') return {area,id,tab:'reports',subview:'brief'};
+    return { area, id, tab: Object.hasOwn(tabs, tab) ? tab : 'overview', subview };
   }
   return { area: Object.hasOwn(labels, area) ? area : 'workbench' };
 }
 
 function render() {
-  const {area,id,tab,developerPage,systemPage} = getRoute();
+  if (OmniRelayTaskEditor.guardRoute()) return;
+  const {area,id,tab,subview,developerPage,systemPage,feishuPage,chatGroup,chatMessage} = getRoute();
+  const projectListScroller = page.querySelector('#standard-list .list-scroll');
+  if (id && projectListScroller?.querySelector('a[href^="#/projects/"]') &&
+      crumbs.querySelector('[aria-current="page"]')?.textContent === '项目列表') {
+    projectListReturn = {id, top:projectListScroller.scrollTop, left:projectListScroller.scrollLeft};
+  }
+  const projectView = id ? OmniRelayProject.render(projects[id],id,tab,subview,{
+    chip, empty, panel, facts, cardLink, projects, overview:projectOverview,
+    botSettings:Object.hasOwn(systemPages,'bot')
+  }) : null;
+  const settingsView = systemSettingsViews[systemPage];
   if (signedOut && area !== 'login') {
     location.replace('#/login');
     return;
@@ -635,33 +665,46 @@ function render() {
     if (link.dataset.nav === area) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
-  const nestedPage = developerPage || systemPage;
+  const nestedPage = developerPage || systemPage || feishuPage;
   mobile.value = nestedPage ? area + '/' + nestedPage : area;
-  for (const [name, group, child] of [['developer', developerNav, developerPage], ['system', systemNav, systemPage]]) {
+  for (const [name, group, child] of [
+    ['developer', developerNav, developerPage], ['system', systemNav, systemPage], ['feishu', feishuNav, feishuPage]
+  ]) {
     group.dataset.active = String(Boolean(child));
     if (nestedPage) group.open = Boolean(child);
+    else if (group === feishuNav) group.open = false;
     group.querySelectorAll('[data-' + name + ']').forEach(link => {
       if (link.dataset[name] === child) link.setAttribute('aria-current','page');
       else link.removeAttribute('aria-current');
     });
   }
   if (nestedPage) {
-    const section = systemPage ? '系统管理' : '开发者';
-    const title = systemPage ? systemPages[systemPage] : developerPages[developerPage];
+    const section = feishuPage ? '飞书' : systemPage ? '系统管理' : '开发者';
+    const title = feishuPage ? feishuPages[feishuPage] : systemPage ? systemPages[systemPage] : developerPages[developerPage];
     crumbs.innerHTML = '<span>' + section + '</span><span aria-hidden="true">/</span><span aria-current="page">' + title + '</span>';
-    page.innerHTML = systemPage ? OmniRelaySystem.render(systemPage) : OmniRelayDeveloper.render(developerPage);
+    if (feishuPage) {
+      page.innerHTML = feishuPage === 'bot-chats' ? OmniRelayBotChat.render() : OmniRelayDrive.render();
+    } else if (settingsView) {
+      page.innerHTML = '<header class="head">' + heading(title) + '</header>' + settingsView();
+    } else {
+      page.innerHTML = systemPage ? OmniRelaySystem.render(systemPage) : OmniRelayDeveloper.render(developerPage);
+    }
   } else {
     crumbs.innerHTML = id
       ? '<a href="#/projects">项目列表</a><span aria-hidden="true">/</span><span aria-current="page">' + projects[id].name + '</span>'
       : '<span>工作空间</span><span aria-hidden="true">/</span><span aria-current="page">' + labels[area] + '</span>';
-    page.innerHTML = id ? renderProject(id, tab) : renderGlobal(area);
+    page.innerHTML = id ? renderProject(id, tab, projectView.html) : renderGlobal(area);
   }
   const list = document.getElementById('standard-list');
-  page.dataset.layout = list || systemPage || developerPage === 'list' ? 'list' : developerPage === 'colors' ? 'palette' : 'content';
+  const listLayout = list || (systemPage && !settingsView) || developerPage === 'list';
+  page.dataset.layout = id ? 'project' : listLayout || feishuPage === 'drive' ? 'list' : feishuPage === 'bot-chats' ? 'bot-chat' : developerPage === 'colors' ? 'palette' : 'content';
   page.scrollTop = 0;
-  if (list) OmniRelayUI.mountList(list, id ? taskListConfig(id) : area === 'runs' ? runListConfig() : projectListConfig(area));
+  if (list) OmniRelayUI.mountList(list, area === 'runs' ? runListConfig() : projectListConfig(area));
   if (developerPage) OmniRelayDeveloper.mount(page, developerPage);
-  if (systemPage) OmniRelaySystem.mount(page, systemPage);
+  if (feishuPage === 'bot-chats') OmniRelayBotChat.mount(page,projects,undefined,chatGroup,chatMessage);
+  if (feishuPage === 'drive') OmniRelayDrive.mount(page,projects);
+  if (systemPage === 'bot') OmniRelayBotSettings.mount(page);
+  else if (systemPage && !settingsView) OmniRelaySystem.mount(page, systemPage);
   if (focusAfterRoute === 'tab') {
     const active = document.getElementById('tab-' + tab);
     active?.focus({preventScroll:true});
@@ -669,7 +712,14 @@ function render() {
   } else if (focusAfterRoute === 'heading') {
     document.getElementById('page-heading').focus({preventScroll:true});
   }
+  if (area === 'projects' && !id && projectListReturn) {
+    const saved = projectListReturn;
+    projectListReturn = undefined;
+    list?.querySelector('a[href="' + projectUrl(saved.id) + '"]')?.focus({preventScroll:true});
+    list?.querySelector('.list-scroll')?.scrollTo(saved.left,saved.top);
+  }
   focusAfterRoute = null;
+  if (projectView) projectView.mount(document.getElementById('project-panel'),render);
 }
 
 function selectTab(tab) {

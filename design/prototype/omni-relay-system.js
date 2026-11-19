@@ -476,6 +476,24 @@ window.OmniRelaySystem = (() => {
     });
   }
 
-  return { pages, render, mount, mountLogin,
+  function checkBotProjectAccess({userId,project,operation,visibility}) {
+    const user = findUser(userId);
+    if (!user || user.status !== 'active') return { allowed:false, reason:'账号不可用或已停用。' };
+    if (!user.projects.includes(project)) return { allowed:false, reason:'该用户不属于目标项目。' };
+    const assigned = userGrants(user).filter(grant => grant.scope === project);
+    const acceptedRoles = operation === 'brief' ? ['project-admin'] : ['project-admin','member'];
+    if (!assigned.some(grant => acceptedRoles.includes(grant.role))) {
+      return { allowed:false, reason:operation === 'brief' ? '管理简报发布需要目标项目的项目管理员授权。' : '该用户缺少目标项目的角色授权。' };
+    }
+    if (visibility === 'internal') return { allowed:false, reason:'仅项目内可见的信息不能在项目群中发布。' };
+    return { allowed:true, reason:'账号有效，项目成员和角色匹配，内容在目标群公开范围内。' };
+  }
+
+  function recordBotSettings(previous,current) {
+    record('config','更新飞书 Bot 配置','飞书 Bot',previous,current);
+  }
+
+  return { pages, render, mount, mountLogin, checkBotProjectAccess, recordBotSettings,
+    botTestUsers:() => users.map(({id,name,status}) => ({ id, name, active:status === 'active' })),
     recordLogout:() => record('login','退出登录','OmniRelay 工作台','已登录','已退出') };
 })();

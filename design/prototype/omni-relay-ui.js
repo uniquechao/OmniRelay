@@ -14,6 +14,17 @@ window.OmniRelayUI = (() => {
     })[char]);
   }
 
+  const avatarTones = ['indigo','teal','plum','amber','blue'];
+
+  function personAvatar(label, id = label) {
+    const identity = id.normalize('NFKC').trim();
+    let hash = 2166136261;
+    for (const character of identity) hash = Math.imul(hash ^ character.codePointAt(0),16777619);
+    const tone = avatarTones[(hash >>> 0) % avatarTones.length];
+    return '<span class="person-avatar" data-avatar-tone="' + tone + '" aria-hidden="true">' +
+      escape([...label].slice(-2).join('')) + '</span>';
+  }
+
   const icon = (name, className = 'icon') =>
     '<svg class="' + className + '" aria-hidden="true"><use href="#' + name + '"></use></svg>';
 
@@ -50,6 +61,7 @@ window.OmniRelayUI = (() => {
     const message = dialog.querySelector('.field-error');
     let invalidField;
     let hasGuard = false;
+    let closeAfterSubmit = false;
     let lastField;
     dialog.querySelector('.dialog-body').addEventListener('focusin',event => {
       if (event.target.matches('input, select, textarea')) lastField = event.target;
@@ -64,9 +76,16 @@ window.OmniRelayUI = (() => {
         cancelLabel:'继续编辑', discard:'不保存', confirm:'保存并关闭',
         onClose(confirmed, result) {
           hasGuard = false;
-          if (confirmed) form.requestSubmit();
+          if (confirmed) {
+            closeAfterSubmit = true;
+            form.requestSubmit();
+            closeAfterSubmit = false;
+          }
           else if (result === 'discard') dialog.close('cancel');
-          else lastField?.focus();
+          else {
+            dialog.dispatchEvent(new Event('or-dialog-guard-cancel'));
+            lastField?.focus();
+          }
         }
       });
     }
@@ -84,7 +103,10 @@ window.OmniRelayUI = (() => {
       if (!confirm && !onSubmit) return;
       clearError();
       const result = onSubmit?.(form,event.submitter);
-      if (result?.keepOpen) return;
+      if (result?.keepOpen) {
+        if (closeAfterSubmit) dialog.close('confirm');
+        return;
+      }
       if (result) {
         invalidField = result.field;
         message.hidden = false;
@@ -245,7 +267,10 @@ window.OmniRelayUI = (() => {
       const results = config.rows.filter(row =>
         (config.includes?.(row) ?? true) &&
         (!query || config.search(row).toLocaleLowerCase().includes(query)) &&
-        filters.every(filter => !state.filters[filter.key] || String(row[filter.key]) === state.filters[filter.key])
+        filters.every(filter => {
+          const value = state.filters[filter.key];
+          return !value || (filter.matches ? filter.matches(row,value) : String(row[filter.key]) === value);
+        })
       );
       const column = config.columns.find(col => col.key === state.sort?.key);
       if (column?.sort) {
@@ -553,5 +578,97 @@ window.OmniRelayUI = (() => {
     });
   }
 
-  return { escape, icon, openDialog, mountList, toast, mountAccount };
+  function mountTree(root, { initialId = '', onChange, entries }) {
+    const branches = [...root.querySelectorAll('[data-tree-toggle]')];
+    const choices = [...root.querySelectorAll('[data-org]')];
+    const status = root.querySelector('[data-org-selection]');
+    const controls = ':scope > .tree-row > [data-tree-toggle]';
+    const branchList = toggle => root.querySelector('#' + CSS.escape(toggle.getAttribute('aria-controls')));
+    const rowControl = row => row.querySelector('[data-org]') ?? row.querySelector('[data-tree-toggle]');
+    let selection;
+
+    function setExpanded(toggle, expanded) {
+      const label = (expanded ? '收起' : '展开') + toggle.dataset.treeToggle;
+      toggle.setAttribute('aria-expanded',String(expanded));
+      toggle.setAttribute('aria-label',label);
+      toggle.title = label;
+      branchList(toggle).hidden = !expanded;
+    }
+
+    function openBranch(toggle) {
+      const branch = toggle.closest('.tree-branch');
+      for (const sibling of branch.parentElement.children) {
+        if (sibling === branch || !sibling.matches('.tree-branch')) continue;
+        setExpanded(sibling.querySelector(controls),false);
+      }
+      setExpanded(toggle,true);
+    }
+
+    function select(choice) {
+      selection = entries.get(choice.dataset.org);
+      choices.forEach(button => button.setAttribute('aria-pressed',String(button === choice)));
+      status.textContent = '已选择 ' + selection.path;
+      onChange?.(selection);
+    }
+
+    root.addEventListener('click',event => {
+      const bulk = event.target.closest('[data-tree-expand]');
+      if (bulk) {
+        branches.forEach(toggle => setExpanded(toggle,bulk.dataset.treeExpand === 'true'));
+        return;
+      }
+      const toggle = event.target.closest('[data-tree-toggle]');
+      if (toggle) {
+        if (toggle.getAttribute('aria-expanded') === 'true') setExpanded(toggle,false);
+        else openBranch(toggle);
+        return;
+      }
+      const choice = event.target.closest('[data-org]');
+      if (choice) select(choice);
+    });
+
+    root.addEventListener('keydown',event => {
+      const row = event.target.closest('.tree-row');
+      if (!row || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        const toggle = row.querySelector('[data-tree-toggle]');
+        const expanded = toggle?.getAttribute('aria-expanded') === 'true';
+        if (event.key === 'ArrowRight' && toggle) {
+          if (!expanded) openBranch(toggle);
+          else {
+            const first = branchList(toggle).querySelector('.tree-row');
+            if (first) rowControl(first).focus();
+          }
+        }
+        if (event.key === 'ArrowLeft') {
+          if (expanded) setExpanded(toggle,false);
+          else {
+            const parent = row.closest('.tree-children')?.parentElement.querySelector(':scope > .tree-row');
+            if (parent) rowControl(parent).focus();
+          }
+        }
+        return;
+      }
+      if (!['ArrowUp','ArrowDown','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const rows = [...root.querySelectorAll('.tree-row')].filter(item => item.getClientRects().length > 0);
+      const index = rows.indexOf(row);
+      const next = { ArrowUp:index - 1, ArrowDown:index + 1, Home:0, End:rows.length - 1 }[event.key];
+      if (rows[next]) rowControl(rows[next]).focus();
+    });
+
+    const initialChoice = choices.find(button => button.dataset.org === initialId);
+    if (initialChoice) {
+      let branch = initialChoice.closest('.tree-branch');
+      while (branch) {
+        openBranch(branch.querySelector(controls));
+        branch = branch.parentElement.closest('.tree-branch');
+      }
+      select(initialChoice);
+    }
+    return { value:() => selection, focus:() => (initialChoice ?? branches[0]).focus() };
+  }
+
+  return { escape, icon, personAvatar, openDialog, mountList, mountTree, toast, mountAccount };
 })();

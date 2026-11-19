@@ -136,12 +136,29 @@
 }
 .directory-org summary { cursor: pointer; padding: 3px 4px 7px; font-weight: 650; }
 .directory-tree .tree-surface { border: 0; padding: 0; }
-.directory-tree .tree-root-row > .tree-choice .icon { display: none; }
 .directory-layout [data-column="status"], .directory-layout tbody .chip { white-space: nowrap; }
 .directory-sync-detail { display: grid; gap: 16px; }
 .directory-sync-status { display: grid; gap: 7px; }
 .directory-sync-status > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .directory-sync-status progress { width: 100%; height: 12px; accent-color: var(--or-primary); }
+[data-bot-settings] { margin-bottom: 14px; }
+.bot-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 14px; }
+.bot-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.bot-fields .select { width: 100%; min-height: 36px; }
+.bot-fields .aux { display: block; }
+.bot-settings-line { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.bot-settings-line > button { margin-inline-start: auto; }
+.bot-check { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; }
+.bot-check-feedback { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--or-border); }
+[data-bot-check-summary][data-tone="success"] { color: var(--or-success-text); }
+[data-bot-check-summary][data-tone="danger"] { color: var(--or-danger-text); }
+.bot-check-steps { list-style: none; display: grid; gap: 6px; padding: 0; margin-top: 9px; }
+.bot-check-steps li {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3px 8px;
+  padding: 8px 10px; border: 1px solid var(--or-border); border-radius: 6px;
+}
+.bot-check-steps p { grid-column: 1 / -1; }
+.bot-check-steps p:empty { display: none; }
 @media (max-width: 850px) {
   .audit-compact-actor { display: inline; }
 }
@@ -157,6 +174,7 @@
 }
 @media (max-width: 520px) {
   .admin-details { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .bot-fields { grid-template-columns: minmax(0,1fr); }
 }
 @media (pointer: coarse) {
   .login-top .button, .admin-heading .button, .admin-field .select { min-height: 44px; }

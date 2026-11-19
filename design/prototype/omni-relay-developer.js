@@ -16,7 +16,6 @@ window.OmniRelayDeveloper = (() => {
     { id:'lin-xiao', label:'林晓', detail:'研发中心 / 产品组', search:'linxiao lx' },
     { id:'zhao-ke', label:'赵可', detail:'交付中心 / 测试组', search:'zhaoke zk' }
   ];
-  const avatarTones = ['indigo','teal','plum','amber','blue'];
   const departments = [
     { id:'engineering', label:'研发中心', teams:[{id:'platform',label:'平台组'}, {id:'product',label:'产品组'}] },
     { id:'delivery', label:'交付中心', teams:[{id:'delivery-1',label:'交付一组'}, {id:'testing',label:'测试组'}] }
@@ -57,14 +56,9 @@ window.OmniRelayDeveloper = (() => {
   }
 
   function personView(person) {
-    const identity = (person.id || person.label).normalize('NFKC').trim();
-    let hash = 2166136261;
-    for (const character of identity) hash = Math.imul(hash ^ character.codePointAt(0),16777619);
-    const tone = avatarTones[(hash >>> 0) % avatarTones.length];
     const name = escape(person.label);
     const organization = escape(person.detail);
-    return '<div class="person-view"><span class="person-avatar" data-avatar-tone="' + tone + '" aria-hidden="true">' +
-      escape([...person.label].slice(-2).join('')) + '</span><div class="person-copy">' +
+    return '<div class="person-view">' + OmniRelayUI.personAvatar(person.label,person.id) + '<div class="person-copy">' +
       '<strong class="person-name" title="' + name + '">' + name + '</strong>' +
       '<span class="person-org" title="' + organization + '">' + organization + '</span></div></div>';
   }
@@ -105,30 +99,33 @@ window.OmniRelayDeveloper = (() => {
 
   function tree(id, selectDepartments = false, groups = departments, includeAll = false) {
     const choice = ({id,label}, symbol) => `<button class="tree-choice" type="button"
-      data-org="${id}" aria-pressed="false">${icon(symbol)}<span>${label}</span>
+      data-org="${escape(id)}" aria-pressed="false">${icon(symbol)}<span>${escape(label)}</span>
       <span data-chosen aria-hidden="true">✓</span></button>`;
     const toggle = (key, label, expanded, symbol) => `<button class="tree-toggle${symbol ? ' tree-branch-label' : ''}" type="button"
-      data-tree-toggle aria-label="${label}分支" aria-controls="${id}-${key}" aria-expanded="${expanded}">
-      ${icon('action-expand','icon tree-expander')}${symbol ? icon(symbol) + '<span>' + label + '</span>' : ''}</button>`;
+      data-tree-toggle="${escape(label)}" aria-label="${expanded ? '收起' : '展开'}${escape(label)}"
+      title="${expanded ? '收起' : '展开'}${escape(label)}" aria-controls="${escape(id + '-' + key)}" aria-expanded="${expanded}">
+      ${icon('action-expand','icon tree-expander')}${symbol ? icon(symbol) + '<span>' + escape(label) + '</span>' : ''}</button>`;
+    const leaf = (item,symbol) => '<li class="tree-row tree-leaf"><span class="tree-toggle-space" aria-hidden="true"></span>' +
+      choice(item,symbol) + '</li>';
     const branches = groups.map((department,index) => department.teams.length ? `<li class="tree-branch">
       <div class="tree-row">${selectDepartments
         ? toggle(department.id,department.label,index === 0) + choice(department,'nav-projects')
         : toggle(department.id,department.label,index === 0,'nav-projects')}</div>
-      <ul class="tree-children" id="${id}-${department.id}"${index ? ' hidden' : ''}>
-        ${department.teams.map(team => '<li class="tree-row tree-leaf">' + choice(team,'nav-team') + '</li>').join('')}
+      <ul class="tree-children" id="${escape(id + '-' + department.id)}"${index ? ' hidden' : ''}>
+        ${department.teams.map(team => leaf(team,'nav-team')).join('')}
       </ul>
-    </li>` : '<li class="tree-row tree-leaf">' + choice(department,'nav-projects') + '</li>').join('');
+    </li>` : leaf(department,'nav-projects')).join('');
     return `<div class="dev-tree" role="group" aria-label="组织结构">
       <div class="tree-surface tree-branch tree-root">
+        <div class="tree-tools" role="group" aria-label="分支显示">
+          <button class="tree-tool" type="button" data-tree-expand="true">展开全部</button>
+          <button class="tree-tool" type="button" data-tree-expand="false">收起全部</button>
+        </div>
         <div class="tree-row tree-root-row">
           ${includeAll ? toggle('root','全部组织',true) + choice({id:'all',label:'全部组织'},'nav-components')
             : toggle('root','OmniRelay',true,'nav-components')}
-          <div class="tree-tools">
-            <button class="tree-tool" type="button" data-tree-expand="true" aria-label="全部展开" title="全部展开">+</button>
-            <button class="tree-tool" type="button" data-tree-expand="false" aria-label="全部收起" title="全部收起">−</button>
-          </div>
         </div>
-        <ul class="tree-children" id="${id}-root">${branches}</ul>
+        <ul class="tree-children" id="${escape(id)}-root">${branches}</ul>
       </div>
       <p class="${includeAll ? 'sr-only' : 'aux tree-selection'}" data-org-selection role="status"></p>
     </div>`;
@@ -219,7 +216,7 @@ window.OmniRelayDeveloper = (() => {
       '</header>' + content[view]();
   }
 
-  function mountCombo(root) {
+  function mountCombo(root, { choices, initial } = {}) {
     const input = root.querySelector('[role="combobox"]');
     const output = root.querySelector('[data-combo-result]');
     const box = root.querySelector('.combo-box');
@@ -227,8 +224,8 @@ window.OmniRelayDeveloper = (() => {
     const empty = root.querySelector('.combo-empty');
     const values = root.querySelector('.combo-values');
     const multiple = root.dataset.multiple === 'true';
-    const source = root.dataset.source === 'people' ? people : categories;
-    const selected = new Set();
+    const source = choices || (root.dataset.source === 'people' ? people : categories);
+    const selected = new Set(initial ? [].concat(initial) : []);
     let active = -1;
     let matches = [];
 
@@ -245,8 +242,8 @@ window.OmniRelayDeveloper = (() => {
       const needle = query.trim().toLocaleLowerCase();
       matches = source.filter(item => [item.label,item.detail,item.search].join(' ').toLocaleLowerCase().includes(needle));
       list.innerHTML = matches.map((item,index) => '<div class="combo-option" role="option" id="' + input.id + '-option-' + index +
-        '" data-option="' + item.id + '" aria-selected="' + selected.has(item.id) + '"><span>' + item.label +
-        (item.detail ? '<small>' + item.detail + '</small>' : '') + '</span>' + (selected.has(item.id) ? '<span aria-hidden="true">✓</span>' : '') + '</div>'
+        '" data-option="' + escape(item.id) + '" aria-selected="' + selected.has(item.id) + '"><span>' + escape(item.label) +
+        (item.detail ? '<small>' + escape(item.detail) + '</small>' : '') + '</span>' + (selected.has(item.id) ? '<span aria-hidden="true">✓</span>' : '') + '</div>'
       ).join('');
       empty.hidden = Boolean(matches.length);
       box.hidden = false;
@@ -263,7 +260,7 @@ window.OmniRelayDeveloper = (() => {
       output.value = [...selected].join(',');
       output.dispatchEvent(new Event('input',{bubbles:true}));
       values.innerHTML = source.filter(item => selected.has(item.id)).map(item =>
-        '<button class="combo-value" type="button" data-remove="' + item.id + '" aria-label="移除 ' + item.label + '">' + item.label + ' ×</button>'
+        '<button class="combo-value" type="button" data-remove="' + escape(item.id) + '" aria-label="移除 ' + escape(item.label) + '">' + escape(item.label) + ' ×</button>'
       ).join('');
     }
     function pick(id) {
@@ -280,7 +277,11 @@ window.OmniRelayDeveloper = (() => {
     input.addEventListener('click',() => { if(box.hidden) show(input.value); });
     input.addEventListener('input',() => show(input.value));
     input.addEventListener('keydown',event => {
-      if (event.key === 'Escape') { close(); return; }
+      if (event.key === 'Escape' && !box.hidden) {
+        if (choices) event.preventDefault();
+        close();
+        return;
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         if (box.hidden) show(input.value);
@@ -315,6 +316,7 @@ window.OmniRelayDeveloper = (() => {
       sync();
       close();
     });
+    if (initial) sync();
   }
 
   function mountStrip(root) {
@@ -440,60 +442,8 @@ window.OmniRelayDeveloper = (() => {
     }
   }
 
-  function mountTree(root, { initialId = '', onChange, entries = organizations } = {}) {
-    const branches = [...root.querySelectorAll('[data-tree-toggle]')];
-    const choices = [...root.querySelectorAll('[data-org]')];
-    const status = root.querySelector('[data-org-selection]');
-    const controls = ':scope > .tree-row > [data-tree-toggle]';
-    let selection;
-
-    function setExpanded(toggle, expanded) {
-      toggle.setAttribute('aria-expanded',String(expanded));
-      document.getElementById(toggle.getAttribute('aria-controls')).hidden = !expanded;
-    }
-
-    function openBranch(toggle) {
-      const branch = toggle.closest('.tree-branch');
-      for (const sibling of branch.parentElement.children) {
-        if (sibling === branch || !sibling.matches('.tree-branch')) continue;
-        setExpanded(sibling.querySelector(controls),false);
-      }
-      setExpanded(toggle,true);
-    }
-
-    function select(choice) {
-      selection = entries.get(choice.dataset.org);
-      choices.forEach(button => button.setAttribute('aria-pressed',String(button === choice)));
-      status.textContent = '已选择 ' + selection.path;
-      onChange?.(selection);
-    }
-
-    root.addEventListener('click',event => {
-      const bulk = event.target.closest('[data-tree-expand]');
-      if (bulk) {
-        branches.forEach(toggle => setExpanded(toggle,bulk.dataset.treeExpand === 'true'));
-        return;
-      }
-      const toggle = event.target.closest('[data-tree-toggle]');
-      if (toggle) {
-        if (toggle.getAttribute('aria-expanded') === 'true') setExpanded(toggle,false);
-        else openBranch(toggle);
-        return;
-      }
-      const choice = event.target.closest('[data-org]');
-      if (choice) select(choice);
-    });
-
-    const initialChoice = choices.find(button => button.dataset.org === initialId);
-    if (initialChoice) {
-      let branch = initialChoice.closest('.tree-branch');
-      while (branch) {
-        openBranch(branch.querySelector(controls));
-        branch = branch.parentElement.closest('.tree-branch');
-      }
-      select(initialChoice);
-    }
-    return { value:() => selection, focus:() => (initialChoice ?? branches[0]).focus() };
+  function mountTree(root, { entries = organizations, ...options } = {}) {
+    return OmniRelayUI.mountTree(root,{ entries, ...options });
   }
 
   function mountOrganizationPicker(root) {
@@ -609,5 +559,5 @@ window.OmniRelayDeveloper = (() => {
     form.addEventListener('reset',clearError);
   }
 
-  return { pages, render, mount, tree, mountTree };
+  return { pages, render, mount, tree, mountTree, combo, mountCombo };
 })();

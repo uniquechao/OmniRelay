@@ -5,6 +5,9 @@
 ## 交互原型
 
 - [工作台](prototype/omni-relay-workbench.html)
+- [项目工作台演示](prototype/omni-relay-workbench.html#/projects/beichen/overview)
+- [飞书 · 机器人记录](prototype/omni-relay-workbench.html#/feishu/bot-chats)
+- [飞书 · 文件网盘](prototype/omni-relay-workbench.html#/feishu/drive)
 - [登录演示](prototype/omni-relay-workbench.html#/login)
 - [飞书 Bot 交互与卡片](prototype/omni-relay-feishu-prototype.html)
 - [色彩系统](prototype/omni-relay-color-system.html)
@@ -14,8 +17,11 @@
 
 ## 系统设计
 
+- [本轮需求改动与开发交接](specs/omni-relay-development-handoff-2026-11-19.md)
+- [本轮开发任务分解指令](engineering/development-instructions-2026-11-19.md)
 - [系统模块与服务边界](specs/omni-relay-module-design.md)
 - [Go 主服务详细设计](specs/omni-relay-go-service-design.md)
+- [项目模块需求（评审稿）](specs/omni-relay-project-requirements.md)
 - [飞书 Bot 配置、登录与通讯录同步](specs/omni-relay-feishu-integration.md)
 - [Kubernetes 部署设计](specs/omni-relay-k8s-deployment-design.md)
 

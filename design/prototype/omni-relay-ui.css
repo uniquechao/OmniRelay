@@ -196,41 +196,47 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 .combo-value { color: var(--or-link); background: var(--or-selected-bg); border: 1px solid var(--or-border); border-radius: 5px; padding: 2px 6px; }
 .combo-value:hover { border-color: var(--or-focus); }
 .dev-tree { display: grid; gap: 9px; min-width: 0; }
-.tree-tools { display: flex; flex: none; align-items: center; gap: 3px; margin-inline-start: auto; }
-.tree-tool {
-  display: grid; place-items: center; inline-size: 25px; min-block-size: 26px; padding: 0;
-  border: 1px solid transparent; border-radius: 5px; background: transparent;
-  color: var(--or-agent-text); font: 650 1.0625rem/1 ui-sans-serif, sans-serif;
+.tree-tools {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px;
+  margin-bottom: 5px; padding: 3px 2px 5px; border-bottom: 1px solid var(--or-border);
 }
-.tree-tool:hover { border-color: var(--or-border); background: var(--or-surface); }
-.tree-surface { border: 1px solid var(--or-border); border-radius: 8px; background: var(--or-surface); padding: 5px; min-width: 0; }
+.tree-tool {
+  min-block-size: 28px; padding: 3px 7px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--or-text-secondary); font-size: .75rem; font-weight: 600;
+}
+.tree-tool:hover { color: var(--or-link); background: var(--or-hover-bg); }
+.tree-surface {
+  --tree-toggle-width: 28px;
+  border: 1px solid var(--or-border); border-radius: 8px; background: var(--or-surface); padding: 6px; min-width: 0;
+}
 .tree-row {
   position: relative; display: flex; align-items: stretch; min-width: 0; border-radius: 5px;
   color: var(--or-text); overflow-wrap: anywhere;
 }
-.tree-root-row { background: var(--or-agent-bg); color: var(--or-agent-text); padding-inline-end: 3px; margin-bottom: 3px; border-radius: 6px; }
-.tree-row:not(.tree-root-row):hover { background: var(--or-surface-muted); }
+.tree-root-row { margin-bottom: 2px; }
+.tree-row:hover { background: var(--or-hover-bg); }
 .tree-row .icon { width: 16px; height: 16px; color: var(--or-text-secondary); }
-.tree-root-row .icon { color: var(--or-agent-text); }
-.tree-row .tree-expander { width: 13px; height: 13px; }
+.tree-row .tree-expander { width: 14px; height: 14px; }
 .tree-toggle[aria-expanded="true"] .tree-expander { rotate: 90deg; }
 .tree-toggle, .tree-choice {
-  display: flex; align-items: center; gap: 7px; min-height: 34px; min-width: 0; padding: 4px 6px; text-align: left;
+  display: flex; align-items: center; gap: 7px; min-height: 36px; min-width: 0; padding: 4px 6px; text-align: left;
   background: transparent; border: 0; border-radius: 5px; color: inherit;
 }
-.tree-toggle { flex: none; justify-content: center; }
-.tree-toggle:hover { background: color-mix(in srgb,var(--or-agent-bg) 70%,transparent); }
+.tree-toggle, .tree-toggle-space { flex: 0 0 var(--tree-toggle-width); }
+.tree-toggle { justify-content: center; }
+.tree-toggle:hover { background: color-mix(in srgb,var(--or-control-border) 16%,transparent); }
 .tree-branch-label, .tree-choice { flex: 1 1 auto; justify-content: flex-start; }
+.tree-branch-label .tree-expander { margin-inline: calc((var(--tree-toggle-width) - 26px)/2); }
 .tree-branch-label span, .tree-choice span { min-width: 0; }
 .tree-branch > .tree-row { font-weight: 600; }
 .tree-root > .tree-row { font-weight: 700; }
-.tree-children { display: grid; padding: 0 0 0 9px; margin-inline-start: 13px; border-inline-start: 1px solid var(--or-border); list-style: none; }
+.tree-children { display: grid; padding: 0; padding-inline-start: 6px; margin-inline-start: 11px; border-inline-start: 1px solid var(--or-border); list-style: none; }
 .tree-children > .tree-row::before, .tree-children > .tree-branch > .tree-row::before {
-  content: ""; position: absolute; inset-block-start: 50%; inset-inline-start: -9px; width: 8px; border-block-start: 1px solid var(--or-border);
+  content: ""; position: absolute; inset-block-start: 50%; inset-inline-start: -7px; width: 6px; border-block-start: 1px solid var(--or-border);
 }
 .tree-row:has(> .tree-choice[aria-pressed="true"]) { color: var(--or-agent-text); background: var(--or-agent-bg); font-weight: 650; }
-.tree-choice[aria-pressed="true"] .icon { color: var(--or-agent-text); }
-.tree-choice [data-chosen] { margin-inline-start: auto; visibility: hidden; }
+.tree-row:has(> .tree-choice[aria-pressed="true"]) .icon { color: var(--or-agent-text); }
+.tree-choice [data-chosen] { flex: none; margin-inline-start: auto; visibility: hidden; }
 .tree-choice[aria-pressed="true"] [data-chosen] { visibility: visible; }
 .tree-selection { padding-inline: 3px; overflow-wrap: anywhere; }
 .tree-selection:empty { margin-block-start: -9px; }
@@ -274,7 +280,8 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 }
 @media (pointer: coarse) {
   .nav-group summary, .nav-group .nav-children a, .row-action, .field :is(input,textarea), .combo-option, .combo-value, .tree-toggle, .tree-choice, .tree-tool, .org-picker-controls > button, .dialog-footer .button, .dialog-close { min-height: 44px; }
-  .tree-tool { width: 44px; }
+  .tree-surface { --tree-toggle-width: 44px; }
+  .tree-tool { min-width: 44px; }
   .dialog-close { width: 44px; }
   .date-arrow { width: 44px; height: 44px; }
 }
