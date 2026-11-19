@@ -115,12 +115,34 @@ func serveSDKWorker(ctx context.Context, input io.Reader, output io.Writer, opti
 	events := dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(
 		func(callback context.Context, incoming *im.P2MessageReceiveV1) error {
 			received := time.Now()
-			event, ok := mapInbound(cfg, incoming, received)
-			if !ok {
+			event, command := mapInbound(cfg, incoming, received)
+			if cfg.Archive {
+				archive := mapArchive(cfg, incoming, received)
+				if !command {
+					event = archiveInbound(cfg, archive)
+				} else {
+					event.Archive = archive
+				}
+			}
+			if !command && event.Archive == nil {
 				return nil
 			}
 			return bridge.deliver(callback, event, received.Add(callbackBudget))
 		})
+	if cfg.Archive {
+		events.OnP2MessageRecalledV1(func(callback context.Context, incoming *im.P2MessageRecalledV1) error {
+			now := time.Now()
+			if archive := mapRecall(cfg, incoming, now); archive != nil {
+				return bridge.deliver(callback, archiveInbound(cfg, archive), now.Add(callbackBudget))
+			}
+			return nil
+		}).OnP2ChatAccessEventBotP2pChatEnteredV1(func(callback context.Context, incoming *im.P2ChatAccessEventBotP2pChatEnteredV1) error {
+			if archive := mapPrivateEntry(cfg, incoming); archive != nil {
+				return bridge.deliver(callback, archiveInbound(cfg, archive), time.Now().Add(callbackBudget))
+			}
+			return nil
+		})
+	}
 	opts := []larkws.ClientOption{
 		larkws.WithEventHandler(events), larkws.WithAutoReconnect(false),
 		larkws.WithLogger(pongLogger{signal: func() { bridge.signal("pong") }}),

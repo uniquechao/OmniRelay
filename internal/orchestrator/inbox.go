@@ -36,6 +36,7 @@ type InboundEvent struct {
 	ReceivedAt                          time.Time
 	Text                                string
 	Connection                          ConnectionFence
+	Archive                             *ArchiveEvent `json:",omitempty"`
 }
 
 type WorkID string
@@ -47,4 +48,21 @@ type AcceptResult struct {
 
 type InboxAcceptor interface {
 	AcceptInbound(ctx context.Context, event InboundEvent) (AcceptResult, error)
+}
+
+// ChatMessage is the provider message used by the read-only archive.
+type ChatMessage struct {
+	ID, ChatID, ThreadID, ParentID   string
+	SenderID, SenderKind, SenderName string
+	Type, Body                       string
+	SentAt, UpdatedAt                time.Time
+	Deleted, VisibleInChat           bool
+}
+
+// ArchiveEvent travels over the existing trusted connection. A message can be
+// admitted to the archive and to the command inbox independently.
+type ArchiveEvent struct {
+	ChatID, PeerOpenID string
+	Kind               ChatKind
+	Message            *ChatMessage
 }

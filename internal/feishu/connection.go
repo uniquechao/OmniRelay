@@ -28,6 +28,7 @@ type Connection struct {
 	check      system.Provider
 	store      ConnectionStore
 	inbox      orchestrator.InboxAcceptor
+	archive    func(context.Context, orchestrator.InboundEvent) error
 	runner     connectionRunner
 	ttl        time.Duration
 	poll       time.Duration
@@ -45,6 +46,25 @@ func NewConnection(executable, tenantKey string, check *BotCheck, store Connecti
 		// intervals plus five seconds. The SDK may time out sooner.
 		silence: 245 * time.Second,
 	}
+}
+
+// SetArchive wires the independent archive before the connection is started.
+func (c *Connection) SetArchive(accept func(context.Context, orchestrator.InboundEvent) error) {
+	c.config.Archive = accept != nil
+	c.archive = accept
+}
+
+func (c *Connection) accept(ctx context.Context, event orchestrator.InboundEvent) error {
+	var archiveErr, commandErr error
+	if event.Archive == nil || event.MessageID != "" {
+		command := event
+		command.Archive = nil
+		_, commandErr = c.inbox.AcceptInbound(ctx, command)
+	}
+	if event.Archive != nil && c.archive != nil {
+		archiveErr = c.archive(ctx, event)
+	}
+	return errors.Join(archiveErr, commandErr)
 }
 
 // Run executes only while the Kubernetes elector grants ownership. Verify is
@@ -151,8 +171,7 @@ func (c *Connection) attempt(parent context.Context, fence orchestrator.Connecti
 				return orchestrator.ErrStaleConnection
 			}
 			event.Connection = fence
-			_, err := c.inbox.AcceptInbound(callback, event)
-			return err
+			return c.accept(callback, event)
 		})
 	}()
 	defer func() {

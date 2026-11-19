@@ -11,9 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/directory"
 	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 	"github.com/uniquechao/OmniRelay/internal/system"
 	"github.com/uniquechao/OmniRelay/migrations"
@@ -25,6 +27,12 @@ func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, tran
 }
 
 func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper, roles *access.Service) (http.Handler, *backendWorkers, error) {
+	return newBackendWithIntegrations(ctx, pool, cfg, transport, roles, chat.ReceiptSources{})
+}
+
+func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper,
+	roles *access.Service, receipts chat.ReceiptSources,
+) (http.Handler, *backendWorkers, error) {
 	if err := roles.Bootstrap(ctx, cfg.bootstrap); err != nil {
 		if errors.Is(err, access.ErrBootstrapRequired) {
 			return nil, nil, errors.New("set OMNIRELAY_BOOTSTRAP_OPEN_ID to the first administrator's verified Feishu Open ID")
@@ -57,7 +65,11 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
 	}
 	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
+	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, feishu.NewChatSource(check, cfg.tenantKey), directoryService, roles.Check, receipts)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
+	if cfg.appSecret != "" {
+		workers.chat = chatService
+	}
 	if cfg.botLeaseNamespace != "" && cfg.appSecret != "" {
 		lease, err := feishu.NewLease(cfg.botLeaseNamespace, cfg.botPodUID)
 		if err != nil {
@@ -72,10 +84,14 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 			return nil, nil, err
 		}
 		connection := feishu.NewConnection(executable, cfg.tenantKey, check, botStore, inbox, cfg.botHeartbeatTTL)
+		connection.SetArchive(func(ctx context.Context, event orchestrator.InboundEvent) error {
+			return botStore.AcceptChatArchive(ctx, event, chatService.AcceptEvent)
+		})
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
 	mux := http.NewServeMux()
 	workers.bot.Register(mux, identityService.AuthenticateManagement, roles)
+	chatService.Register(mux, identityService.Authenticate)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
 	web.Register(mux)
@@ -106,12 +122,16 @@ type backendWorkers struct {
 	directory  *directory.Service
 	bot        *system.Service
 	connection func(context.Context)
+	chat       *chat.Service
 }
 
 func (w *backendWorkers) Run(ctx context.Context) {
 	var running sync.WaitGroup
 	running.Go(func() { w.directory.Run(ctx) })
 	running.Go(func() { w.bot.Run(ctx) })
+	if w.chat != nil {
+		running.Go(func() { w.chat.Run(ctx) })
+	}
 	if w.connection != nil {
 		running.Go(func() { w.connection(ctx) })
 	}
