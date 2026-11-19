@@ -364,6 +364,8 @@ func (a WorkbenchAccess) canReturnTo(path string) bool {
 		return a.Admin["audit"]
 	case "/#/system/feishu-bot":
 		return a.Admin["feishu_bot"]
+	case "/#/system/settings":
+		return a.Admin["settings"]
 	default:
 		return false
 	}
@@ -386,8 +388,12 @@ func localReturnPath(raw string) (string, error) {
 	switch raw {
 	case "":
 		return "/", nil
-	case "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot":
+	case "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
 		return raw, nil
+	case "/#/settings":
+		return "/#/system/settings", nil
+	case "/#/system/bot":
+		return "/#/system/feishu-bot", nil
 	default:
 		return "", errors.New("invalid workbench return path")
 	}
