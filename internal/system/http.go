@@ -15,13 +15,13 @@ const basePath = "/api/v1/system/feishu-bot"
 
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
-type authenticate func(http.ResponseWriter, *http.Request, bool) (identity.Principal, bool)
+type authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)
 type handler func(http.ResponseWriter, *http.Request, identity.Principal)
 
 func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Permissions) {
-	handle := func(pattern, action string, write bool, next handler) {
+	handle := func(pattern, action string, policy identity.SessionPolicy, next handler) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			actor, ok := auth(w, r, write)
+			actor, ok := auth(w, r, policy)
 			if !ok {
 				return
 			}
@@ -37,10 +37,10 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 			next(w, r, actor)
 		})
 	}
-	handle("GET "+basePath, "system.read", false, s.getStatus)
-	handle("PATCH "+basePath, "system.configure", true, s.configure)
-	handle("POST "+basePath+"/checks", "system.operate", true, s.submit)
-	handle("GET "+basePath+"/checks/{id}", "system.read", false, s.getCheck)
+	handle("GET "+basePath, "system.read", identity.ValidateSession, s.getStatus)
+	handle("PATCH "+basePath, "system.configure", identity.RefreshSessionWithCSRF, s.configure)
+	handle("POST "+basePath+"/checks", "system.operate", identity.RefreshSessionWithCSRF, s.submit)
+	handle("GET "+basePath+"/checks/{id}", "system.read", identity.ValidateSession, s.getCheck)
 }
 
 func (s *Service) getStatus(w http.ResponseWriter, r *http.Request, _ identity.Principal) {

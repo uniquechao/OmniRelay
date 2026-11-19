@@ -108,7 +108,7 @@ VALUES ($1, $2, CURRENT_TIMESTAMP + make_interval(secs => $3), CURRENT_TIMESTAMP
 	return tx.Commit(ctx)
 }
 
-func (s *Service) loadSession(ctx context.Context, token string, refresh bool) (Principal, error) {
+func (s *Service) loadSession(ctx context.Context, token string, policy SessionPolicy) (Principal, error) {
 	const fields = `account.id, account.tenant_key, account.app_id, account.open_id, account.name, account.avatar_url, session.auth_method,
 		EXISTS (SELECT 1 FROM account_passwords WHERE account_id=account.id)`
 	const conditions = `session.token_digest=$1 AND account.id=session.account_id AND account.active
@@ -116,7 +116,7 @@ func (s *Service) loadSession(ctx context.Context, token string, refresh bool) (
 		AND session.expires_at>clock_timestamp() AND session.idle_expires_at>clock_timestamp()`
 	args := []any{digest(token), s.cfg.TenantKey, s.cfg.AppID}
 	query := `SELECT ` + fields + ` FROM web_sessions AS session, accounts AS account WHERE ` + conditions
-	if refresh {
+	if policy == RefreshSession || policy == RefreshSessionWithCSRF {
 		query = `UPDATE web_sessions AS session
 			SET idle_expires_at=LEAST(session.expires_at, clock_timestamp()+make_interval(secs => $4))
 			FROM accounts AS account WHERE ` + conditions + ` RETURNING ` + fields

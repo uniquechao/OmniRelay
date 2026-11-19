@@ -274,7 +274,7 @@ func principal(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant, ap
 
 func testMux(service *Service, actors ...identity.Principal) *http.ServeMux {
 	mux := http.NewServeMux()
-	service.Register(mux, func(w http.ResponseWriter, r *http.Request, _ bool) (identity.Principal, bool) {
+	service.Register(mux, func(w http.ResponseWriter, r *http.Request, _ identity.SessionPolicy) (identity.Principal, bool) {
 		for _, actor := range actors {
 			if actor.AccountID == r.Header.Get("Test-Account") {
 				return actor, true

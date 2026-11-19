@@ -256,17 +256,27 @@ func redirectLoginError(w http.ResponseWriter, r *http.Request, code string) {
 	redirect(w, "/#/login?error="+code, http.StatusSeeOther)
 }
 
+// SessionPolicy specifies whether an authenticated route may extend the idle
+// deadline and whether it requires CSRF protection regardless of HTTP method.
+type SessionPolicy uint8
+
+const (
+	ValidateSession SessionPolicy = iota
+	RefreshSession
+	RefreshSessionWithCSRF
+)
+
 // Authenticate validates the current server session and writes a sanitized response
 // when authentication fails. Writes require the configured Origin and CSRF token.
-func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, write bool) (Principal, bool) {
-	p, _, ok := s.authenticate(w, r, write)
+func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
+	p, _, ok := s.authenticate(w, r, policy)
 	return p, ok
 }
 
 // AuthenticateManagement uses the management API's common authorization errors.
-func (s *Service) AuthenticateManagement(w http.ResponseWriter, r *http.Request, write bool) (Principal, bool) {
+func (s *Service) AuthenticateManagement(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
 	identityHeaders(w)
-	p, _, status, code := s.authenticateSession(r, write)
+	p, _, status, code := s.authenticateSession(r, policy)
 	switch status {
 	case 0:
 		return p, true
@@ -279,9 +289,9 @@ func (s *Service) AuthenticateManagement(w http.ResponseWriter, r *http.Request,
 	return Principal{}, false
 }
 
-func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, write bool) (Principal, string, bool) {
+func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, string, bool) {
 	identityHeaders(w)
-	p, token, status, code := s.authenticateSession(r, write)
+	p, token, status, code := s.authenticateSession(r, policy)
 	if status != 0 {
 		writeFailure(w, status, code)
 		return Principal{}, "", false
@@ -289,19 +299,22 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, write boo
 	return p, token, true
 }
 
-func (s *Service) authenticateSession(r *http.Request, write bool) (Principal, string, int, string) {
+func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Principal, string, int, string) {
 	token := cookieSecret(r, sessionCookie)
 	if token == "" {
 		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
 	}
 	validCSRF := true
-	if write || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
+	if policy == RefreshSessionWithCSRF || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
 		origins := r.Header.Values("Origin")
 		csrf := r.Header.Values("X-CSRF-Token")
 		validCSRF = len(origins) == 1 && origins[0] == s.cfg.PublicOrigin && len(csrf) == 1 &&
 			hmac.Equal([]byte(csrf[0]), []byte(csrfToken(token)))
 	}
-	p, err := s.loadSession(r.Context(), token, validCSRF)
+	if !validCSRF {
+		policy = ValidateSession
+	}
+	p, err := s.loadSession(r.Context(), token, policy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
 	}
@@ -315,7 +328,7 @@ func (s *Service) authenticateSession(r *http.Request, write bool) (Principal, s
 }
 
 func (s *Service) me(w http.ResponseWriter, r *http.Request) {
-	p, token, ok := s.authenticate(w, r, false)
+	p, token, ok := s.authenticate(w, r, ValidateSession)
 	if !ok {
 		return
 	}
@@ -357,7 +370,7 @@ func (a WorkbenchAccess) canReturnTo(path string) bool {
 }
 
 func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
-	p, token, ok := s.authenticate(w, r, true)
+	p, token, ok := s.authenticate(w, r, RefreshSessionWithCSRF)
 	if !ok {
 		return
 	}
