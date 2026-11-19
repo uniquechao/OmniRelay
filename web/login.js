@@ -125,7 +125,8 @@ export function mountLogin(page, { onSuccess, returnTo = () => '/' }) {
     form.setAttribute('aria-busy', String(value));
     submit.disabled = value || !hasHTTPS();
     feishu.disabled = value;
-    submit.textContent = label;
+    window.OmniRelayLoading.button(submit,value && label !== submitLabel,label);
+    window.OmniRelayLoading.button(feishu,value && label === submitLabel,value && label === submitLabel ? '正在前往飞书…' : undefined);
   }
 
   form.addEventListener('input', clearFeedback);

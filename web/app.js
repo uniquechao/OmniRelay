@@ -15,6 +15,8 @@ const systemNav = document.getElementById('system-nav');
 const loginPage = document.getElementById('login-page');
 const sessionStatus = document.getElementById('session-status');
 const retrySession = sessionStatus.querySelector('button');
+const sessionLoading = sessionStatus.querySelector('[data-session-loading]');
+const sessionError = sessionStatus.querySelector('[data-session-error]');
 let session;
 let routeRequest;
 let view;
@@ -205,6 +207,8 @@ async function render() {
   routeRequest = new AbortController();
   const { signal } = routeRequest;
   sessionStatus.hidden = true;
+  sessionLoading.replaceChildren();
+  sessionLoading.removeAttribute('aria-busy');
   shell.hidden = !session;
   loginPage.hidden = Boolean(session);
   if (!session) {
@@ -288,7 +292,11 @@ function clearSessionView() {
 }
 
 function showSessionError() {
-  sessionStatus.querySelector('p').textContent = '暂时无法连接工作台。';
+  sessionLoading.replaceChildren();
+  sessionLoading.removeAttribute('aria-busy');
+  sessionLoading.hidden = true;
+  sessionError.textContent = '暂时无法连接工作台。';
+  sessionError.hidden = false;
   retrySession.hidden = false;
 }
 
@@ -298,7 +306,9 @@ async function start() {
   const { signal } = sessionCheck;
   clearSessionView();
   retrySession.hidden = true;
-  sessionStatus.querySelector('p').textContent = '正在检查会话…';
+  sessionError.hidden = true;
+  sessionLoading.hidden = false;
+  window.OmniRelayLoading.mount(sessionLoading,{size:'page',label:'正在检查会话…'});
   try {
     await establishSession(await getSession({ signal }), signal);
     if (!signal.aborted) await render();

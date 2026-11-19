@@ -19,8 +19,8 @@ window.OmniRelayBotSettings = (() => {
     '<label class="field"><span class="field-label">' + label + '</span><select class="select" name="' + name + '">' +
     options(items) + '</select></label>';
   const feedback = (kind,initial) => '<div class="bot-check-feedback" data-bot-result="' + kind +
-    '"><p class="aux" data-bot-check-summary role="status">' + initial +
-    '</p><ol class="bot-check-steps" data-bot-steps hidden></ol></div>';
+    '"><div class="aux" data-bot-check-summary role="status">' + initial +
+    '</div><ol class="bot-check-steps" data-bot-steps hidden></ol></div>';
 
   function render() {
     const users = botTestUsers();
@@ -147,6 +147,7 @@ window.OmniRelayBotSettings = (() => {
       list.replaceChildren();
       summary.dataset.tone = '';
       summary.textContent = initial;
+      summary.removeAttribute('aria-busy');
     }
 
     function resetResults() {
@@ -175,7 +176,7 @@ window.OmniRelayBotSettings = (() => {
       forms.forEach(form => { form.querySelector('fieldset').disabled = true; });
       syncButtons();
       summary.dataset.tone = '';
-      summary.textContent = progress;
+      const loading = OmniRelayLoading.mount(summary,{size:'compact',label:progress,progress:0});
       list.hidden = false;
       const rows = steps.map(step => {
         const row = document.createElement('li');
@@ -201,10 +202,12 @@ window.OmniRelayBotSettings = (() => {
         label.textContent = allowed ? '通过' : '未通过';
         label.dataset.tone = allowed ? 'success' : 'danger';
         row.querySelector('p').textContent = reason;
+        loading.update({progress:(index + 1) / rows.length * 100});
       }
 
       summary.dataset.tone = blocked ? 'danger' : 'success';
       summary.textContent = blocked ? failure : success;
+      summary.removeAttribute('aria-busy');
       forms.forEach(form => { form.querySelector('fieldset').disabled = false; });
       running = false;
       syncButtons();

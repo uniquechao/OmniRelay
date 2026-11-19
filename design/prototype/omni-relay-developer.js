@@ -165,6 +165,10 @@ window.OmniRelayDeveloper = (() => {
         '<button class="button warning" type="button" data-dialog-example="disable">操作确认</button>' +
         '<button class="button danger" type="button" data-dialog-example="delete">危险确认</button></div>') +
       panel('右侧抽屉', drawerExamples()) +
+      panel('加载状态', '<div class="loading-examples"><button class="button" type="button" data-loading-example="page">页面加载</button>' +
+        '<button class="button primary" type="button" data-loading-example="button">按钮加载</button>' +
+        '<button class="button" type="button" data-loading-example="stop">结束演示</button></div>' +
+        OmniRelayLoading.markup({size:'compact',label:'区域加载示例…'})) +
       panel('搜索下拉选择', combo('combo-single','单选','categories') + '<div class="field-stacked">' + combo('combo-multiple','多选','categories',true) + '</div>') +
       panel('人员选择框', combo('people-select','人员','people') + '<div class="field-stacked">' + combo('people-multiple','人员多选','people',true) + '</div>') +
       panel('富文本填写框', richEditor('rich-demo','编辑内容',true)) +
@@ -527,6 +531,20 @@ window.OmniRelayDeveloper = (() => {
     page.querySelectorAll('[data-org-picker]').forEach(mountOrganizationPicker);
     page.querySelectorAll('[data-demo-drawer]').forEach(trigger => {
       trigger.addEventListener('click',() => openProjectDrawer(trigger));
+    });
+    page.querySelectorAll('[data-loading-example]').forEach(trigger => {
+      trigger.addEventListener('click',() => {
+        const action = trigger.dataset.loadingExample;
+        if (action === 'page') {
+          const dialog = openDialog({title:'页面加载预览',cancelLabel:'结束演示',
+            body:OmniRelayLoading.markup({size:'page',label:'正在打开工作台…'})});
+          dialog.classList.add('or-loading-preview');
+        } else {
+          const button = page.querySelector('[data-loading-example="button"]');
+          button.disabled = action === 'button';
+          OmniRelayLoading.button(button,action === 'button',action === 'button' ? '处理中…' : '按钮加载');
+        }
+      });
     });
     const form = page.querySelector('#developer-form');
     if (!form) return;

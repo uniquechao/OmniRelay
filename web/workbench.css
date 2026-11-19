@@ -123,3 +123,5 @@ td a:hover { text-decoration: underline; }
 .setup-page small { color: var(--or-text-secondary); }
 .setup-callback { color: var(--or-text-secondary); }
 .setup-callback code { display: block; overflow-wrap: anywhere; color: var(--or-text); }
+.page.session-loading { min-height:100svh; display:grid; align-content:center; justify-items:center; max-width:none; background:var(--or-surface); }
+.session-loading > [data-session-loading] { width:100%; }

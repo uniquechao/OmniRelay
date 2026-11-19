@@ -129,7 +129,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     '<button class="button" type="button" data-directory-retry hidden>重试</button></div>') +
     ifUsers('<div class="directory-layout"><details class="directory-org" open><summary>组织结构</summary>' +
     '<div class="directory-tree" data-directory-tree></div></details>') +
-    '<section id="system-list"><p class="empty" role="status">加载中…</p></section>' + ifUsers('</div>');
+    '<section id="system-list" class="or-loading-placeholder"></section>' + ifUsers('</div>');
   const heading = element.content.querySelector('#page-heading');
   page.replaceChildren(element.content);
   const list = page.querySelector('#system-list');
@@ -407,7 +407,14 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     dialog.toggleAttribute('aria-busy', pending);
     const controls = [...dialog.querySelectorAll(':is(button,select):not([disabled])')];
     controls.forEach(control => { control.disabled = pending; });
+    const feedback = document.createElement('span');
+    feedback.className = 'or-loading-feedback';
+    feedback.innerHTML = window.OmniRelayLoading.markup({size:'inline'});
+    feedback.setAttribute('role','status');
+    feedback.setAttribute('aria-label','正在提交更改…');
+    dialog.querySelector('.dialog-footer').prepend(feedback);
     return () => {
+      feedback.remove();
       dialog.removeAttribute('aria-busy');
       controls.forEach(control => { control.disabled = false; });
     };
@@ -599,6 +606,10 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       fetchingGrants = true;
       if (add) add.disabled = true;
       grantBody.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      const indicator = document.createElement('div');
+      dialog.querySelector('.dialog-footer').prepend(indicator);
+      const loading = window.OmniRelayLoading.mount(indicator,{size:'inline'});
+      indicator.setAttribute('aria-label','正在刷新角色授权…');
       try {
         await refreshUsers();
         if (!dialog.open) return;
@@ -612,6 +623,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
           toast('warning',messageOf(error,'变更已提交，刷新角色授权失败。'));
         }
       } finally {
+        loading.finish();
+        indicator.remove();
         fetchingGrants = false;
         if (add) add.disabled = false;
         if (dialog.open && !row?.hidden) form.elements.role?.focus();
@@ -757,7 +770,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     retry.hidden = hideRetry;
     syncButton.hidden = !maySync || syncForbidden || readForbidden;
     syncButton.disabled = requestingSync || active || !directoryMeta;
-    syncButton.textContent = requestingSync ? '提交中…' : waiting ? '等待同步…' : active ? '同步中…' : '同步';
+    window.OmniRelayLoading.button(syncButton,requestingSync || active,requestingSync ? '提交中…' : waiting ? '等待同步…' : active ? '同步中…' : '同步');
     syncDetails.disabled = readForbidden;
     if (!detailsTarget) return;
     const labels = {
@@ -777,7 +790,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     const last = visible && sync?.snapshotVersion === directoryMeta.snapshotVersion ? sync.lastSuccess : null;
     const markup = '<section class="directory-sync-status"><div><strong>' + escape(phase) + '</strong>' +
       badge(tone,label) + '</div>' + (active || run?.status === 'succeeded'
-        ? '<progress ' + (active ? '' : 'value="100" ') + 'max="100" aria-label="同步进度"></progress>' : '') +
+        ? window.OmniRelayLoading.markup({size:'compact',label:active ? phase + '…' : phase,progress:active ? null : 100,active}) : '') +
       (statusTime ? '<p class="aux">' + escape(statusTime) + '</p>' : '') +
       (failure ? '<p class="aux">失败原因：' + escape(failure) + '</p>' : '') +
       (visibility ? '<p class="aux">' + escape(visibility) + '</p>' : '') + '</section>' +
@@ -885,7 +898,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   }
 
   async function load() {
-    list.innerHTML = '<p class="empty" role="status">加载中…</p>';
+    const loading = window.OmniRelayLoading.mount(list,{size:'compact',label:'正在读取' + titles[section] + '…'});
     try {
       if (usersPage) {
         replaceCatalog(await request('/role-catalog'));
@@ -900,6 +913,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       list.innerHTML = '<div class="empty"><p role="alert"></p><button class="button" type="button">重试</button></div>';
       list.querySelector('p').textContent = messageOf(error,'加载失败，请重试。');
       list.querySelector('button').addEventListener('click',load);
+    } finally {
+      loading.finish();
+      list.classList.remove('or-loading-placeholder');
     }
   }
   list.addEventListener('click',event => {

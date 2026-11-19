@@ -9,6 +9,7 @@ import (
 //go:embed prototype/omni-relay-avatar.png prototype/omni-relay-logo-bicolor.png
 //go:embed prototype/omni-relay-colors.css prototype/omni-relay-theme.js
 //go:embed prototype/omni-relay-ui.css prototype/omni-relay-ui.js prototype/omni-relay-interactions.css
+//go:embed prototype/omni-relay-loading.css prototype/omni-relay-loading.js
 //go:embed prototype/omni-relay-system.css prototype/omni-relay-content.css prototype/omni-relay-login-motion.js
 var assets embed.FS
 

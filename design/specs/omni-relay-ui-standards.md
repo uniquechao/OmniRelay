@@ -102,3 +102,14 @@
 ## 编辑器与 Markdown
 
 原型随包加载 Quill 2.0.3、Markdown-it 15.0.3 和 Highlight.js 11.11.1，许可证放在 `vendor/`。Markdown-it 复用 OmniGrid 原型中的版本，原文和代码块按纯文本高亮，Markdown 内容中的原始 HTML 按文本显示。 [Quill 工具栏](https://quilljs.com/docs/modules/toolbar) · [Markdown-it 渲染选项](https://markdown-it.github.io/markdown-it/interfaces/MarkdownItOptions.html) · [Highlight.js 语言](https://github.com/highlightjs/highlight.js/blob/main/SUPPORTED_LANGUAGES.md)
+
+## 加载状态
+
+2026-11-19 起统一复用 `omni-relay-loading.js` 和 `omni-relay-loading.css`。大页面采用用户指定的 `omni-relay-logo-loading.html` 中“循光成环”双弧 Logo 动效、品牌字标与进度条；区域采用 48px 小 Logo 和 164px 进度条，按钮使用更紧凑的同款组合。
+
+- 页面初始化、会话检查使用 `size: 'page'`；列表、同步和验证使用 `size: 'compact'`；提交按钮用 `OmniRelayLoading.button`，由实际请求控制显示和移除。
+- 有实际进度时传入 `progress`（0–100）；未知进度时显示往复等待条，不自动计算百分比或假完成。Logo 入场动画结束后仍等待任务结果，不能为播放完整动画延迟展示页面。
+- 失败转入错误与重试状态，完成移除加载状态；后台刷新保留已有内容。演示同步与 Bot 检查继续使用明确标记的示例步骤。
+- 浅深色跟随主题变量。减少动态模式显示完整静态 Logo 和静态等待条；页面隐藏及区域离屏时暂停动画。等待状态不抢焦点，进度条有名称，百分比仅在可测量时提供。
+
+从“开发者 → 组件列表 → 加载状态”查看页面、区域和按钮效果。正式工作台通过 Go 内嵌相同组件资产。

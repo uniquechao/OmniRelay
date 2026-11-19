@@ -356,8 +356,8 @@ window.OmniRelaySystem = (() => {
       const [percent,phase] = syncRun ? syncSteps[syncRun.step] : [100,'同步完成'];
       target.innerHTML = '<section class="directory-sync-status"><div><strong>' + phase + '</strong>' +
         badge(syncRun ? 'progress' : 'success',syncRun ? '进行中' : '已完成') + '</div>' +
-        '<progress value="' + percent + '" max="100" aria-label="同步进度"></progress>' +
-        '<span class="aux">' + percent + '% · ' + (syncRun ? '开始于 ' + syncRun.started : '完成于 ' + lastSync.finished) +
+        OmniRelayLoading.markup({size:'compact',label:phase + (syncRun ? '…' : ''),progress:percent,active:Boolean(syncRun)}) +
+        '<span class="aux">' + (syncRun ? '开始于 ' + syncRun.started : '完成于 ' + lastSync.finished) +
         '</span></section>' +
         group('上次同步结果',details([
           ['开始时间',lastSync.started],['完成时间',lastSync.finished],['组织',lastSync.organizations + ' 个'],
@@ -392,7 +392,7 @@ window.OmniRelaySystem = (() => {
     showDirectoryUpdate = changed => {
       if (!panel.isConnected) return;
       syncButton.disabled = Boolean(syncRun);
-      syncButton.textContent = syncRun ? '同步中…' : '同步';
+      OmniRelayLoading.button(syncButton,Boolean(syncRun),syncRun ? '同步中…' : '同步');
       if (changed) { paintTree(); refresh(); }
     };
     paintTree();

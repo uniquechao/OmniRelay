@@ -130,6 +130,7 @@ td a:hover { text-decoration: underline; }
 }
 </style>
 <link rel="stylesheet" href="omni-relay-ui.css">
+<link rel="stylesheet" href="omni-relay-loading.css">
 <link rel="stylesheet" href="omni-relay-project.css">
 <link rel="stylesheet" href="omni-relay-task-editor.css">
 <link rel="stylesheet" href="vendor/quill-snow-2.0.3.css">
@@ -140,6 +141,9 @@ td a:hover { text-decoration: underline; }
 <link rel="stylesheet" href="omni-relay-drive.css">
 </head>
 <body>
+<div id="workbench-loading" class="or-loading-splash"><p>正在打开工作台…</p></div>
+<script src="omni-relay-loading.js"></script>
+<script>OmniRelayLoading.mount(document.getElementById("workbench-loading"),{size:"page",label:"正在打开工作台…"});</script>
 <!-- Navigation symbols from the existing OmniGrid icon sprite. -->
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
   <symbol id="nav-system" viewBox="0 0 24 24"><path d="m12 3 7 3v5c0 4.7-3.2 8-7 10-3.8-2-7-5.3-7-10V6l7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -753,6 +757,7 @@ mobile.addEventListener('change', () => {
 });
 window.addEventListener('hashchange',render);
 render();
+document.getElementById("workbench-loading").remove();
 </script>
 </body>
 </html>

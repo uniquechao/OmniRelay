@@ -78,6 +78,7 @@ export function mountAccount({ currentUser, onLogout, onSessionChanged, onAuthEr
         if (pending) return { keepOpen: true };
         pending = true;
         submitter.disabled = true;
+        window.OmniRelayLoading.button(submitter,true,'保存中…');
         const current = form.elements.namedItem('currentPassword');
         const next = form.elements.namedItem('newPassword');
         const feedback = form.querySelector('.field-error');
@@ -102,6 +103,7 @@ export function mountAccount({ currentUser, onLogout, onSessionChanged, onAuthEr
             next.value = '';
             pending = false;
             submitter.disabled = false;
+            window.OmniRelayLoading.button(submitter,false);
           });
         return { keepOpen: true };
       }
