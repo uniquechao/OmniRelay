@@ -127,6 +127,21 @@ func TestFeishuBotManagement(t *testing.T) {
 	}
 	const systemPath = "/api/v1/system"
 	const directoryPath = systemPath + "/directory"
+	const connectionsPath = systemPath + "/connections"
+	request("GET", connectionsPath, "", botSession{}, nil, 401)
+	for _, session := range []botSession{admin, operator} {
+		res := request("GET", connectionsPath, "", session, nil, 200)
+		if strings.TrimSpace(res.Body.String()) != `{"items":[{"id":"omnigrid","state":"not_configured"},{"id":"deepseek_harness","state":"not_configured"}]}` {
+			t.Fatalf("unexpected connection settings: %s", res.Body)
+		}
+	}
+	for _, session := range []botSession{auditor, member} {
+		request("GET", connectionsPath, "", session, nil, 403)
+		me := request("GET", "/api/v1/me", "", session, nil, 200)
+		if decodeBot[struct{ Access identity.WorkbenchAccess }](t, me).Access.Admin["settings"] {
+			t.Fatal("connection settings were advertised without system.read")
+		}
+	}
 	for _, path := range []string{
 		systemPath + "/accounts", systemPath + "/roles", systemPath + "/role-grants",
 		directoryPath + "/people", directoryPath + "/departments", directoryPath + "/sync-runs", botPath,
@@ -146,7 +161,7 @@ func TestFeishuBotManagement(t *testing.T) {
 	if !slices.Equal(view.Roles, []string{access.RoleSystemOperator, access.RoleSystemUser}) ||
 		view.DefaultRoute != "/#/system/users" || view.PermissionVersion != "0" ||
 		view.Navigation["workbench"] || !view.Navigation["system"] ||
-		len(view.Admin) != 4 || !view.Admin["users"] || !view.Admin["roles"] || !view.Admin["audit"] || !view.Admin["feishu_bot"] ||
+		len(view.Admin) != 5 || !view.Admin["users"] || !view.Admin["roles"] || !view.Admin["audit"] || !view.Admin["feishu_bot"] || !view.Admin["settings"] ||
 		!view.Permissions["directory.sync"] || !view.Permissions["system.operate"] || view.Permissions["system.configure"] {
 		t.Fatalf("invalid operator access: %+v", view)
 	}

@@ -239,6 +239,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 	admin := map[string]bool{
 		"users": permissions["account.read"], "roles": permissions["role.read"],
 		"audit": permissions["audit.read"], "feishu_bot": permissions["system.read"],
+		"settings": permissions["system.read"],
 	}
 	view := identity.WorkbenchAccess{
 		Roles: roles, Permissions: permissions, Admin: admin,

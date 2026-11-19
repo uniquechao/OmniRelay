@@ -19,7 +19,7 @@ var actionDescriptions = map[string]string{
 	"account.read": "查看系统账号", "account.manage": "开通和启停系统账号",
 	"role.read": "查看角色和授权记录", "role.manage": "授予和撤销系统角色",
 	"directory.read": "查看飞书通讯录和同步记录", "directory.sync": "同步飞书通讯录",
-	"system.read": "查看飞书 Bot 配置和检测结果", "system.configure": "修改飞书 Bot 配置和启停状态",
+	"system.read": "查看连接设置、飞书 Bot 配置和检测结果", "system.configure": "修改飞书 Bot 配置和启停状态",
 	"system.operate": "执行飞书 Bot 连接检测", "audit.read": "查看系统审计日志",
 }
 

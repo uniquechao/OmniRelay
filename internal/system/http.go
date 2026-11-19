@@ -41,6 +41,21 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 	handle("PATCH "+basePath, "system.configure", identity.RefreshSessionWithCSRF, s.configure)
 	handle("POST "+basePath+"/checks", "system.operate", identity.RefreshSessionWithCSRF, s.submit)
 	handle("GET "+basePath+"/checks/{id}", "system.read", identity.ValidateSession, s.getCheck)
+	handle("GET /api/v1/system/connections", "system.read", identity.ValidateSession, getConnections)
+}
+
+func getConnections(w http.ResponseWriter, _ *http.Request, _ identity.Principal) {
+	type connectionSetting struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	// Neither service has a registered integration in this deployment.
+	respond(w, http.StatusOK, struct {
+		Items []connectionSetting `json:"items"`
+	}{Items: []connectionSetting{
+		{ID: "omnigrid", State: "not_configured"},
+		{ID: "deepseek_harness", State: "not_configured"},
+	}})
 }
 
 func (s *Service) getStatus(w http.ResponseWriter, r *http.Request, _ identity.Principal) {
@@ -108,6 +123,13 @@ func (s *Service) getCheck(w http.ResponseWriter, r *http.Request, _ identity.Pr
 		failure(w, err)
 		return
 	}
+	results := make([]Result, 0, len(task.Results))
+	for _, item := range task.Results {
+		if item.Name == tenantTokenCheck || item.Name == botInfoCheck {
+			results = append(results, item)
+		}
+	}
+	task.Results = results
 	respond(w, http.StatusOK, task)
 }
 

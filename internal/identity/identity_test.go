@@ -23,14 +23,27 @@ import (
 )
 
 func TestReturnPathStaysOnWorkbench(t *testing.T) {
-	for _, path := range []string{"", "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot"} {
+	for _, path := range []string{"", "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings"} {
 		if _, err := localReturnPath(path); err != nil {
 			t.Errorf("valid path %q was rejected", path)
 		}
 	}
+	for alias, canonical := range map[string]string{"/#/settings": "/#/system/settings", "/#/system/bot": "/#/system/feishu-bot"} {
+		path, err := localReturnPath(alias)
+		if err != nil || path != canonical {
+			t.Errorf("alias %q resolved to %q, want %q: %v", alias, path, canonical, err)
+		}
+		if (WorkbenchAccess{Admin: map[string]bool{"audit": true}}).canReturnTo(path) {
+			t.Errorf("audit access authorized alias %q", alias)
+		}
+		if !(WorkbenchAccess{Admin: map[string]bool{"settings": true, "feishu_bot": true}}).canReturnTo(path) {
+			t.Errorf("system access did not authorize alias %q", alias)
+		}
+	}
 	for _, path := range []string{"https://evil.test", "//evil.test", "///evil.test", "/\\evil.test", "/%5cevil.test", "/%2fevil.test", "/one/..//evil.test", "/path%0d%0aInjected", "/\tevil.test",
 		"/auth/logout", "/api/v1/me", "/#/login", "/?next=https://evil.test#/workbench", "/#/workbench?next=https://evil.test",
-		"/#//evil.test", "/#/system/feishu-bot/../users", "/#/%77orkbench", "/#/workbench%0d%0aInjected"} {
+		"/#//evil.test", "/#/system/feishu-bot/../users", "/#/%77orkbench", "/#/workbench%0d%0aInjected",
+		"/#/settings?next=https://evil.test", "/#/system/bot/../settings"} {
 		if target, err := localReturnPath(path); err == nil {
 			t.Errorf("unsafe path %q was accepted as %q", path, target)
 		}

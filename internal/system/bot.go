@@ -1,4 +1,4 @@
-// Package system owns the Feishu Bot management API and diagnostic worker.
+// Package system owns service connection settings and Feishu Bot management.
 package system
 
 import (
@@ -76,6 +76,9 @@ type BotInfo struct {
 type CheckError string
 
 const (
+	tenantTokenCheck = "tenant_token"
+	botInfoCheck     = "bot_info"
+
 	CredentialsMissing  CheckError = "credentials_missing"
 	CredentialsRejected CheckError = "credentials_rejected"
 	BotUnavailable      CheckError = "bot_unavailable"
@@ -140,7 +143,7 @@ func (s *Service) Run(ctx context.Context) {
 
 func (s *Service) perform(ctx context.Context, claim Claim) {
 	token, failure := s.provider.TenantToken(ctx)
-	first := result("tenant_token", failure)
+	first := result(tenantTokenCheck, failure)
 	if ctx.Err() != nil {
 		return
 	}
@@ -150,10 +153,10 @@ func (s *Service) perform(ctx context.Context, claim Claim) {
 	}
 	first.CheckedAt = checkedAt
 	info := BotInfo{}
-	second := Result{Name: "bot_info", State: "skipped"}
+	second := Result{Name: botInfoCheck, State: "skipped"}
 	if failure == "" {
 		info, failure = s.provider.BotInfo(ctx, token)
-		second = result("bot_info", failure)
+		second = result(botInfoCheck, failure)
 	}
 	if ctx.Err() == nil {
 		_ = s.store.Finish(ctx, claim, []Result{first, second}, info)
