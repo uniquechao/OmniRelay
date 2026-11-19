@@ -562,3 +562,86 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   assert.equal(sends[1].paragraphs, undefined);
   assert.equal(await box.locator('li').count(), 0);
 });
+
+test('分栏与切会话保留草稿，超时后并发恢复只投递一次', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await mountFixture(page);
+  const requests = [], queries = [];
+  let delivered = 0;
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route('**/send-capabilities', route => route.fulfill({ json: {
+    can_send: true, sender: { name: '回归机器人' }
+  } }));
+  await page.route('**/oc_group/messages', async route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    if (requests.length === 1) {
+      await held;
+      return route.abort('timedout');
+    }
+    delivered++;
+    return route.abort('timedout');
+  });
+  await page.route('**/oc_group/deliveries/*', route => {
+    const key = new URL(route.request().url()).pathname.split('/').pop();
+    queries.push(key);
+    if (!delivered) return route.fulfill({ status: 404, json: { error: 'operation_not_found' } });
+    return route.fulfill({ json: { operation_key: key, chat_id: group.id, state: 'success',
+      parts: [{ position: 0, state: 'success', message_id: 'om_confirmed' }] } });
+  });
+  await page.goto(origin + '/#/feishu/bot-chats/oc_group');
+  const editor = page.getByRole('textbox', { name: '消息内容' });
+  const button = name => page.getByRole('button', { name, exact: true });
+  await page.getByText('发送身份：机器人 回归机器人').waitFor();
+  await editor.fill('第一行');
+  await editor.dispatchEvent('compositionstart');
+  await editor.dispatchEvent('keydown', { key: 'Enter' });
+  assert.equal(await editor.getAttribute('readonly'), null);
+  await editor.dispatchEvent('compositionend');
+  await editor.press('Shift+Enter');
+  await editor.press('End');
+  await page.keyboard.insertText('第二行');
+  const draft = '第一行\n第二行';
+  const split = page.getByRole('separator', { name: '调整会话列表宽度' });
+  await split.press('End');
+  await split.press('Home');
+  assert.equal(await editor.inputValue(), draft);
+  await page.reload();
+  await page.getByText('发送身份：机器人 回归机器人').waitFor();
+  assert.equal(await editor.inputValue(), draft);
+  const first = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith('/oc_group/messages'));
+  await button('发送消息').evaluate(node => { node.click(); node.click(); });
+  await first;
+  await button('打开会话 林晓').click();
+  await editor.fill('独立草稿');
+  release();
+  await button('打开会话 北辰项目群').click();
+  await button('查询发送结果').click();
+  await button('按原操作重试').evaluate(node => { node.click(); node.click(); });
+  await button('查询发送结果').click();
+  await page.getByText(/飞书已确认接收/).waitFor();
+  assert.equal(delivered, 1);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].text, draft);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.deepEqual(queries, [requests[0].operation_key, requests[0].operation_key]);
+  assert.equal(await editor.inputValue(), '');
+  await button('打开会话 林晓').click();
+  assert.equal(await editor.inputValue(), '独立草稿');
+
+  await page.route('**/oc_direct/messages', route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    return route.fulfill({ json: {
+      operation_key: route.request().postDataJSON().operation_key, chat_id: direct.id, state: 'failed',
+      parts: [{ position: 0, state: 'failed', reason: 'wrong_target_receipt' }]
+    } });
+  });
+  await button('发送消息').click();
+  await page.getByText(/飞书回执的收件会话与目标不符/).waitFor();
+  assert.equal(await editor.inputValue(), '独立草稿');
+  assert.equal(await page.getByText(/飞书已确认接收/).count(), 0);
+});
