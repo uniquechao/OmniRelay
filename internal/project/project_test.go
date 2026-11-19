@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/chat"
@@ -26,6 +27,8 @@ type gridFixture struct {
 	identityLost     atomic.Bool
 	reportChanged    atomic.Bool
 	projectLost      atomic.Bool
+	secondDenied     atomic.Bool
+	secondRenamed    atomic.Bool
 	sourceLost       atomic.Bool
 	changeDuringRead atomic.Bool
 	changed          atomic.Bool
@@ -45,6 +48,17 @@ func (f *gridFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/api/v1/projects":
 		body = `{"items":[{"id":"allowed","name":"可读"},{"id":"organization","name":"不可读"}],"total":2}`
+		if f.secondRenamed.Load() {
+			body = `{"items":[{"id":"second","name":"已更名"}],"total":1}`
+		}
+	case "/api/v1/projects/second/state":
+		if f.secondDenied.Load() {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		body = `{"project_id":"second","current_member_id":"member2","actions":["read","manage_access"],"versions":{"access":"v1"}}`
+	case "/api/v1/projects/second/members":
+		body = `{"project_id":"second","members":[{"id":"member2","project_id":"second","active":true,"roster_status":"formal"}]}`
 	case "/api/v1/projects/organization/state":
 		body = `{"project_id":"organization","actions":["read"],"versions":{"access":"v1"}}`
 	case "/api/v1/projects/allowed/state":
@@ -167,6 +181,10 @@ func (p *projectChat) ProjectGroup(_ context.Context, _ identity.Principal, id s
 	}
 	return chat.Group{ID: id, Name: id}, nil
 }
+func (p *projectChat) ProjectGroupForMutation(ctx context.Context, _ pgx.Tx, actor identity.Principal, id string) (chat.Group, error) {
+	return p.ProjectGroup(ctx, actor, id)
+}
+
 func (p *projectChat) SendBriefing(ctx context.Context, actor identity.Principal, target, operation string, content chat.DeliveryContent,
 	key chat.BusinessReceiptKey, authorize chat.BriefingAuthority) (chat.DeliveryStatus, error) {
 	ok, err := authorize(ctx, actor, key, target, content)
@@ -184,7 +202,8 @@ func (p *projectChat) BriefingDeliveryStatus(_ context.Context, _ identity.Princ
 	return chat.DeliveryStatus{OperationKey: operation, State: "success"}, nil
 }
 
-func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
+func testProjectPool(t *testing.T, schema string) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("requires isolated PostgreSQL")
@@ -194,12 +213,11 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
-	const schema = "f1_project_contract"
+	t.Cleanup(control.Close)
 	if _, err := control.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _, _ = control.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE") }()
+	t.Cleanup(func() { _, _ = control.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE") })
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -209,10 +227,16 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+	return pool
+}
+
+func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
+	pool := testProjectPool(t, "f1_project_contract")
+	ctx := t.Context()
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {

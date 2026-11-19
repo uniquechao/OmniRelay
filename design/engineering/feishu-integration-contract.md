@@ -195,3 +195,11 @@ OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署�
 `POST feishu/check` 要求 `project.settings`，检查其它账号还要求 `account.read`。输入包含 `account_id`（缺省为自己）、`action`（`project.read`、`project.assign`、`project.settings`）和 `public_scope`（`project_only` 或 `submission_count`）。结果独立报告 Bot、群成员、账号、项目动作和公开范围。校验保持只读，飞书探测采用读取接口，OmniGrid 按原行为维护 API 令牌使用时间。
 
 成员日报缺少来源覆盖时沿用上游的未知状态。简报每项目每业务日生成一条记录，固定生成者、数据版本、可见提交数和当时目标。默认仅预览。启用 E1 且项目管理者明确配置 `public_submission_count` 后，手动发布可向当前目标群发送业务日期和经批准的提交数。E1 发出前复核当前账号、项目动作、日报来源版本、目标群及内容。计划版本或目标变更后旧简报不会改投。投递与生成独立，未知回执通过 `POST reports/briefings/{runID}/reconcile` 查询原操作。
+
+## 群归属和项目主群（D1）
+
+- `GET /api/v1/feishu/chats` 与 `GET /api/v1/feishu/chats/{chatID}` 的群聊条目返回 `project_assignment`，其中含 `project_id`、`primary` 和 `version`。未归属时项目 ID 是空字符串。私聊和归属项目无读权的群省略该字段。使用稳定项目 ID 匹配项目目录中的最新名称。
+- `GET /api/v1/projects/{projectID}/chats` 返回同一份关系。列表含 `project_id`、`primary_version`、`items` 和 `total`。群条目含 `id`、`name`、`project_id`、`primary` 和 `version`。项目列表按当前群来源权限过滤后计数。消息、搜索和群成员沿用全局聊天接口。
+- `PUT /api/v1/feishu/chats/{chatID}/project` 携带读取到的 `version` 和目标 `project_id`，空字符串表示清除。成功返回更新后的归属对象。主群离开原项目时同时清除其主群身份。若该群也是原项目的简报目标，同时撤销该目标并关闭该计划的启用和公开提交数选项。
+- `PUT /api/v1/projects/{projectID}/chats/primary` 携带 `chat_id`、该群的 `assignment_version`（列表项的 `version`）和列表的 `primary_version`。从当前项目的群中选定主群，成功返回 `chat_id` 和新的 `primary_version`。替换时原主群继续留在项目里。切换主群后重新读取受影响的群版本。
+- 写入要求会话通过 CSRF 校验、操作者具备所操作群的当前成员及来源读权，并持有相关项目的 `project.settings`。跨项目移动要同时具备原项目与目标项目的权限。失权返回 404，陈旧版本返回 409，客户端应重新读取。关系、版本和带前后状态的审计同一事务提交。

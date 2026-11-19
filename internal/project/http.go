@@ -106,6 +106,27 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		})
 	}
 	handle("GET "+project+"/chats", "project.read", s.getChats)
+	handle("PUT /api/v1/feishu/chats/{chatID}/project", "", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		var input struct {
+			ProjectID *string `json:"project_id"`
+			Version   *int64  `json:"version"`
+		}
+		if !decode(w, r, &input) || input.ProjectID == nil || input.Version == nil {
+			return nil, errInput
+		}
+		return s.setAssignment(r.Context(), actor, r.PathValue("chatID"), *input.ProjectID, *input.Version)
+	})
+	handle("PUT "+project+"/chats/primary", "project.settings", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		var input struct {
+			ChatID            string `json:"chat_id"`
+			AssignmentVersion *int64 `json:"assignment_version"`
+			PrimaryVersion    *int64 `json:"primary_version"`
+		}
+		if !decode(w, r, &input) || input.AssignmentVersion == nil || input.PrimaryVersion == nil {
+			return nil, errInput
+		}
+		return s.setPrimary(r.Context(), actor, r.PathValue("projectID"), input.ChatID, *input.AssignmentVersion, *input.PrimaryVersion)
+	})
 	handle("GET "+project+"/feishu", "project.read", s.getBot)
 	handle("PUT "+project+"/feishu/settings", "project.settings", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		var input settings
@@ -145,56 +166,6 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		}
 		return s.chat.BriefingDeliveryStatus(r.Context(), actor, run.Target, run.receipt(id).OperationID)
 	})
-}
-
-func (s *Service) getChats(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-	ctx, id := r.Context(), r.PathValue("projectID")
-	cfg, err := s.settings(ctx, actor, id)
-	if err != nil {
-		return nil, err
-	}
-	type group struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Primary bool   `json:"primary"`
-	}
-	rows, err := s.pool.Query(ctx, `SELECT chat_id FROM project_chat_links
-		WHERE (tenant_key,app_id,project_id)=($1,$2,$3) ORDER BY chat_id`, actor.TenantKey, actor.AppID, id)
-	if err != nil {
-		return nil, err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return nil, err
-	}
-	items := []group{}
-	for _, groupID := range ids {
-		entry, err := s.chat.ProjectGroup(ctx, actor, groupID)
-		if errors.Is(err, chat.ErrAccessLost) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		var linked bool
-		err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM project_chat_links
-			WHERE (tenant_key,app_id,project_id,chat_id)=($1,$2,$3,$4))`,
-			actor.TenantKey, actor.AppID, id, groupID).Scan(&linked)
-		if err != nil {
-			return nil, err
-		}
-		if linked {
-			items = append(items, group{groupID, entry.Name, groupID == cfg.Target})
-		}
-	}
-	ok, err := s.sameSettings(ctx, actor, id, cfg)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, errConflict
-	}
-	return map[string]any{"project_id": id, "items": items, "total": len(items)}, nil
 }
 
 func (s *Service) sameSettings(ctx context.Context, actor identity.Principal, id string, prior settings) (bool, error) {
