@@ -11,6 +11,7 @@ import (
 //go:embed prototype/omni-relay-ui.css prototype/omni-relay-ui.js prototype/omni-relay-interactions.css
 //go:embed prototype/omni-relay-loading.css prototype/omni-relay-loading.js
 //go:embed prototype/omni-relay-system.css prototype/omni-relay-content.css prototype/omni-relay-login-motion.js
+//go:embed prototype/omni-relay-bot-chat.css prototype/omni-relay-split-pane.js
 var assets embed.FS
 
 func WorkbenchFiles() fs.FS {

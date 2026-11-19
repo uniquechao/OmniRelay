@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/directory"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 const visibleMessages = `m.tenant_key=$1 AND m.app_id=$2 AND m.chat_id=ANY($3::text[])
@@ -22,7 +23,8 @@ const visibleMessages = `m.tenant_key=$1 AND m.app_id=$2 AND m.chat_id=ANY($3::t
 
 type conversationItem struct {
 	conversation
-	LastMessageAt *time.Time `json:"last_message_at"`
+	LastMessageAt *time.Time                  `json:"last_message_at"`
+	Person        *directory.PersonProjection `json:"person,omitempty"`
 }
 
 func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p identity.Principal, scope authorizedScope) {
@@ -42,7 +44,7 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 	defer tx.Rollback(ctx)
 	const matched = `WITH latest AS (
 		SELECT chat_id,max(sent_at) AS last_message_at,
-			bool_or($5<>'' AND strpos(lower(search_text),lower($5))>0) AS matched_message
+			bool_or($5<>'' AND (strpos(lower(search_text),lower($5))>0 OR strpos(lower(sender_name),lower($5))>0)) AS matched_message
 		FROM feishu_chat_messages m WHERE ` + visibleMessages + ` AND NOT deleted GROUP BY chat_id
 	), matched AS (
 		SELECT c.chat_id,c.kind,c.name,c.peer_open_id,l.last_message_at
@@ -75,6 +77,28 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 	if err != nil {
 		sourceError(w, err)
 		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		sourceError(w, err)
+		return
+	}
+	var refs []directory.ResourcePersonRef
+	var indexes []int
+	for i, item := range items {
+		if item.Kind == orchestrator.ChatPrivate {
+			refs = append(refs, directory.ResourcePersonRef{OpenID: item.Peer, Name: item.Name})
+			indexes = append(indexes, i)
+		}
+	}
+	if len(refs) != 0 {
+		people, err := s.projectPeople(ctx, p, chatScopeID(r), refs)
+		if err != nil {
+			sourceError(w, err)
+			return
+		}
+		for i, index := range indexes {
+			items[index].Person = &people[i]
+		}
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "scope": scopeName(scope.Admin)})
 }
@@ -170,7 +194,18 @@ func (s *Service) getMessages(w http.ResponseWriter, r *http.Request, p identity
 	defer tx.Rollback(ctx)
 	filter := visibleMessages + ` AND ($4='' OR (NOT deleted AND
 		(strpos(lower(search_text),lower($4))>0 OR strpos(lower(sender_name),lower($4))>0)))`
-	args := []any{s.tenant, s.app, scope.ids(), q}
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "group" && kind != "p2p" {
+		writeError(w, 400, "invalid_chat_query")
+		return
+	}
+	ids := make([]string, 0, len(scope.Conversations))
+	for _, item := range scope.Conversations {
+		if kind == "" || string(item.Kind) == kind {
+			ids = append(ids, item.ID)
+		}
+	}
+	args := []any{s.tenant, s.app, ids, q}
 	var total int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM feishu_chat_messages m WHERE `+filter, args...).Scan(&total); err != nil {
 		sourceError(w, err)

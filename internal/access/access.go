@@ -245,6 +245,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 		Roles: roles, Permissions: permissions, Admin: admin,
 		Navigation: map[string]bool{
 			"workbench": true,
+			"bot_chats": p.OpenID != "",
 			"system":    admin["users"] || admin["roles"] || admin["audit"] || admin["feishu_bot"],
 		},
 		DefaultRoute: "/#/workbench", PermissionVersion: strconv.FormatInt(version, 10),

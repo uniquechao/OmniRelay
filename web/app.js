@@ -3,6 +3,7 @@ import { mountAdmin } from './admin.js';
 import { feishuBotAPI, systemAPI } from './system-api.js';
 import { mountFeishuBot } from './feishu-bot.js';
 import { mountConnectionSettings } from './connection-settings.js';
+import { chatAPI, chatRoute, mountChatReader } from './chat-reader.js';
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
 
@@ -19,6 +20,9 @@ const page = document.getElementById('page');
 const breadcrumb = document.getElementById('breadcrumb');
 const mobileNav = document.getElementById('mobile-nav');
 const systemNav = document.getElementById('system-nav');
+const feishuNav = document.getElementById('feishu-nav');
+const chatNav = feishuNav.querySelector('a');
+const chatOption = mobileNav.querySelector('option[value="feishu/bot-chats"]');
 const loginPage = document.getElementById('login-page');
 const sessionStatus = document.getElementById('session-status');
 const retrySession = sessionStatus.querySelector('button');
@@ -65,7 +69,7 @@ const login = mountLogin(loginPage, {
   }
 });
 
-mountRail(shell, [systemNav]);
+mountRail(shell, [feishuNav, systemNav]);
 mountAccount({
   currentUser: () => session?.user,
   onAuthError(error) {
@@ -98,6 +102,7 @@ async function protectedAPI(path, options) {
 }
 const adminAPI = systemAPI(protectedAPI);
 const botAPI = feishuBotAPI(protectedAPI);
+const chats = chatAPI(protectedAPI);
 
 function closeSessionOverlays() {
   for (const popover of document.querySelectorAll(':popover-open')) popover.hidePopover();
@@ -123,6 +128,8 @@ function showLogin({ preserveTarget = true } = {}) {
 
 function safeRoute(hash) {
   hash = legacyRoutes.get(hash) ?? hash;
+  const chat = chatRoute(hash);
+  if (chat) return chat.hash;
   const section = hash?.split('/')[2];
   if (hash === workbenchRoute) return hash;
   return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : '';
@@ -134,6 +141,7 @@ function permission(user, section) {
 
 function allowedRoute(hash) {
   if (!hash) return false;
+  if (chatRoute(hash)) return session.user.navigation?.bot_chats === true;
   return hash === workbenchRoute ? session.user.navigation?.workbench === true : permission(session.user, hash.split('/')[2]);
 }
 
@@ -233,8 +241,14 @@ async function render() {
   clearReturnRoute();
   renderedHash = hash;
   updateAccount(session.user);
-  const section = hash.split('/')[2];
-  const title = section ? titles[section] : '工作台总览';
+  const chat = chatRoute(hash);
+  const section = chat ? undefined : hash.split('/')[2];
+  const title = chat ? '机器人记录' : section ? titles[section] : '工作台总览';
+  feishuNav.hidden = chatOption.hidden = session.user.navigation?.bot_chats !== true;
+  feishuNav.dataset.active = String(Boolean(chat));
+  if (chat) feishuNav.open = true;
+  if (chat) chatNav.setAttribute('aria-current', 'page');
+  else chatNav.removeAttribute('aria-current');
   const allowed = key => permission(session.user, key);
   systemNav.hidden = !Object.keys(titles).some(allowed);
   systemNav.dataset.active = String(Boolean(section && allowed(section)));
@@ -261,11 +275,21 @@ async function render() {
     mobileNav.selectedIndex = -1;
     return;
   }
-  drawBreadcrumb(title, section ? '系统管理' : '工作空间');
-  mobileNav.value = hash.slice(2);
-  page.dataset.layout = section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
+  drawBreadcrumb(title, chat ? '飞书' : section ? '系统管理' : '工作空间');
+  mobileNav.value = chat ? 'feishu/bot-chats' : hash.slice(2);
+  page.dataset.layout = chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
-  if (!section) goToAdministration(session.user);
+  if (chat) {
+    mountChatReader(page, chats, {
+      signal, chatId: chat.chatId, messageId: chat.messageId,
+      onLocation(chatId, messageId) {
+        if (signal.aborted || location.hash !== renderedHash) return;
+        renderedHash = chatRoute('#/feishu/bot-chats' + (chatId ? '/' + chatId : '') +
+          (messageId ? '/' + messageId : '')).hash;
+        history.replaceState(history.state, '', renderedHash);
+      }
+    });
+  } else if (!section) goToAdministration(session.user);
   else if (section === 'feishu-bot') {
     const permissions = session.user.permissions ?? {};
     view = mountFeishuBot(page, botAPI, {
@@ -346,7 +370,7 @@ addEventListener('hashchange', async () => {
     if (activeView !== view) return;
     if (!allowed) {
       history.replaceState(history.state, '', renderedHash);
-      mobileNav.value = renderedHash.slice(2);
+      mobileNav.value = chatRoute(renderedHash) ? 'feishu/bot-chats' : renderedHash.slice(2);
       return;
     }
   }

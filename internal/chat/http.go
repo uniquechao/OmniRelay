@@ -73,6 +73,7 @@ func (s *Service) Register(mux *http.ServeMux,
 	mux.HandleFunc("GET "+route+"/search", protect(s.getMessages))
 	mux.HandleFunc("GET "+route+"/sync", protect(s.getSync))
 	mux.HandleFunc("POST "+route+"/sync", protect(s.refresh))
+	mux.HandleFunc("GET "+route+"/{chatID}", protect(s.getConversations))
 	mux.HandleFunc("GET "+route+"/{chatID}/members", protect(s.getMembers))
 	mux.HandleFunc("GET "+route+"/{chatID}/messages", protect(s.getMessages))
 	mux.HandleFunc("GET "+route+"/{chatID}/search", protect(s.getMessages))

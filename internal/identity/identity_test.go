@@ -40,10 +40,24 @@ func TestReturnPathStaysOnWorkbench(t *testing.T) {
 			t.Errorf("system access did not authorize alias %q", alias)
 		}
 	}
+	for _, suffix := range []string{"", "/oc_example", "/oc_example/om_example"} {
+		target := "/#/feishu/bot-chats" + suffix
+		for _, raw := range []string{target, "/#/bot-chats" + suffix} {
+			if got, err := localReturnPath(raw); err != nil || got != target {
+				t.Errorf("chat path %q resolved to %q, want %q: %v", raw, got, target, err)
+			}
+		}
+		if !(WorkbenchAccess{Navigation: map[string]bool{"bot_chats": true}}).canReturnTo(target) ||
+			(WorkbenchAccess{Navigation: map[string]bool{"workbench": true}}).canReturnTo(target) {
+			t.Errorf("chat path %q requires bot_chats navigation", target)
+		}
+	}
+
 	for _, path := range []string{"https://evil.test", "//evil.test", "///evil.test", "/\\evil.test", "/%5cevil.test", "/%2fevil.test", "/one/..//evil.test", "/path%0d%0aInjected", "/\tevil.test",
 		"/auth/logout", "/api/v1/me", "/#/login", "/?next=https://evil.test#/workbench", "/#/workbench?next=https://evil.test",
 		"/#//evil.test", "/#/system/feishu-bot/../users", "/#/%77orkbench", "/#/workbench%0d%0aInjected",
-		"/#/settings?next=https://evil.test", "/#/system/bot/../settings"} {
+		"/#/settings?next=https://evil.test", "/#/system/bot/../settings",
+		"/#/bot-chats/../workbench", "/#/feishu/bot-chats/oc/om/extra", "/#/feishu/bot-chats/oc%2fom", "/#/bot-chats?next=https://evil.test"} {
 		if target, err := localReturnPath(path); err == nil {
 			t.Errorf("unsafe path %q was accepted as %q", path, target)
 		}
