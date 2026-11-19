@@ -23,7 +23,7 @@ import (
 )
 
 func TestReturnPathStaysOnWorkbench(t *testing.T) {
-	for _, path := range []string{"", "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings"} {
+	for _, path := range []string{"", "/", "/#/projects", "/#/projects/p-1/reports/brief/r-1", "/#/projects/p-1/tasks/source/message/m-1?chat_id=oc_1", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings"} {
 		if _, err := localReturnPath(path); err != nil {
 			t.Errorf("valid path %q was rejected", path)
 		}

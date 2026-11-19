@@ -61,34 +61,66 @@ func (s *Service) Register(mux *http.ServeMux,
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 			defer cancel()
-			scope, err := s.authorize(ctx, p, chatID)
+			scope, err := s.authorizeProject(ctx, p, chatID, r.PathValue("projectID"))
 			if err != nil {
 				sourceError(w, err)
 				return
 			}
+			if project := r.PathValue("projectID"); project != "" {
+				// Recheck source membership and assignment versions before exposing the result.
+				w = projectReadResponse{w, func() error {
+					current, err := s.authorizeProject(ctx, p, chatID, project)
+					if err != nil {
+						return err
+					}
+					if !slices.Equal(scope.Conversations, current.Conversations) {
+						return ErrAccessLost
+					}
+					return nil
+				}}
+			}
 			handler(w, r.WithContext(ctx), p, scope)
 		}
 	}
-	mux.HandleFunc("GET "+route, protect(s.getConversations))
-	mux.HandleFunc("GET "+route+"/search", protect(s.getMessages))
-	mux.HandleFunc("GET "+route+"/sync", protect(s.getSync))
+	for _, prefix := range []string{route, "/api/v1/projects/{projectID}/chat-reader"} {
+		mux.HandleFunc("GET "+prefix, protect(s.getConversations))
+		mux.HandleFunc("GET "+prefix+"/search", protect(s.getMessages))
+		mux.HandleFunc("GET "+prefix+"/sync", protect(s.getSync))
+		mux.HandleFunc("GET "+prefix+"/{chatID}", protect(s.getConversations))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/members", protect(s.getMembers))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/messages", protect(s.getMessages))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/search", protect(s.getMessages))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/messages/{messageID}/context", protect(s.getContext))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/sync", protect(s.getSync))
+	}
 	mux.HandleFunc("POST "+route+"/sync", protect(s.refresh))
-	mux.HandleFunc("GET "+route+"/{chatID}", protect(s.getConversations))
-	mux.HandleFunc("GET "+route+"/{chatID}/members", protect(s.getMembers))
-	mux.HandleFunc("GET "+route+"/{chatID}/messages", protect(s.getMessages))
-	mux.HandleFunc("GET "+route+"/{chatID}/search", protect(s.getMessages))
-	mux.HandleFunc("GET "+route+"/{chatID}/messages/{messageID}/context", protect(s.getContext))
-	mux.HandleFunc("GET "+route+"/{chatID}/sync", protect(s.getSync))
 	mux.HandleFunc("POST "+route+"/{chatID}/sync", protect(s.refresh))
 	s.registerDelivery(mux, auth)
 }
 
 func (s *Service) authorize(ctx context.Context, p identity.Principal, id string) (authorizedScope, error) {
-	admin, err := s.check(ctx, p, "chat.read_all", "")
-	if err != nil {
-		return authorizedScope{}, err
+	return s.authorizeProject(ctx, p, id, "")
+}
+
+func (s *Service) authorizeProject(ctx context.Context, p identity.Principal, id, project string) (authorizedScope, error) {
+	if project != "" {
+		allowed, err := s.check(ctx, p, "project.read", project)
+		if err != nil {
+			return authorizedScope{}, err
+		}
+		if !allowed {
+			return authorizedScope{}, ErrAccessLost
+		}
 	}
-	candidates, err := s.listConversations(ctx, id)
+	admin := false
+	if project == "" {
+		allowed, err := s.check(ctx, p, "chat.read_all", "")
+		if err != nil {
+			return authorizedScope{}, err
+		}
+		admin = allowed
+	}
+	candidates, err := s.listConversations(ctx, id, project)
 	if err != nil {
 		return authorizedScope{}, err
 	}
@@ -330,7 +362,18 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
+type projectReadResponse struct {
+	http.ResponseWriter
+	validate func() error
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
+	if scoped, ok := w.(projectReadResponse); ok && status == http.StatusOK {
+		if err := scoped.validate(); err != nil {
+			sourceError(scoped.ResponseWriter, err)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)

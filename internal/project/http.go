@@ -105,6 +105,44 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			return s.grid.view(r.Context(), actor, r.PathValue("projectID"), panel, query)
 		})
 	}
+	handle("GET "+project+"/tasks/{taskID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		return s.grid.record(r.Context(), actor, r.PathValue("projectID"), "task", r.PathValue("taskID"), "")
+	})
+	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		id, kind, chatID := r.PathValue("projectID"), r.PathValue("kind"), r.URL.Query().Get("chat_id")
+		if kind == "task" {
+			return nil, errInput
+		}
+		var groupVersion int64
+		if kind == "message" {
+			group, err := assignment(r.Context(), s.pool, actor, chatID)
+			if err != nil {
+				return nil, err
+			}
+			if group.ProjectID != id {
+				return nil, errDenied
+			}
+			groupVersion = group.Version
+			if _, err := s.chat.ProjectGroup(r.Context(), actor, chatID); err != nil {
+				return nil, err
+			}
+		}
+		value, err := s.grid.record(r.Context(), actor, id, kind, r.PathValue("sourceID"), chatID)
+		if err != nil {
+			return nil, err
+		}
+		if kind == "message" {
+			group, err := assignment(r.Context(), s.pool, actor, chatID)
+			if err != nil {
+				return nil, err
+			}
+			if group.ProjectID != id || group.Version != groupVersion {
+				return nil, errDenied
+			}
+		}
+		return value, nil
+	})
+	handle("GET "+project+"/reports/briefings/{runID}", "project.read", s.latestBriefing)
 	handle("GET "+project+"/chats", "project.read", s.getChats)
 	handle("PUT /api/v1/feishu/chats/{chatID}/project", "", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		var input struct {
@@ -180,14 +218,16 @@ func (s *Service) getBot(_ http.ResponseWriter, r *http.Request, actor identity.
 		return nil, err
 	}
 	status := "not_bound"
+	var targetName string
 	if cfg.Target != "" {
-		_, err := s.chat.ProjectGroup(ctx, actor, cfg.Target)
+		group, err := s.chat.ProjectGroup(ctx, actor, cfg.Target)
 		if errors.Is(err, chat.ErrAccessLost) {
 			return map[string]any{"project_id": id, "state": "source_denied"}, nil
 		}
 		if err != nil {
 			return nil, err
 		}
+		targetName = group.Name
 		status = s.checkBot(ctx)
 	}
 	receipts, err := s.latestBriefing(nil, r, actor)
@@ -201,19 +241,28 @@ func (s *Service) getBot(_ http.ResponseWriter, r *http.Request, actor identity.
 	if !ok {
 		return nil, errConflict
 	}
-	return map[string]any{"project_id": id, "state": status, "plan": cfg, "briefings": receipts}, nil
+	canCheck, err := s.roles.Check(ctx, actor, "project.settings", id)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"project_id": id, "state": status, "target_name": targetName, "can_check": canCheck, "plan": cfg, "briefings": receipts}, nil
 }
 
 func (s *Service) latestBriefing(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 	ctx, id := r.Context(), r.PathValue("projectID")
-	var runID string
-	err := s.pool.QueryRow(ctx, `SELECT id FROM project_briefing_runs
-		WHERE (tenant_key,app_id,project_id,account_id)=($1,$2,$3,$4)
-		ORDER BY business_date DESC LIMIT 1`, actor.TenantKey, actor.AppID, id, actor.AccountID).Scan(&runID)
+	runID := r.PathValue("runID")
+	var err error
+	if runID == "" {
+		err = s.pool.QueryRow(ctx, `SELECT id FROM project_briefing_runs
+            WHERE (tenant_key,app_id,project_id,account_id)=($1,$2,$3,$4)
+            ORDER BY business_date DESC LIMIT 1`, actor.TenantKey, actor.AppID, id, actor.AccountID).Scan(&runID)
+	} else if !identifier.MatchString(runID) {
+		return nil, errInput
+	}
 	items := []briefing{}
 	if err == nil {
 		run, err := s.authorizedRun(ctx, actor, id, runID)
-		if errors.Is(err, errConflict) || errors.Is(err, errDenied) {
+		if r.PathValue("runID") == "" && (errors.Is(err, errConflict) || errors.Is(err, errDenied)) {
 			return map[string]any{"items": items, "total": 0}, nil
 		}
 		if err != nil {

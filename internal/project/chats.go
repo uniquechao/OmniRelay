@@ -77,7 +77,9 @@ func (s *Service) getChats(_ http.ResponseWriter, r *http.Request, actor identit
 	return snapshot, nil
 }
 
-func assignment(ctx context.Context, tx pgx.Tx, actor identity.Principal, groupID string) (chat.ProjectAssignment, error) {
+func assignment(ctx context.Context, tx interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, actor identity.Principal, groupID string) (chat.ProjectAssignment, error) {
 	var result chat.ProjectAssignment
 	err := tx.QueryRow(ctx, `SELECT coalesce(project_id,''),primary_group,version FROM project_chat_assignments
 		WHERE (tenant_key,app_id,chat_id)=($1,$2,$3)`, actor.TenantKey, actor.AppID, groupID).

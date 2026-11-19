@@ -398,7 +398,7 @@ func (s *Service) getSync(w http.ResponseWriter, r *http.Request, p identity.Pri
 		return
 	}
 	body := map[string]any{"items": items, "total": len(items), "scope": scopeName(scope.Admin)}
-	if scope.Admin && r.PathValue("chatID") == "" {
+	if scope.Admin && r.PathValue("chatID") == "" && r.PathValue("projectID") == "" {
 		var state string
 		err := tx.QueryRow(ctx, `SELECT state FROM feishu_chat_discovery WHERE tenant_key=$1 AND app_id=$2`,
 			s.tenant, s.app).Scan(&state)
@@ -424,7 +424,7 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request, _ identity.Pri
 		if err != nil {
 			return err
 		}
-		if scope.Admin && r.PathValue("chatID") == "" {
+		if scope.Admin && r.PathValue("chatID") == "" && r.PathValue("projectID") == "" {
 			_, err = tx.Exec(ctx, `INSERT INTO feishu_chat_discovery (tenant_key,app_id) VALUES ($1,$2)
 				ON CONFLICT (tenant_key,app_id) DO UPDATE
 				SET next_at=LEAST(feishu_chat_discovery.next_at,clock_timestamp())`, s.tenant, s.app)

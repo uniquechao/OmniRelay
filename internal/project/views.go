@@ -172,11 +172,11 @@ func viewQuery(panel string, input url.Values) (url.Values, error) {
 	case "reports":
 		keys = []string{"q", "page", "page_size", "date_from", "date_to", "revision"}
 	case "tasks":
-		keys = []string{"q", "status", "owner_member_id", "limit"}
+		keys = []string{"q", "status", "owner_member_id", "limit", "column_id", "cursor"}
 	}
 	result := make(url.Values)
 	for key, values := range input {
-		if !slices.Contains(keys, key) || len(values) != 1 || len(values[0]) > 1024 {
+		if !slices.Contains(keys, key) || len(values) != 1 || len(values[0]) > 1024 && (key != "cursor" || len(values[0]) > 1500) {
 			return nil, errInput
 		}
 		result.Set(key, values[0])

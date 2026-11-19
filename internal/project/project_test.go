@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -96,6 +97,16 @@ func (f *gridFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.reportChanged.Load() {
 			body = strings.Replace(body, "report-rev", "report-new-rev", 1)
 		}
+	case "/api/v1/projects/allowed/tasks/task_late":
+		body = `{"id":"task_late","project_id":"allowed","title":"联调任务"}`
+	case "/api/v1/projects/allowed/source-content":
+		body = `{"items":[{"ref":{"kind":"document","source_id":"minute1"},"status":"succeeded"}]}`
+	case "/api/v1/projects/allowed/task-candidates":
+		if r.URL.Query().Get("status") == "confirmed" && r.URL.Query().Get("cursor") == "" {
+			body = `{"items":[],"next_cursor":"next"}`
+		} else {
+			body = `{"items":[{"project_id":"allowed","task_id":"task_late","evidence":[{"resource_type":"minutes","resource_token":"minute1"}]}]}`
+		}
 	case "/api/v1/projects/allowed/board":
 		body = `{"project_id":"allowed","columns":[],"total":0}`
 	default:
@@ -119,6 +130,31 @@ func testGrid(t *testing.T) (*Grid, *gridFixture) {
 		t.Fatal(err)
 	}
 	return grid, fixture
+}
+
+func TestProjectRecordLinks(t *testing.T) {
+	grid, f := testGrid(t)
+	ctx := t.Context()
+	v, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "")
+	if err != nil || v.(taskLink).ID != "task_late" {
+		t.Fatalf("任务定位失败 %v %v", v, err)
+	}
+	for _, tc := range []struct {
+		kind string
+		want int
+	}{{"minutes", 1}, {"document", 0}} {
+		v, err := grid.record(ctx, testActor, "allowed", tc.kind, "minute1", "")
+		if err != nil || v.(map[string]any)["total"] != tc.want {
+			t.Fatalf("关联任务不符 %v %v", v, err)
+		}
+	}
+	if _, err := grid.record(ctx, testActor, "allowed", "document", "revoked", ""); !errors.Is(err, errDenied) {
+		t.Fatalf("失权来源未识别 %v", err)
+	}
+	f.projectLost.Store(true)
+	if _, err := grid.record(ctx, testActor, "allowed", "task", "task_late", ""); !errors.Is(err, errDenied) {
+		t.Fatalf("失权后仍可读取 %v", err)
+	}
 }
 
 func TestProjectGridFiltersProjectsAndRechecksSources(t *testing.T) {
@@ -344,6 +380,10 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		t.Fatalf("generation retry returned a different receipt: %s", retry)
 	}
 	path := "/allowed/reports/briefings/" + run.ID
+	if !strings.Contains(request("GET", path, "", 200), run.ID) {
+		t.Fatal("历史简报未按 ID 返回")
+	}
+	request("GET", "/allowed/reports/briefings/missing", "", 404)
 	request("POST", path+"/publish", "", 200)
 	if chats.operation != "briefing:"+run.ID {
 		t.Fatalf("operation: %s", chats.operation)

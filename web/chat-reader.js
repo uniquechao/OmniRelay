@@ -1,5 +1,5 @@
 import { mountChatComposer } from './chat-composer.js';
-const base = '/api/v1/feishu/chats';
+const chatBase = '/api/v1/feishu/chats';
 const chatHash = '#/feishu/bot-chats';
 const identifier = /^[A-Za-z0-9_-]{1,160}$/;
 const routePattern = /^#\/(?:feishu\/)?bot-chats(?:\/([A-Za-z0-9_-]{1,160})(?:\/([A-Za-z0-9_-]{1,160}))?)?$/;
@@ -24,7 +24,7 @@ export function chatRoute(hash) {
   return { hash: [chatHash, chatId, messageId].filter(Boolean).join('/'), chatId, messageId };
 }
 
-export function chatAPI(request) {
+export function chatAPI(request, base = chatBase) {
   function read(path, params, signal) {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -70,7 +70,8 @@ function accessLost(error) {
 }
 
 function receiptLink(receipt) {
-  if (!receipt || ![receipt.project_id, receipt.target_id].every(id => typeof id === 'string' && identifier.test(id))) return;
+  const projectID = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
+  if (!receipt || ![receipt.project_id, receipt.target_id].every(id => typeof id === 'string' && projectID.test(id))) return;
   const project = '#/projects/' + receipt.project_id;
   if (receipt.target_kind === 'task') return [project + '/tasks/' + receipt.target_id, '查看关联任务'];
   if (receipt.target_kind === 'briefing') return [project + '/reports/brief/' + receipt.target_id, '查看项目简报'];
@@ -102,7 +103,7 @@ function messageBody(item) {
 // 项目宿主提供限高容器和项目范围内的数据适配器。会话读取仍走授权接口。
 // 宿主可以通过 AbortSignal 卸载阅读器，并将当前会话同步到项目路由。
 export function mountChatReader(host, api, {
-  signal: parentSignal, project = false, draftScope, chatId, messageId, onLocation = () => {}
+  signal: parentSignal, project = false, projectId, draftScope, chatId, messageId, onLocation = () => {}
 } = {}) {
   const lifetime = new AbortController();
   const signal = parentSignal ? AbortSignal.any([parentSignal, lifetime.signal]) : lifetime.signal;
@@ -167,6 +168,7 @@ export function mountChatReader(host, api, {
   const count = get('[data-count]');
   const syncStatus = get('[data-sync]');
   const refreshButton = get('[data-action="refresh"]');
+  if (!api.refresh) refreshButton.hidden = true;
   const refreshRetry = get('[data-action="retry-sync"]');
   const listSearch = get('[name="directory"]');
   const localSearch = get('[name="messages"]');
@@ -353,6 +355,7 @@ export function mountChatReader(host, api, {
         ${org ? `<span class="person-org" title="${esc(org)}">${esc(org)}</span>` : ''}${time(item.sent_at)}</div>
         <p class="chat-bubble">${highlight(messageBody(item), query)}</p>
         ${receipt ? `<section class="chat-receipt"><div class="chat-receipt-type">Bot 回执</div><a href="${receipt[0]}">${receipt[1]}</a></section>` : ''}
+        ${projectId && item.state !== 'deleted' && identifier.test(item.id) ? `<a class="button chat-page-action" href="#/projects/${esc(projectId)}/tasks/source/message/${esc(item.id)}?chat_id=${esc(selected.id)}">查看关联任务</a>` : ''}
         ${query ? `<button type="button" class="button chat-page-action" data-action="locate" data-message-id="${esc(item.id)}">定位消息</button>` : ''}
         </div></li>`;
     }).join('');

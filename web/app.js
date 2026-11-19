@@ -5,6 +5,7 @@ import { mountFeishuBot } from './feishu-bot.js';
 import { mountConnectionSettings } from './connection-settings.js';
 import { clearChatDrafts } from './chat-composer.js';
 import { chatAPI, chatRoute, mountChatReader } from './chat-reader.js';
+import { projectRoute, mountProjects, mountProjectSummary } from './projects.js';
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
 
@@ -33,6 +34,7 @@ let session;
 let routeRequest;
 let view;
 let renderedHash;
+let projectMemory = {};
 let checkingNavigation = false;
 const oauthReturnKey = 'omnirelay.feishu.return-route';
 const workbenchRoute = '#/workbench';
@@ -112,6 +114,7 @@ function closeSessionOverlays() {
 
 function showLogin({ preserveTarget = true } = {}) {
   if (view?.hasDraft?.()) ui.toast('warning', '会话已结束，未保存的修改已清除。');
+  projectMemory = {};
   clearChatDrafts();
   closeSessionOverlays();
   sessionCheck?.abort();
@@ -130,6 +133,8 @@ function showLogin({ preserveTarget = true } = {}) {
 
 function safeRoute(hash) {
   hash = legacyRoutes.get(hash) ?? hash;
+  const project = projectRoute(hash);
+  if (project) return project.hash;
   const chat = chatRoute(hash);
   if (chat) return chat.hash;
   const section = hash?.split('/')[2];
@@ -143,6 +148,7 @@ function permission(user, section) {
 
 function allowedRoute(hash) {
   if (!hash) return false;
+  if (projectRoute(hash)) return session.user.navigation?.workbench === true;
   if (chatRoute(hash)) return session.user.navigation?.bot_chats === true;
   return hash === workbenchRoute ? session.user.navigation?.workbench === true : permission(session.user, hash.split('/')[2]);
 }
@@ -190,6 +196,7 @@ async function establishSession(nextSession, signal) {
     permissions:nextSession.access?.permissions,
     roles: nextSession.access?.roles ?? []
   };
+  if (session?.user.id !== nextSession.user.id) projectMemory = {};
   setSession(nextSession);
   session = nextSession;
 }
@@ -200,16 +207,21 @@ function drawBreadcrumb(title, section) {
   breadcrumb.lastElementChild.textContent = title;
 }
 
-function goToAdministration(user) {
+function goToAdministration(user, signal) {
   const available = Object.keys(titles).filter(section => permission(user, section));
   const title = document.createElement('h1');
   title.id = 'page-heading';
   title.tabIndex = -1;
   title.textContent = '工作台总览';
   page.replaceChildren(title);
-  if (!available.length) return;
+
   const nav = document.createElement('div');
   nav.className = 'toolbar';
+  const projects = document.createElement('a');
+  projects.href = '#/projects';
+  projects.className = 'button primary';
+  projects.textContent = '查看项目列表';
+  nav.append(projects);
   for (const section of available) {
     const link = document.createElement('a');
     link.className = 'button';
@@ -217,7 +229,9 @@ function goToAdministration(user) {
     link.textContent = titles[section];
     nav.append(link);
   }
-  page.append(nav);
+  const summary = document.createElement('section');
+  page.append(nav,summary);
+  void mountProjectSummary(summary,protectedAPI,signal);
 }
 
 async function render() {
@@ -245,8 +259,9 @@ async function render() {
   renderedHash = hash;
   updateAccount(session.user);
   const chat = chatRoute(hash);
-  const section = chat ? undefined : hash.split('/')[2];
-  const title = chat ? '机器人记录' : section ? titles[section] : '工作台总览';
+  const project = projectRoute(hash);
+  const section = chat || project ? undefined : hash.split('/')[2];
+  const title = project ? project.title || '项目列表' : chat ? '机器人记录' : section ? titles[section] : '工作台总览';
   feishuNav.hidden = chatOption.hidden = session.user.navigation?.bot_chats !== true;
   feishuNav.dataset.active = String(Boolean(chat));
   if (chat) feishuNav.open = true;
@@ -267,6 +282,10 @@ async function render() {
   const overview = shell.querySelector('[data-nav="workbench"]');
   overview.hidden = session.user.navigation?.workbench !== true;
   mobileNav.querySelector('option[value="workbench"]').hidden = overview.hidden;
+  const projectLink = shell.querySelector('[data-nav="projects"]');
+  projectLink.hidden = mobileNav.querySelector('option[value="projects"]').hidden = overview.hidden;
+  if (project) projectLink.setAttribute('aria-current','page');
+  else projectLink.removeAttribute('aria-current');
   const brand = shell.querySelector('.brand');
   if (allowedRoute(fallback)) brand.href = fallback;
   else brand.removeAttribute('href');
@@ -278,11 +297,13 @@ async function render() {
     mobileNav.selectedIndex = -1;
     return;
   }
-  drawBreadcrumb(title, chat ? '飞书' : section ? '系统管理' : '工作空间');
-  mobileNav.value = chat ? 'feishu/bot-chats' : hash.slice(2);
-  page.dataset.layout = chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
+  drawBreadcrumb(title, project?.id ? '项目列表' : chat ? '飞书' : section ? '系统管理' : '工作空间');
+  mobileNav.value = project ? 'projects' : chat ? 'feishu/bot-chats' : hash.slice(2);
+  page.dataset.layout = project?.id ? 'project' : chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
-  if (chat) {
+  if (project) {
+    void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id});
+  } else if (chat) {
     mountChatReader(page, chats, {
       signal, draftScope: session.user.id, chatId: chat.chatId, messageId: chat.messageId,
       onLocation(chatId, messageId) {
@@ -292,7 +313,7 @@ async function render() {
         history.replaceState(history.state, '', renderedHash);
       }
     });
-  } else if (!section) goToAdministration(session.user);
+  } else if (!section) goToAdministration(session.user, signal);
   else if (section === 'feishu-bot') {
     const permissions = session.user.permissions ?? {};
     view = mountFeishuBot(page, botAPI, {
@@ -377,6 +398,7 @@ addEventListener('hashchange', async () => {
       return;
     }
   }
+  routeRequest?.abort();
   const previous = session;
   await refreshAccess();
   if (session === previous) render();

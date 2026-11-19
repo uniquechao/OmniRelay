@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="omni-relay-system.css">
 <link rel="stylesheet" href="omni-relay-bot-chat.css">
 <link rel="stylesheet" href="chat-reader.css">
+<link rel="stylesheet" href="omni-relay-project.css">
 </head>
 <body>
 <!-- Navigation symbols from the existing OmniGrid icon sprite. -->
@@ -51,6 +52,7 @@
       <p class="rail-caption">工作空间</p>
       <nav class="nav" id="side-navigation" aria-label="工作台主导航">
         <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
+        <a href="#/projects" data-nav="projects" aria-label="项目列表"><svg class="icon" aria-hidden="true"><use href="#nav-projects"/></svg><span>项目列表</span></a>
         <details class="nav-group" id="feishu-nav" hidden>
           <summary aria-label="飞书" aria-controls="feishu-nav-children"><svg class="icon" aria-hidden="true"><use href="#nav-bot-chat"/></svg><span>飞书</span>
             <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
@@ -89,6 +91,7 @@
         <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
         <select class="select" id="mobile-nav" aria-label="工作台主导航">
           <option value="workbench">工作台总览</option>
+          <option value="projects">项目列表</option>
           <option value="feishu/bot-chats" hidden>机器人记录</option>
           <optgroup label="系统管理">
             <option value="system/users">用户管理</option>
