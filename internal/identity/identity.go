@@ -61,6 +61,8 @@ type Config struct {
 	Access     func(context.Context, Principal) (WorkbenchAccess, error)
 	SessionTTL time.Duration
 	IdleTTL    time.Duration
+	// OAuthProxyToken authenticates the TLS upstream that supplies the OAuth source IP.
+	OAuthProxyToken string
 }
 
 type Service struct {
@@ -68,6 +70,7 @@ type Service struct {
 	cfg      Config
 	callback string
 	feishu   *http.Client
+	oauth    oauthLimits
 }
 
 func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
@@ -137,6 +140,10 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
+	if !s.oauth.allowStart(time.Now(), s.oauthSource(r)) {
+		oauthRetry(w, time.Minute)
+		return
+	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(query["return_to"]) > 1 {
 		writeFailure(w, http.StatusBadRequest, "invalid_return_path")
@@ -151,7 +158,8 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
-	state, browser, verifier := newSecret(), newSecret(), newSecret()
+	browser, verifier := newSecret(), newSecret()
+	state := s.newOAuthState(time.Now(), browser)
 	if err := s.storeLogin(r.Context(), state, browser, verifier, returnPath); err != nil {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
@@ -170,13 +178,22 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	state := query.Get("state")
 	browser := cookieSecret(r, browserCookie)
-	if err != nil || len(query["state"]) != 1 || !isSecret(state) || browser == "" {
+	now := time.Now()
+	var verifier, returnPath string
+	if err == nil && len(query["state"]) == 1 && browser != "" {
+		verifier, returnPath, err = s.admitCallback(r.Context(), now, state, browser)
+	} else {
+		err = s.oauth.rejectUnverified(now)
+	}
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
 		writeFailure(w, http.StatusBadRequest, "invalid_login_transaction")
 		return
-	}
-	verifier, returnPath, err := s.consumeLogin(r.Context(), state, browser)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeFailure(w, http.StatusBadRequest, "invalid_login_transaction")
+	case errors.Is(err, errOAuthRateLimited):
+		oauthRetry(w, time.Minute)
+		return
+	case errors.Is(err, errOAuthBusy):
+		oauthRetry(w, time.Second)
 		return
 	}
 	if err != nil {

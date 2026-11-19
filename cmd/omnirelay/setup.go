@@ -281,7 +281,13 @@ func newWebSetupHandler(store webSetupStore, origin string,
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"authorization_url": provider.AuthorizationURL(state, verifier)})
 	})
+	var callbacks requestWindow
 	mux.HandleFunc("GET /auth/feishu/callback", func(w http.ResponseWriter, r *http.Request) {
+		if !callbacks.allow(time.Now(), 240) {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		browser, cookieErr := r.Cookie(setupBrowserCookie)
 		if err != nil || cookieErr != nil || len(query["state"]) != 1 ||

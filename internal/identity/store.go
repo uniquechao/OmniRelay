@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -26,14 +27,26 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP + make_interval(secs => $8
 }
 
 func (s *Service) consumeLogin(ctx context.Context, state, browser string) (string, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback(ctx)
 	var verifier, returnPath string
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 DELETE FROM oauth_login_transactions
 WHERE state_digest = $1 AND browser_digest = $2 AND tenant_key = $3 AND app_id = $4
   AND redirect_uri = $5 AND expires_at > clock_timestamp()
 RETURNING pkce_verifier, return_path
 `, digest(state), digest(browser), s.cfg.TenantKey, s.cfg.AppID, s.callback).Scan(&verifier, &returnPath)
-	return verifier, returnPath, err
+	if err != nil {
+		return "", "", err
+	}
+	// A rejected completion rolls back the delete so the browser can retry.
+	if !s.oauth.allowCompletion(time.Now()) {
+		return "", "", errOAuthRateLimited
+	}
+	return verifier, returnPath, tx.Commit(ctx)
 }
 
 // ResolveFeishuAccount resolves a verified Feishu identity to a preprovisioned,

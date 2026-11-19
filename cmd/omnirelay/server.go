@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +41,7 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 	identityService, err := identity.New(pool, identity.Config{
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, PublicOrigin: cfg.publicOrigin,
 		Transport: transport, Audit: roles.AuditIdentity, Access: roles.WorkbenchAccess,
+		OAuthProxyToken: cfg.oauthProxyToken,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -138,26 +138,12 @@ func (l *requestWindow) allow(now time.Time, limit int) bool {
 }
 
 func secureHeaders(next http.Handler) http.Handler {
-	var loginStarts, loginCallbacks requestWindow
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-		var limiter *requestWindow
-		var limit int
-		switch r.URL.Path {
-		case "/auth/feishu/start":
-			limiter, limit = &loginStarts, 120
-		case "/auth/feishu/callback":
-			limiter, limit = &loginCallbacks, 240
-		}
-		if limiter != nil && !limiter.allow(time.Now(), limit) {
-			w.Header().Set("Retry-After", strconv.Itoa(60))
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
 }
