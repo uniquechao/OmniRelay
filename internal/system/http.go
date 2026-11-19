@@ -41,19 +41,27 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 	handle("PATCH "+basePath, "system.configure", identity.RefreshSessionWithCSRF, s.configure)
 	handle("POST "+basePath+"/checks", "system.operate", identity.RefreshSessionWithCSRF, s.submit)
 	handle("GET "+basePath+"/checks/{id}", "system.read", identity.ValidateSession, s.getCheck)
-	handle("GET /api/v1/system/connections", "system.read", identity.ValidateSession, getConnections)
+	handle("GET /api/v1/system/connections", "system.read", identity.ValidateSession, s.getConnections)
 }
 
-func getConnections(w http.ResponseWriter, _ *http.Request, _ identity.Principal) {
+// ConfigureOmniGrid marks the Business API adapter as configured at startup.
+func (s *Service) ConfigureOmniGrid(configured bool) {
+	s.omniGridConfigured = configured
+}
+
+func (s *Service) getConnections(w http.ResponseWriter, _ *http.Request, _ identity.Principal) {
 	type connectionSetting struct {
 		ID    string `json:"id"`
 		State string `json:"state"`
 	}
-	// Neither service has a registered integration in this deployment.
+	grid := "not_configured"
+	if s.omniGridConfigured {
+		grid = "configured"
+	}
 	respond(w, http.StatusOK, struct {
 		Items []connectionSetting `json:"items"`
 	}{Items: []connectionSetting{
-		{ID: "omnigrid", State: "not_configured"},
+		{ID: "omnigrid", State: grid},
 		{ID: "deepseek_harness", State: "not_configured"},
 	}})
 }

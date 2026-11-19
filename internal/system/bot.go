@@ -108,9 +108,10 @@ type AuthorizeWrite func(context.Context, pgx.Tx, identity.Principal, string) er
 type AuditChange func(context.Context, pgx.Tx, identity.Principal, int64) error
 
 type Service struct {
-	store    Store
-	provider Provider
-	wake     chan struct{}
+	store              Store
+	provider           Provider
+	wake               chan struct{}
+	omniGridConfigured bool
 }
 
 func New(store Store, provider Provider) *Service {

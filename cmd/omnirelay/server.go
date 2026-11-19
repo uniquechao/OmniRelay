@@ -16,6 +16,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
+	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 	"github.com/uniquechao/OmniRelay/internal/system"
 	"github.com/uniquechao/OmniRelay/migrations"
@@ -33,6 +34,16 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper,
 	roles *access.Service, receipts chat.ReceiptSources,
 ) (http.Handler, *backendWorkers, error) {
+	var grid *project.Grid
+	if cfg.gridOrigin != "" {
+		var err error
+		grid, err = project.NewGrid(cfg.gridOrigin, cfg.gridIdentitiesFile, cfg.tenantKey, cfg.appID,
+			http.Client{Transport: transport, Timeout: 5 * time.Second})
+		if err != nil {
+			return nil, nil, err
+		}
+		roles.ProjectAccess = grid
+	}
 	if err := roles.Bootstrap(ctx, cfg.bootstrap); err != nil {
 		if errors.Is(err, access.ErrBootstrapRequired) {
 			return nil, nil, errors.New("set OMNIRELAY_BOOTSTRAP_OPEN_ID to the first administrator's verified Feishu Open ID")
@@ -68,7 +79,13 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
 	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
+	projectService := project.New(grid, pool, roles, botStore.Status, chatSource, chatService,
+		cfg.botSendEnabled && cfg.appSecret != "")
+	if grid != nil {
+		chatService.ConfigureBusinessReceipts(projectService)
+	}
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
+	workers.bot.ConfigureOmniGrid(grid != nil)
 	if cfg.appSecret != "" {
 		workers.chat = chatService
 	}
@@ -94,6 +111,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	mux := http.NewServeMux()
 	workers.bot.Register(mux, identityService.AuthenticateManagement, roles)
 	chatService.Register(mux, identityService.Authenticate)
+	projectService.Register(mux, identityService.Authenticate)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
 	web.Register(mux)
