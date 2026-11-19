@@ -4,15 +4,15 @@
 
 ## 角色与接口矩阵
 
-`admin` 对应 system_admin，`operator` 对应 system_operator，`member` 为无附加系统权限的普通成员。HTTP 样例使用这三个简写。目录权限按当前 `internal/access/access.go`：管理员具有 directory.read/sync，运维默认没有；账号有多角色时按实际权限重算。
+`admin` 对应 `system_admin`，`operator` 对应 `system_operator`，`member` 为仅有 `system_user` 的普通用户。HTTP 样例使用这三个简写。管理员和运维者均有 `directory.read` 和 `directory.sync`。多角色账号按权限并集鉴权。
 
 | 场景 | 管理员 | 运维 | 普通成员 | 无效会话 | 验证责任 |
 | --- | --- | --- | --- | --- | --- |
 | Bot GET、任务 GET | 200 | 200 | 403 | 401 | Bot 后端＋前端 |
 | Bot PATCH | 200 | 403 | 403 | 401 | Bot 后端＋前端 |
 | Bot checks POST | 202 | 202 | 403 | 401 | Bot 后端＋前端 |
-| directory GET | 200 | 403 | 403 | 401 | 目录后端＋前端 |
-| directory sync POST | 202 | 403 | 403 | 401 | 目录后端＋前端 |
+| directory GET | 200 | 200 | 403 | 401 | 目录后端＋前端 |
+| directory sync POST | 202 | 202 | 403 | 401 | 目录后端＋前端 |
 | 前端入口和直达路由 | 按 access.admin.feishu_bot 展示并逐请求鉴权 | 可看可测，不能启停 | 无入口，直达显示无权 | 转登录 | 前端 |
 
 所有 POST/PATCH 的同源 Origin、有效 CSRF 为必要条件，正例与缺失/错误各自覆盖。PATCH 必须带当前强 If-Match；检测必须带合法 Idempotency-Key。`tests/fixtures/feishu/http-matrix.json` 为可重放输入，覆盖 200/202/400/401/403/404/409/412/428。真实适配器先为对应账号获取会话与 CSRF，再将 same/cross/absent、valid/invalid/absent 转成实际请求头；同一行同时比较状态、错误正文、ETag 和持久化副作用。请求体的 malformed JSON、重复头、多 ETag 及非法字段也应由后端 HTTP 测试补充，不应由 mock 宣称通过。

@@ -39,7 +39,7 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 	}
 	handle("GET "+basePath, "system.read", false, s.getStatus)
 	handle("PATCH "+basePath, "system.configure", true, s.configure)
-	handle("POST "+basePath+"/checks", "system.read", true, s.submit)
+	handle("POST "+basePath+"/checks", "system.operate", true, s.submit)
 	handle("GET "+basePath+"/checks/{id}", "system.read", false, s.getCheck)
 }
 

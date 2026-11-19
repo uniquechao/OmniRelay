@@ -130,7 +130,7 @@ func (s *FeishuBot) Configure(ctx context.Context, actor identity.Principal, mat
 
 func (s *FeishuBot) Submit(ctx context.Context, actor identity.Principal, key string) (system.Submission, error) {
 	var submission system.Submission
-	err := s.write(ctx, actor, "system.read", func(tx pgx.Tx) error {
+	err := s.write(ctx, actor, "system.operate", func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `DELETE FROM feishu_bot_check_keys k USING feishu_bot_checks c
 			WHERE k.tenant_key=$1 AND k.app_id=$2 AND k.check_id=c.id
 			AND c.finished_at <= clock_timestamp() - interval '24 hours'`, s.config.TenantKey, s.config.AppID)

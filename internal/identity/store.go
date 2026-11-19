@@ -50,7 +50,7 @@ FOR NO KEY UPDATE
 	return id, err
 }
 
-func (s *Service) createSession(ctx context.Context, p Principal, token, previousToken string) error {
+func (s *Service) createSession(ctx context.Context, p *Principal, token, previousToken string) error {
 	// Clear expired rows before taking the account lock shared with deactivation.
 	if _, err := s.pool.Exec(ctx, `
 DELETE FROM web_sessions
@@ -88,7 +88,7 @@ VALUES ($1, $2, CURRENT_TIMESTAMP + make_interval(secs => $3), CURRENT_TIMESTAMP
 		return err
 	}
 	if s.cfg.Audit != nil {
-		if err := s.cfg.Audit(ctx, tx, p, "identity.login"); err != nil {
+		if err := s.cfg.Audit(ctx, tx, *p, "identity.login"); err != nil {
 			return err
 		}
 	}

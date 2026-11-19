@@ -10,24 +10,27 @@ import (
 )
 
 type Account struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	AvatarURL string    `json:"avatarUrl"`
-	Active    bool      `json:"active"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	AvatarURL   string    `json:"avatarUrl"`
+	Active      bool      `json:"active"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	SystemRoles []string  `json:"systemRoles"`
 }
 
-const accountColumns = "id, name, avatar_url, active, created_at, updated_at"
+const accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + systemGrantRoles
 
-func scanAccount(row pgx.Row) (Account, error) {
+func scanAccount(row pgx.Row, extra ...any) (Account, error) {
 	var a Account
-	err := row.Scan(&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt)
+	fields := []any{&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt, &a.SystemRoles}
+	err := row.Scan(append(fields, extra...)...)
+	a.SystemRoles = effectiveSystemRoles(a.Active, a.SystemRoles)
 	return a, err
 }
 
 func (s *Service) listAccounts(ctx context.Context, after string, limit int, active *bool) ([]Account, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+accountColumns+` FROM accounts
+	rows, err := s.pool.Query(ctx, `SELECT `+accountColumns+` FROM accounts a
 		WHERE tenant_key=$1 AND app_id=$2 AND id>$3 AND ($5::bool IS NULL OR active=$5)
 		ORDER BY id LIMIT $4`, s.tenantKey, s.appID, after, limit, active)
 	if err != nil {
@@ -57,7 +60,7 @@ func (s *Service) preauthorizeAccount(ctx context.Context, actor identity.Princi
 		if err != nil {
 			return err
 		}
-		account, err = scanAccount(tx.QueryRow(ctx, `INSERT INTO accounts (tenant_key,app_id,open_id,name)
+		account, err = scanAccount(tx.QueryRow(ctx, `INSERT INTO accounts AS a (tenant_key,app_id,open_id,name)
 			VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_key,app_id,open_id) DO NOTHING
 			RETURNING `+accountColumns, s.tenantKey, s.appID, openID, name))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -78,7 +81,7 @@ func (s *Service) setAccountActive(ctx context.Context, actor identity.Principal
 			return err
 		}
 		var err error
-		account, err = scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM accounts
+		account, err = scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM accounts a
 			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 FOR NO KEY UPDATE`, s.tenantKey, s.appID, accountID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotFound
@@ -92,9 +95,9 @@ func (s *Service) setAccountActive(ctx context.Context, actor identity.Principal
 			}
 		}
 		var version int64
-		err = tx.QueryRow(ctx, `UPDATE accounts SET active=$2, updated_at=now(), permission_version=permission_version+1
-			WHERE id=$1 RETURNING active, updated_at, permission_version`, accountID, active).
-			Scan(&account.Active, &account.UpdatedAt, &version)
+		account, err = scanAccount(tx.QueryRow(ctx, `UPDATE accounts AS a
+			SET active=$2, updated_at=now(), permission_version=permission_version+1
+			WHERE id=$1 RETURNING `+accountColumns+`, permission_version`, accountID, active), &version)
 		if err != nil {
 			return err
 		}
@@ -168,13 +171,14 @@ type grantRequest struct {
 }
 
 func (r grantRequest) valid() bool {
-	if !validIdentifier(r.AccountID) {
+	role := roleCatalog[r.Role]
+	if !validIdentifier(r.AccountID) || !role.Grantable {
 		return false
 	}
-	switch r.Role {
-	case RoleSystemAdmin, RoleSystemOperator, RoleAuditViewer:
+	switch role.Scope {
+	case "system":
 		return r.ProjectID == ""
-	case RoleProjectAdmin:
+	case "project":
 		return validIdentifier(r.ProjectID)
 	default:
 		return false
@@ -182,6 +186,9 @@ func (r grantRequest) valid() bool {
 }
 
 func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r grantRequest) (RoleGrant, error) {
+	if !r.valid() {
+		return RoleGrant{}, errInvalidInput
+	}
 	var grant RoleGrant
 	err := s.mutate(ctx, func(tx pgx.Tx) error {
 		source := "platform_admin"
@@ -271,10 +278,20 @@ func (s *Service) revokeRole(ctx context.Context, actor identity.Principal, gran
 			action = "project.delegate"
 		}
 		if err := s.require(ctx, tx, actor, action, grant.ProjectID); err != nil {
-			if errors.Is(err, ErrForbidden) {
+			if !errors.Is(err, ErrForbidden) {
+				return err
+			}
+			if grant.ProjectID != "" {
 				return errNotFound
 			}
-			return err
+			canRead, err := s.check(ctx, tx, actor, "role.read", "")
+			if err != nil {
+				return err
+			}
+			if !canRead {
+				return errNotFound
+			}
+			return ErrForbidden
 		}
 		if grant.Role == RoleSystemAdmin {
 			if err := s.protectLastAdmin(ctx, tx, grant.AccountID); err != nil {

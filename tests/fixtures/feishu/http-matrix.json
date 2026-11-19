@@ -781,8 +781,24 @@
       "body": null
     },
     "expected": {
-      "status": 403,
-      "error": "forbidden"
+      "status": 200
+    }
+  },
+  {
+    "name": "directory-sync-operator",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/system/directory/sync-runs",
+      "role": "operator",
+      "session": "valid",
+      "origin": "same",
+      "csrf": "valid",
+      "if_match": null,
+      "idempotency_key": null,
+      "body": null
+    },
+    "expected": {
+      "status": 202
     }
   },
   {

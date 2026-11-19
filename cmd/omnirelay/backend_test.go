@@ -112,7 +112,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		}
 	}
 	var sensitive []string
-	login := func(code, reason string) (*http.Cookie, identity.Principal, string) {
+	login := func(code, destination string) (*http.Cookie, identity.Principal, string) {
 		t.Helper()
 		start := do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(returnPath), "", nil, "")
 		wantStatus(start, http.StatusFound)
@@ -127,12 +127,12 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		finish := do("GET", callback, "", proof, "")
 		sensitive = append(sensitive, callback, state, proof.Value, "fixture-access-token-"+code)
 		wantStatus(do("GET", callback, "", proof, ""), http.StatusBadRequest)
-		if reason != "" {
-			checkFailure(finish, reason)
+		if !strings.HasPrefix(destination, "/") {
+			checkFailure(finish, destination)
 			return nil, identity.Principal{}, ""
 		}
 		wantStatus(finish, http.StatusSeeOther)
-		if finish.Header().Get("Location") != returnPath || finish.Header().Get("Referrer-Policy") != "no-referrer" {
+		if finish.Header().Get("Location") != destination || finish.Header().Get("Referrer-Policy") != "no-referrer" {
 			t.Fatal("unexpected redirect or referrer policy")
 		}
 		session := findCookie(finish, "__Host-omnirelay_session")
@@ -190,7 +190,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	wantStatus(do("GET", "/api/v1/system/directory/people", "", nil, ""), http.StatusUnauthorized)
 	const botAPI = "/api/v1/system/feishu-bot"
 	wantStatus(do("GET", botAPI, "", nil, ""), http.StatusUnauthorized)
-	admin, _, csrf := login("ou_admin", "")
+	admin, _, csrf := login("ou_admin", returnPath)
 	wantStatus(do("GET", botAPI, "", admin, ""), http.StatusOK)
 	peoplePath := "/api/v1/system/directory/people?department_id=team"
 	for {
@@ -210,7 +210,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, ""), http.StatusForbidden)
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusCreated)
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", "")
+	member, target, memberCSRF := login("ou_member", "/#/workbench")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)
@@ -253,7 +253,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	grantPath := "/api/v1/system/role-grants"
 	grant := do("POST", grantPath, fmt.Sprintf(`{"accountId":%q,"role":"audit_viewer"}`, target.AccountID), admin, csrf)
 	wantStatus(grant, http.StatusCreated)
-	member, _, _ = login("ou_member", "")
+	member, _, _ = login("ou_member", "/#/system/audit")
 	wantStatus(do("GET", "/api/v1/system/audit-events", "", member, ""), http.StatusOK)
 	var binding struct{ ID string }
 	if err := json.Unmarshal(grant.Body.Bytes(), &binding); err != nil || binding.ID == "" {
@@ -261,21 +261,23 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	}
 	wantStatus(do("DELETE", grantPath+"/"+binding.ID, "", admin, csrf), http.StatusNoContent)
 	wantStatus(do("GET", "/api/v1/me", "", member, ""), http.StatusUnauthorized)
-	member, _, _ = login("ou_member", "")
+	member, _, _ = login("ou_member", "/#/workbench")
 	wantStatus(do("GET", "/api/v1/system/audit-events", "", member, ""), http.StatusForbidden)
 	accountPath := accountsPath + "/" + target.AccountID
 	wantStatus(do("PATCH", accountPath, `{"active":false}`, admin, ""), http.StatusForbidden)
 	wantStatus(do("PATCH", accountPath, `{"active":false}`, admin, csrf), http.StatusOK)
 	wantStatus(do("GET", "/api/v1/me", "", member, ""), http.StatusUnauthorized)
 	login("ou_member", "denied")
+	audit := do("GET", "/api/v1/system/audit-events", "", admin, "")
+	wantStatus(audit, http.StatusOK)
 	wantStatus(do("POST", "/auth/logout", "", admin, csrf), http.StatusNoContent)
 	wantStatus(do("GET", "/api/v1/me", "", admin, ""), http.StatusUnauthorized)
 	stop()
 	<-workersDone
 	output := logs.String()
 	for _, value := range sensitive {
-		if strings.Contains(output, value) {
-			t.Fatal("backend logs captured OAuth request or credential data")
+		if strings.Contains(output, value) || strings.Contains(audit.Body.String(), value) {
+			t.Fatal("backend logs or audit data captured OAuth request or credential data")
 		}
 	}
 	for _, code := range []string{"cancelled", "denied", "unavailable"} {
