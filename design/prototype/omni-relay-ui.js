@@ -7,6 +7,7 @@ window.OmniRelayUI = (() => {
   const tipLevels = { info: '信息', success: '成功', warning: '警告', error: '错误' };
   const tipTimers = new WeakMap();
   let dialogNumber = 0;
+  let treeNumber = 0;
 
   function escape(value) {
     return String(value).replace(/[&<>"']/g, char => ({
@@ -23,6 +24,131 @@ window.OmniRelayUI = (() => {
     const tone = avatarTones[(hash >>> 0) % avatarTones.length];
     return '<span class="person-avatar" data-avatar-tone="' + tone + '" aria-hidden="true">' +
       escape([...label].slice(-2).join('')) + '</span>';
+  }
+
+  function personDetails(person) {
+    return {
+      name: person.name?.trim() || '未知人员',
+      key: person.person_key ?? person.personKey,
+      org: person.organization_paths?.map(path => path.join(' / ')).join('；') ?? person.org ?? '',
+      source: person.source === 'feishu' ? '飞书' : person.source ?? ''
+    };
+  }
+
+  function personButton(person, content, className = '') {
+    const { name, key, org, source } = personDetails(person);
+    return '<button type="button" class="person-button ' + escape(className) +
+      '" data-person-name="' + escape(name) + '" data-person-key="' + escape(key ?? '') +
+      '" data-person-org="' + escape(org) + '" data-person-source="' + escape(source) +
+      '" aria-haspopup="dialog" aria-expanded="false" aria-label="查看' + escape(name) +
+      '的基本信息" title="' + escape(name) + '">' + content + '</button>';
+  }
+
+  function personOrganization(org) {
+    return org ? '<span class="person-org" title="' + escape(org) + '">' + escape(org) + '</span>' : '';
+  }
+
+  function personView(person) {
+    const { name, key, org } = personDetails(person);
+    const label = escape(name);
+    return '<span class="person-view person-compact">' +
+      personButton(person,personAvatar(name,key || name),'person-portrait') +
+      '<span class="person-copy">' + personButton(person,label,'person-name') +
+      personOrganization(org) + '</span></span>';
+  }
+
+  function mountPersonCards(root, { signal } = {}) {
+    let active;
+    function dismiss() {
+      active?.close();
+    }
+    signal?.addEventListener('abort',dismiss,{ once:true });
+    root.addEventListener('click',event => {
+      const trigger = event.target.closest('[data-person-name]');
+      if (!trigger) return;
+      const alreadyOpen = active?.card.matches(':popover-open') && active.trigger === trigger;
+      dismiss();
+      if (alreadyOpen) return;
+
+      const { personName:name, personKey:key, personOrg:org, personSource:source } = trigger.dataset;
+      const card = document.createElement('div');
+      card.className = 'person-popover';
+      card.popover = 'auto';
+      card.tabIndex = -1;
+      card.setAttribute('role','dialog');
+      card.setAttribute('aria-label',name + '的基本信息');
+      card.innerHTML = '<div class="person-view">' + personAvatar(name,key || name) +
+        '<div class="person-copy"><strong class="person-name" title="' + escape(name) + '">' + escape(name) +
+        '</strong>' + personOrganization(org) + '</div></div>' +
+        (source ? '<p class="aux">身份来源　' + escape(source) + '</p>' : '');
+      const ownerDialog = trigger.closest('dialog');
+      (ownerDialog ?? root).append(card);
+
+      const tracking = new AbortController();
+      active = {
+        card, trigger,
+        close() {
+          if (card.matches(':popover-open')) card.hidePopover();
+          else if (!card.isConnected) {
+            tracking.abort();
+            observer.disconnect();
+            active = undefined;
+          }
+        }
+      };
+      const viewport = window.visualViewport;
+      function position() {
+        if (!trigger.getClientRects().length) { dismiss(); return; }
+        const anchor = trigger.getBoundingClientRect();
+        const leftEdge = viewport?.offsetLeft ?? 0;
+        const topEdge = viewport?.offsetTop ?? 0;
+        const rightEdge = leftEdge + (viewport?.width ?? document.documentElement.clientWidth);
+        const bottomEdge = topEdge + (viewport?.height ?? document.documentElement.clientHeight);
+        const inset = 8;
+        card.style.maxWidth = Math.max(0,rightEdge - leftEdge - inset * 2) + 'px';
+        card.style.maxHeight = Math.max(0,bottomEdge - topEdge - inset * 2) + 'px';
+        const width = card.offsetWidth;
+        const height = card.offsetHeight;
+        const below = anchor.bottom + 6;
+        const above = anchor.top - height - 6;
+        const top = below + height <= bottomEdge - inset ? below : above;
+        card.style.left = Math.max(leftEdge + inset, Math.min(anchor.left,rightEdge - width - inset)) + 'px';
+        card.style.top = Math.max(topEdge + inset, Math.min(top,bottomEdge - height - inset)) + 'px';
+      }
+
+      const observer = new MutationObserver(() => {
+        if (!root.contains(trigger)) dismiss();
+      });
+      observer.observe(root,{ childList:true, subtree:true });
+      window.addEventListener('resize',position,{ signal:tracking.signal });
+      window.addEventListener('scroll',position,{ capture:true, signal:tracking.signal });
+      window.addEventListener('hashchange',dismiss,{ signal:tracking.signal });
+      ownerDialog?.addEventListener('close',dismiss,{ signal:tracking.signal });
+      viewport?.addEventListener('resize',position,{ signal:tracking.signal });
+      viewport?.addEventListener('scroll',position,{ signal:tracking.signal });
+      card.addEventListener('beforetoggle',event => {
+        if (event.newState !== 'closed') return;
+        tracking.abort();
+        observer.disconnect();
+        trigger.setAttribute('aria-expanded','false');
+      });
+      card.addEventListener('toggle',event => {
+        if (event.newState !== 'closed') return;
+        card.remove();
+        if (active?.card !== card) return;
+        active = undefined;
+        const focusedOverlay = document.activeElement?.closest(':popover-open, dialog[open]');
+        if (!signal?.aborted && trigger.getClientRects().length && (!focusedOverlay || focusedOverlay === ownerDialog)) {
+          trigger.focus({ preventScroll:true });
+        }
+      });
+
+      card.showPopover({ source:trigger });
+      position();
+      trigger.setAttribute('aria-expanded','true');
+      card.focus({ preventScroll:true });
+    },{ signal });
+    return dismiss;
   }
 
   const icon = (name, className = 'icon') =>
@@ -578,12 +704,77 @@ window.OmniRelayUI = (() => {
     });
   }
 
+  function mountOrganizationTree(host, departments, {
+    initialId = '', onChange, includeAll = true, selectBranches = true
+  } = {}) {
+    const byParent = new Map();
+    const departmentIds = new Set(departments.map(item => String(item.id)));
+    const rendered = new Set();
+    const included = new Map();
+    let sequence = 0;
+    const prefix = 'organization-tree-' + ++treeNumber;
+    const rootKey = prefix + '-root';
+    const rootLabel = includeAll ? '全部组织' : 'OmniRelay';
+    if (includeAll) included.set('', { id:'', path:rootLabel });
+    for (const item of departments) {
+      const parent = departmentIds.has(String(item.parentId)) ? String(item.parentId) : '';
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent).push(item);
+    }
+
+    const pick = (id, label, path, symbol) =>
+      '<button class="tree-choice" type="button" data-org="' + escape(id) + '" aria-pressed="false"' +
+      ' title="' + escape(path) + '">' + icon(symbol) + '<span class="tree-node-label">' + escape(label) + '</span>' +
+      '<span data-chosen aria-hidden="true">✓</span></button>';
+    const toggle = (key, label, open, symbol) => {
+      const action = (open ? '收起' : '展开') + label;
+      return '<button class="tree-toggle' + (symbol ? ' tree-branch-label' : '') + '" type="button" data-tree-toggle="' +
+        escape(label) + '" aria-label="' + escape(action) + '" title="' + escape(action) + '" aria-controls="' + key +
+        '" aria-expanded="' + open + '">' + icon('action-expand','icon tree-expander') +
+        (symbol ? icon(symbol) + '<span class="tree-node-label">' + escape(label) + '</span>' : '') + '</button>';
+    };
+    function branch(item, ancestors, open) {
+      const id = String(item.id);
+      if (rendered.has(id)) return '';
+      rendered.add(id);
+      const path = [...ancestors, item.name];
+      const descendants = new Set([id]);
+      included.set(id, { id, path:path.join(' / '), descendants });
+      const key = prefix + '-' + ++sequence;
+      const children = (byParent.get(id) ?? []).map((child,index) => {
+        const markup = branch(child, path, index === 0);
+        if (markup) for (const descendant of included.get(String(child.id)).descendants) descendants.add(descendant);
+        return markup;
+      }).join('');
+      const choice = pick(id, item.name, path.join(' / '), ancestors.length && !children ? 'nav-team' : 'nav-projects');
+      if (!children) {
+        return '<li class="tree-row tree-leaf"><span class="tree-toggle-space" aria-hidden="true"></span>' + choice + '</li>';
+      }
+      const controls = selectBranches ? toggle(key,item.name,open) + choice : toggle(key,item.name,open,'nav-projects');
+      return '<li class="tree-branch"><div class="tree-row">' + controls + '</div>' +
+        '<ul class="tree-children" id="' + key + '"' + (open ? '' : ' hidden') + '>' + children + '</ul></li>';
+    }
+    let branches = (byParent.get('') ?? []).map((item,index) => branch(item, [], index === 0)).join('');
+    for (const item of departments) branches += branch(item, [], false);
+    host.innerHTML = '<div class="dev-tree" role="group" aria-label="组织结构"><div class="tree-surface tree-branch tree-root">' +
+      '<div class="tree-tools" role="group" aria-label="分支显示">' +
+      '<button class="tree-tool" type="button" data-tree-expand="true">展开全部</button>' +
+      '<button class="tree-tool" type="button" data-tree-expand="false">收起全部</button></div>' +
+      '<div class="tree-row tree-root-row">' +
+      (includeAll ? toggle(rootKey,rootLabel,true) + pick('',rootLabel,rootLabel,'nav-components')
+        : toggle(rootKey,rootLabel,true,'nav-components')) + '</div>' +
+      '<ul class="tree-children" id="' + rootKey + '">' + branches + '</ul></div>' +
+      '<p class="aux tree-selection" data-org-selection role="status"></p></div>';
+    return mountTree(host.firstElementChild, { initialId, onChange, entries:included });
+  }
+
   function mountTree(root, { initialId = '', onChange, entries }) {
     const branches = [...root.querySelectorAll('[data-tree-toggle]')];
     const choices = [...root.querySelectorAll('[data-org]')];
     const status = root.querySelector('[data-org-selection]');
     const controls = ':scope > .tree-row > [data-tree-toggle]';
-    const branchList = toggle => root.querySelector('#' + CSS.escape(toggle.getAttribute('aria-controls')));
+    const lists = new Map([...root.querySelectorAll('.tree-children')].map(list => [list.id,list]));
+    const branchList = toggle => lists.get(toggle.getAttribute('aria-controls'));
     const rowControl = row => row.querySelector('[data-org]') ?? row.querySelector('[data-tree-toggle]');
     let selection;
 
@@ -604,11 +795,11 @@ window.OmniRelayUI = (() => {
       setExpanded(toggle,true);
     }
 
-    function select(choice) {
+    function select(choice, notify = true) {
       selection = entries.get(choice.dataset.org);
       choices.forEach(button => button.setAttribute('aria-pressed',String(button === choice)));
       status.textContent = '已选择 ' + selection.path;
-      onChange?.(selection);
+      if (notify) onChange?.(selection);
     }
 
     root.addEventListener('click',event => {
@@ -665,10 +856,11 @@ window.OmniRelayUI = (() => {
         openBranch(branch.querySelector(controls));
         branch = branch.parentElement.closest('.tree-branch');
       }
-      select(initialChoice);
+      select(initialChoice,false);
     }
     return { value:() => selection, focus:() => (initialChoice ?? branches[0]).focus() };
   }
 
-  return { escape, icon, personAvatar, openDialog, mountList, mountTree, toast, mountAccount };
+  return { escape, icon, personAvatar, personButton, personView, mountPersonCards,
+    openDialog, mountList, mountOrganizationTree, toast, mountAccount };
 })();

@@ -183,6 +183,27 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 }
 .person-name { font-size: 1rem; line-height: 1.4; font-weight: 700; }
 .person-org { font-size: .75rem; line-height: 1.45; color: var(--or-text-secondary); }
+.person-button {
+  border: 0; border-radius: 5px; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-align: start; min-inline-size: 0; max-inline-size: 100%; touch-action: manipulation;
+}
+.person-button:hover { background: var(--or-hover-bg); color: var(--or-link); }
+.person-button.person-name { font-weight: 700; }
+.person-compact { gap: 8px; }
+.person-compact .person-name { font-size: .875rem; line-height: 1.4; }
+.person-compact .person-avatar { inline-size: 32px; block-size: 32px; font-size: .6875rem; }
+.person-popover {
+  position: fixed; inset: auto; margin: 0; box-sizing: border-box;
+  width: min(232px, calc(100vw - 16px)); padding: 12px; overflow: auto;
+  border: 1px solid var(--or-border); border-radius: 8px;
+  background: var(--or-surface); color: var(--or-text); box-shadow: var(--or-shadow-popup);
+}
+.person-popover .person-avatar { inline-size: 36px; block-size: 36px; font-size: .6875rem; }
+.person-popover .aux { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--or-border); }
+@media (pointer: coarse) {
+  .person-compact .person-portrait { min-width: 44px; min-height: 44px; display: grid; place-items: center; }
+  .person-compact .person-name { min-height: 24px; }
+}
 .person-examples { display: grid; gap: 10px; }
 .dev-combo { position: relative; }
 .combo-box { position: absolute; z-index: 3; inset: 100% 0 auto; margin-top: 4px; max-height: 13rem; overflow: auto; border: 1px solid var(--or-border); border-radius: 7px; background: var(--or-surface); box-shadow: var(--or-shadow-popup); }
@@ -195,13 +216,13 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 .combo-values { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
 .combo-value { color: var(--or-link); background: var(--or-selected-bg); border: 1px solid var(--or-border); border-radius: 5px; padding: 2px 6px; }
 .combo-value:hover { border-color: var(--or-focus); }
-.dev-tree { display: grid; gap: 9px; min-width: 0; }
+.dev-tree { display: grid; grid-template-columns: minmax(0,1fr); gap: 9px; min-width: 0; }
 .tree-tools {
   display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px;
   margin-bottom: 5px; padding: 3px 2px 5px; border-bottom: 1px solid var(--or-border);
 }
 .tree-tool {
-  min-block-size: 28px; padding: 3px 7px; border: 0; border-radius: 5px;
+  min-block-size: 28px; padding: 3px 7px; touch-action: manipulation; border: 0; border-radius: 5px;
   background: transparent; color: var(--or-text-secondary); font-size: .75rem; font-weight: 600;
 }
 .tree-tool:hover { color: var(--or-link); background: var(--or-hover-bg); }
@@ -227,10 +248,10 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 .tree-toggle:hover { background: color-mix(in srgb,var(--or-control-border) 16%,transparent); }
 .tree-branch-label, .tree-choice { flex: 1 1 auto; justify-content: flex-start; }
 .tree-branch-label .tree-expander { margin-inline: calc((var(--tree-toggle-width) - 26px)/2); }
-.tree-branch-label span, .tree-choice span { min-width: 0; }
+.tree-node-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-branch > .tree-row { font-weight: 600; }
 .tree-root > .tree-row { font-weight: 700; }
-.tree-children { display: grid; padding: 0; padding-inline-start: 6px; margin-inline-start: 11px; border-inline-start: 1px solid var(--or-border); list-style: none; }
+.tree-children { display: grid; grid-template-columns: minmax(0,1fr); padding: 0; padding-inline-start: 6px; margin-inline-start: 11px; border-inline-start: 1px solid var(--or-border); list-style: none; }
 .tree-children > .tree-row::before, .tree-children > .tree-branch > .tree-row::before {
   content: ""; position: absolute; inset-block-start: 50%; inset-inline-start: -7px; width: 6px; border-block-start: 1px solid var(--or-border);
 }

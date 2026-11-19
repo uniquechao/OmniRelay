@@ -375,14 +375,11 @@ window.OmniRelaySystem = (() => {
     panel.open = !matchMedia('(max-width: 720px)').matches;
     function paintTree() {
       const groups = directoryGroups();
-      const entries = new Map(groups.flatMap(group => [group,...group.teams]).map(item => [item.id,item]));
-      entries.set('all',{ id:'all', path:'全部组织' });
-      const initial = [...entries.values()].find(item => item.path === organization)?.id ?? 'all';
-      tree.innerHTML = OmniRelayDeveloper.tree('directory-org',true,groups,true);
-      OmniRelayDeveloper.mountTree(tree.firstElementChild, {
-        entries, initialId:initial,
+      const initial = groups.flatMap(group => [group,...group.teams]).find(item => item.path === organization);
+      OmniRelayDeveloper.mountTree(tree, {
+        groups, includeAll:true, initialId:initial?.id,
         onChange(selection) {
-          const next = selection.id === 'all' ? '' : selection.path;
+          const next = selection.id ? selection.path : '';
           if (next === organization) return;
           organization = next;
           resetPage();

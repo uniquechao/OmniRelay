@@ -29,91 +29,9 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', {
 const showTime = value => value && Number.isFinite(Date.parse(value)) ? dateFormat.format(new Date(value)) : '—';
 const messageOf = (error, fallback) => error instanceof Error && error.message ? error.message : fallback;
 
-function organizationTree(host, departments, selectedId, onSelect) {
-  const { escape, icon } = window.OmniRelayUI;
-  const byParent = new Map();
-  const departmentIds = new Set(departments.map(item => String(item.id)));
-  const rendered = new Set();
-  const included = new Map();
-  let sequence = 0;
-  for (const item of departments) {
-    const parent = departmentIds.has(String(item.parentId)) ? String(item.parentId) : '';
-    if (!byParent.has(parent)) byParent.set(parent, []);
-    byParent.get(parent).push(item);
-  }
-
-  const pick = (id, label, path, symbol) =>
-    '<button class="tree-choice" type="button" data-org="' + escape(id) + '" aria-pressed="' + (id === selectedId) +
-    '" title="' + escape(path) + '">' + icon(symbol) + '<span>' + escape(label) + '</span>' +
-    '<span data-chosen aria-hidden="true">✓</span></button>';
-  const toggle = (key, label, open) =>
-    '<button class="tree-toggle" type="button" data-tree-toggle aria-label="' + escape(label) +
-    '分支" aria-controls="' + key + '" aria-expanded="' + open + '">' + icon('action-expand','icon tree-expander') + '</button>';
-  function branch(item, ancestors, open) {
-    const id = String(item.id);
-    if (rendered.has(id)) return '';
-    rendered.add(id);
-    const path = [...ancestors, item.name];
-    const descendants = new Set([id]);
-    included.set(id, { path:path.join(' / '), descendants });
-    const key = 'directory-node-' + ++sequence;
-    const children = (byParent.get(id) ?? []).map((child,index) => {
-      const markup = branch(child, path, index === 0);
-      if (markup) for (const descendant of included.get(String(child.id)).descendants) descendants.add(descendant);
-      return markup;
-    }).join('');
-    const expanded = open || descendants.has(selectedId);
-    const choice = pick(id, item.name, path.join(' / '), ancestors.length && !children ? 'nav-team' : 'nav-projects');
-    return children ?
-      '<li class="tree-branch"><div class="tree-row">' + toggle(key,item.name,expanded) + choice + '</div>' +
-        '<ul class="tree-children" id="' + key + '"' + (expanded ? '' : ' hidden') + '>' + children + '</ul></li>' :
-      '<li class="tree-row tree-leaf">' + choice + '</li>';
-  }
-  let branches = (byParent.get('') ?? []).map((item,index) => branch(item, [], index === 0)).join('');
-  for (const item of departments) branches += branch(item, [], false);
-  host.innerHTML = '<div class="dev-tree" role="group" aria-label="组织结构"><div class="tree-surface tree-branch tree-root">' +
-    '<div class="tree-row tree-root-row">' + toggle('directory-root','全部组织',true) +
-    pick('','全部组织','全部组织','nav-components') + '<div class="tree-tools">' +
-    '<button class="tree-tool" type="button" data-tree-expand="true" aria-label="全部展开" title="全部展开">+</button>' +
-    '<button class="tree-tool" type="button" data-tree-expand="false" aria-label="全部收起" title="全部收起">−</button></div></div>' +
-    '<ul class="tree-children" id="directory-root">' + branches + '</ul></div>' +
-    '<p class="sr-only" data-org-selection role="status"></p></div>';
-  const tree = host.firstElementChild;
-  function expand(button, value) {
-    button.setAttribute('aria-expanded',String(value));
-    tree.querySelector('#' + button.getAttribute('aria-controls')).hidden = !value;
-  }
-  tree.addEventListener('click',event => {
-    const button = event.target.closest('button');
-    if (!button) return;
-    if (button.hasAttribute('data-tree-expand')) {
-      tree.querySelectorAll('[data-tree-toggle]').forEach(toggleButton => expand(toggleButton,button.dataset.treeExpand === 'true'));
-    }
-    if (button.hasAttribute('data-tree-toggle')) {
-      const open = button.getAttribute('aria-expanded') !== 'true';
-      const node = button.closest('.tree-branch');
-      if (open && !node.classList.contains('tree-root')) {
-        for (const sibling of node.parentElement.children) {
-          if (sibling === node) continue;
-          const toggleButton = sibling.querySelector(':scope > .tree-row > [data-tree-toggle]');
-          if (toggleButton) expand(toggleButton,false);
-        }
-      }
-      expand(button,open);
-    }
-    if (button.hasAttribute('data-org')) {
-      const selection = included.get(button.dataset.org);
-      tree.querySelectorAll('[data-org]').forEach(choice => choice.setAttribute('aria-pressed',String(choice === button)));
-      tree.querySelector('[data-org-selection]').textContent = '已选择 ' + (selection?.path ?? '全部组织');
-      onSelect(button.dataset.org,selection?.descendants);
-    }
-  });
-  return included.get(selectedId)?.descendants;
-}
-
 export async function mountAdmin(page, section, api, { user, signal } = {}) {
   if (!Object.hasOwn(titles,section)) throw new Error('未知的系统管理页面');
-  const { escape, mountList, openDialog, toast } = window.OmniRelayUI;
+  const { escape, mountList, mountOrganizationTree, personView, mountPersonCards, openDialog, toast } = window.OmniRelayUI;
   const usersPage = section === 'users';
   const canManageAccounts = user.permissions?.['account.manage'] === true;
   const canManageRoles = user.permissions?.['role.manage'] === true;
@@ -133,6 +51,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const heading = element.content.querySelector('#page-heading');
   page.replaceChildren(element.content);
   const list = page.querySelector('#system-list');
+  const closePersonCard = usersPage ? mountPersonCards(list, { signal }) : undefined;
   const inPage = () => !signal?.aborted && list.isConnected;
   const focusHeading = () => inPage() ? heading : undefined;
   const syncButton = page.querySelector('[data-directory-sync]');
@@ -251,11 +170,13 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       filters:[{ key:'status', label:'账号状态', options:statuses }],
       columns:[
         column('name','用户',record => {
-          const summary = [record.status === 'unprovisioned' ? '' : record.id,sourceOf(record),record.org].filter(Boolean).join(' · ');
-          return '<strong>' + escape(record.name) + '</strong><small class="admin-cell-sub" title="' + escape(summary) + '">' +
-            escape(summary) + '</small>';
+          const summary = [record.status === 'unprovisioned' ? '' : record.id,sourceOf(record)].filter(Boolean).join(' · ');
+          return personView(record) + (summary ? '<small class="admin-cell-sub" title="' + escape(summary) + '">' +
+            escape(summary) + '</small>' : '');
         },record => record.name),
-        column('org','组织',record => escape(record.org || '—'),record => record.org || '',true),
+        column('org','组织',record => record.org
+          ? '<span class="admin-org-path" title="' + escape(record.org) + '">' + escape(record.org) + '</span>'
+          : '—',record => record.org || '',true),
         column('roles','角色',record => escape(userRoles(record).join('、') || '未授权'),null,true),
         column('status','账号状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知') +
           (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : '') +
@@ -308,13 +229,17 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   function paintTree(departments) {
     if (!departments.some(item => String(item.id) === selectedId)) selectedId = '';
     const focused = treeHost.contains(document.activeElement);
-    selectedDepartments = organizationTree(treeHost,departments,selectedId,(id,descendants) => {
-      if (id === selectedId) return;
-      selectedId = id;
-      selectedDepartments = descendants;
-      mounted?.resetPage();
+    const tree = mountOrganizationTree(treeHost, departments, {
+      initialId: selectedId,
+      onChange(selection) {
+        if (selection.id === selectedId) return;
+        selectedId = selection.id;
+        selectedDepartments = selection.descendants;
+        mounted?.resetPage();
+      }
     });
-    if (focused) treeHost.querySelector('[aria-pressed="true"]')?.focus();
+    selectedDepartments = tree.value().descendants;
+    if (focused) tree.focus();
   }
   function clearDirectory() {
     displayedVersion = undefined;
@@ -324,6 +249,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     for (const dialog of dialogs) {
       if (dialog !== detailsTarget?.closest('dialog') && dialog.open) dialog.close('cancel');
     }
+    closePersonCard?.();
     treeHost.replaceChildren();
     if (mounted) replaceRows([]);
     else list.replaceChildren();

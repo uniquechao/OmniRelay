@@ -1,6 +1,6 @@
 /* Interactive standards and isolated sample data for the developer menu. */
 window.OmniRelayDeveloper = (() => {
-  const { escape, icon, openDialog, mountList, toast } = OmniRelayUI;
+  const { escape, icon, openDialog, mountList, mountOrganizationTree, mountPersonCards, toast } = OmniRelayUI;
   const { richEditor, mountRich, markdownView, mountMarkdown } = OmniRelayContent;
   const pages = { list:'列表页', form:'表单页', info:'信息展示页', components:'组件列表', layout:'工作台布局说明', colors:'色彩系统' };
   const statuses = { progress:'进行中', success:'已完成', pending:'待开始', disabled:'已禁用' };
@@ -20,10 +20,6 @@ window.OmniRelayDeveloper = (() => {
     { id:'engineering', label:'研发中心', teams:[{id:'platform',label:'平台组'}, {id:'product',label:'产品组'}] },
     { id:'delivery', label:'交付中心', teams:[{id:'delivery-1',label:'交付一组'}, {id:'testing',label:'测试组'}] }
   ];
-  const organizations = new Map(departments.flatMap(department => [
-    [department.id,{id:department.id,path:department.label}],
-    ...department.teams.map(team => [team.id,{id:team.id,path:department.label + ' / ' + team.label}])
-  ]));
   const records = Array.from({ length:14 }, (_, index) => ({
     id:'sample-' + (index+1), name:[
       '北辰交付准备','启明内部试点','远山验收演练','长风需求收集','星河质量专项','向阳文档治理','青禾灰度复核',
@@ -55,13 +51,7 @@ window.OmniRelayDeveloper = (() => {
     </div>`;
   }
 
-  function personView(person) {
-    const name = escape(person.label);
-    const organization = escape(person.detail);
-    return '<div class="person-view">' + OmniRelayUI.personAvatar(person.label,person.id) + '<div class="person-copy">' +
-      '<strong class="person-name" title="' + name + '">' + name + '</strong>' +
-      '<span class="person-org" title="' + organization + '">' + organization + '</span></div></div>';
-  }
+  const personView = person => OmniRelayUI.personView({ name:person.label, personKey:person.id, org:person.detail });
 
   function formPage() {
     return panel('项目基本信息', `<form class="dev-fields" id="developer-form" novalidate>
@@ -97,38 +87,12 @@ window.OmniRelayDeveloper = (() => {
     </div>`;
   }
 
-  function tree(id, selectDepartments = false, groups = departments, includeAll = false) {
-    const choice = ({id,label}, symbol) => `<button class="tree-choice" type="button"
-      data-org="${escape(id)}" aria-pressed="false">${icon(symbol)}<span>${escape(label)}</span>
-      <span data-chosen aria-hidden="true">✓</span></button>`;
-    const toggle = (key, label, expanded, symbol) => `<button class="tree-toggle${symbol ? ' tree-branch-label' : ''}" type="button"
-      data-tree-toggle="${escape(label)}" aria-label="${expanded ? '收起' : '展开'}${escape(label)}"
-      title="${expanded ? '收起' : '展开'}${escape(label)}" aria-controls="${escape(id + '-' + key)}" aria-expanded="${expanded}">
-      ${icon('action-expand','icon tree-expander')}${symbol ? icon(symbol) + '<span>' + escape(label) + '</span>' : ''}</button>`;
-    const leaf = (item,symbol) => '<li class="tree-row tree-leaf"><span class="tree-toggle-space" aria-hidden="true"></span>' +
-      choice(item,symbol) + '</li>';
-    const branches = groups.map((department,index) => department.teams.length ? `<li class="tree-branch">
-      <div class="tree-row">${selectDepartments
-        ? toggle(department.id,department.label,index === 0) + choice(department,'nav-projects')
-        : toggle(department.id,department.label,index === 0,'nav-projects')}</div>
-      <ul class="tree-children" id="${escape(id + '-' + department.id)}"${index ? ' hidden' : ''}>
-        ${department.teams.map(team => leaf(team,'nav-team')).join('')}
-      </ul>
-    </li>` : leaf(department,'nav-projects')).join('');
-    return `<div class="dev-tree" role="group" aria-label="组织结构">
-      <div class="tree-surface tree-branch tree-root">
-        <div class="tree-tools" role="group" aria-label="分支显示">
-          <button class="tree-tool" type="button" data-tree-expand="true">展开全部</button>
-          <button class="tree-tool" type="button" data-tree-expand="false">收起全部</button>
-        </div>
-        <div class="tree-row tree-root-row">
-          ${includeAll ? toggle('root','全部组织',true) + choice({id:'all',label:'全部组织'},'nav-components')
-            : toggle('root','OmniRelay',true,'nav-components')}
-        </div>
-        <ul class="tree-children" id="${escape(id)}-root">${branches}</ul>
-      </div>
-      <p class="${includeAll ? 'sr-only' : 'aux tree-selection'}" data-org-selection role="status"></p>
-    </div>`;
+  function mountTree(host, { groups = departments, ...options } = {}) {
+    const nodes = groups.flatMap(group => [
+      { id:group.id, name:group.label },
+      ...group.teams.map(team => ({ id:team.id, name:team.label, parentId:group.id }))
+    ]);
+    return mountOrganizationTree(host, nodes, { includeAll:false, ...options });
   }
 
   function organizationPicker(id, name) {
@@ -176,7 +140,7 @@ window.OmniRelayDeveloper = (() => {
       panel('文本填写框', field('short-input','单行文本','<input id="short-input" type="text" placeholder="输入标题">') +
         field('long-input','多行文本','<textarea id="long-input" rows="3" placeholder="输入补充说明"></textarea>','field-stacked')) +
       panel('多行文本展示框', '<div class="multiline" tabindex="0">' + escape(note) + '</div>') +
-      panel('组织结构树', tree('organization-tree')) +
+      panel('组织结构树', '<div data-demo-tree></div>') +
       panel('组织选择框', organizationPicker('demo-organization','demo-organization')) +
       panel('人员单个展示', '<div class="person-examples">' + people.map(personView).join('') + '</div>') +
       panel('日期选择', field('date-demo','选择日期','<input id="date-demo" type="date" value="2026-11-18">')) +
@@ -446,10 +410,6 @@ window.OmniRelayDeveloper = (() => {
     }
   }
 
-  function mountTree(root, { entries = organizations, ...options } = {}) {
-    return OmniRelayUI.mountTree(root,{ entries, ...options });
-  }
-
   function mountOrganizationPicker(root) {
     const trigger = root.querySelector('[data-org-open]');
     const clear = root.querySelector('[data-org-clear]');
@@ -465,12 +425,12 @@ window.OmniRelayDeveloper = (() => {
     trigger.addEventListener('click',() => {
       let picker;
       const dialog = openDialog({
-        title:'选择组织', variant:'form', body:tree(trigger.id + '-tree',true), confirm:'确认选择',
+        title:'选择组织', variant:'form', body:'<div data-picker-tree></div>', confirm:'确认选择',
         onClose(confirmed) { if (confirmed) commit(picker.value()); },
         restoreFocus:() => trigger
       });
       const confirm = dialog.querySelector('[type="submit"]');
-      picker = mountTree(dialog.querySelector('.dev-tree'),{
+      picker = mountTree(dialog.querySelector('[data-picker-tree]'),{
         initialId:input.value,
         onChange() { confirm.disabled = false; }
       });
@@ -521,13 +481,15 @@ window.OmniRelayDeveloper = (() => {
   }
 
   function mount(page, view) {
+    const peopleDemo = page.querySelector('[data-person-name]')?.closest('.stack');
+    if (peopleDemo) mountPersonCards(peopleDemo);
     if (view === 'list') mountDemoList(page.querySelector('#developer-standard-list'),'dev-list',records);
     if (view === 'components') mountDemoList(page.querySelector('#developer-component-list'),'component-demo',componentRecords);
     page.querySelectorAll('[data-combo]').forEach(mountCombo);
     page.querySelectorAll('[data-editor]').forEach(mountRich);
     page.querySelectorAll('[data-markdown]').forEach(root => mountMarkdown(root));
     page.querySelectorAll('[data-date-mode]').forEach(mountStrip);
-    page.querySelectorAll('.dev-tree').forEach(root => mountTree(root));
+    page.querySelectorAll('[data-demo-tree]').forEach(root => mountTree(root,{ selectBranches:false }));
     page.querySelectorAll('[data-org-picker]').forEach(mountOrganizationPicker);
     page.querySelectorAll('[data-demo-drawer]').forEach(trigger => {
       trigger.addEventListener('click',() => openProjectDrawer(trigger));
@@ -577,5 +539,5 @@ window.OmniRelayDeveloper = (() => {
     form.addEventListener('reset',clearError);
   }
 
-  return { pages, render, mount, tree, mountTree, combo, mountCombo };
+  return { pages, render, mount, mountTree, combo, mountCombo };
 })();
