@@ -55,7 +55,8 @@ async function respond(request, response) {
     return fixture.signedIn ? json(response, 200, {
       principal: { account_id: 1, name: '测试账号', auth_method: fixture.method },
       csrf_token: fixture.csrfMissing ? '' : mockCSRF,
-      access: { admin: { feishu_bot: fixture.botAllowed }, roles: ['system_admin'] }
+      access: fixture.access ?? { admin: { feishu_bot: fixture.botAllowed }, roles: ['system_admin'], navigation: { workbench:true, system:fixture.botAllowed },
+        permissions: { 'system.operate':fixture.botAllowed }, default_route:'/#/workbench' }
     }) : json(response, 401, { error: 'unauthorized' });
   }
   if (path === '/api/v1/system/feishu-bot') {
@@ -169,6 +170,28 @@ test('取消与失败后刷新登录页，重试仍返回原 Bot 页', () => wit
   assert.equal(await page.evaluate(key => sessionStorage.getItem(key), storageKey), null);
 }, { reducedMotion: 'reduce' }));
 
+test('缺省能力拒绝访问，项目导航和操作点独立于角色名', () => withPage(async page => {
+  fixture.signedIn = true;
+  fixture.access = { roles:['system_admin'], admin:{feishu_bot:true} };
+  await page.goto(origin + '/' + botHash);
+  await page.getByText('当前账号没有可访问的页面。').waitFor();
+  assert.equal(fixture.botReads, 0);
+  fixture.access = {
+    roles:['system_operator'], admin:{feishu_bot:true}, navigation:{system:true,workbench:true},
+    default_route:'/#/system/feishu-bot', permissions:{'system.read':true}
+  };
+  await page.reload();
+  await page.locator('#bot-content').waitFor();
+  assert.equal(await page.locator('#bot-test').isVisible(), false);
+  assert.equal(await page.locator('#bot-form').isVisible(), false);
+  await page.goto(origin + '/#/workbench');
+  await page.getByRole('heading', {name:'工作台总览'}).waitFor();
+  fixture.access.navigation.workbench = false;
+  await page.reload();
+  await page.waitForURL('**/' + botHash);
+  assert.equal(await page.locator('#mobile-nav option[value=workbench]').evaluate(option => option.hidden), true);
+}));
+
 test('后退缓存页可重试且重新校验权限', () => withPage(async page => {
   await page.addInitScript(() => addEventListener('pageshow', event => {
     window.restoredFromCache = event.persisted;
@@ -183,18 +206,19 @@ test('后退缓存页可重试且重新校验权限', () => withPage(async page 
   await startFeishu(page);
   fixture.botAllowed = false;
   await page.getByRole('link', { name: 'success' }).click();
-  await page.getByText('当前账号没有访问此页面的权限。').waitFor();
+  await page.getByRole('heading', { name:'工作台总览' }).waitFor();
   assert.equal(fixture.botReads, 0);
   assert.deepEqual(fixture.redirects, ['/' + botHash, '/' + botHash]);
 
   fixture.botAllowed = true;
   await page.reload();
+  await page.goto(origin + '/' + botHash);
   await page.getByRole('button', { name: '测试连接' }).waitFor();
   await page.goto(origin.replace('127.0.0.1', 'localhost') + '/authorize');
   fixture.botAllowed = false;
   const readsBeforeBack = fixture.botReads;
   await page.goBack({ waitUntil: 'commit' });
-  await page.getByText('当前账号没有访问此页面的权限。').waitFor();
+  await page.getByRole('heading', { name:'工作台总览' }).waitFor();
   assert.equal(await page.evaluate(() => window.restoredFromCache), true);
   assert.equal(fixture.botReads, readsBeforeBack);
 }));
@@ -204,13 +228,13 @@ test('拒绝未知或外部目标，401 与退出后重新确认会话', () => w
     await page.goto(origin + '/#/login');
     await page.evaluate(([key, value]) => sessionStorage.setItem(key, value), [storageKey, target]);
     await startFeishu(page);
-    assert.equal(fixture.target, '/#/workbench');
+    assert.equal(fixture.target, '/');
     await page.getByRole('link', { name: 'cancelled' }).click();
   }
 
   await page.goto(origin + '/#/system/unknown');
   await startFeishu(page);
-  assert.equal(fixture.target, '/#/workbench');
+  assert.equal(fixture.target, '/');
   await page.getByRole('link', { name: 'cancelled' }).click();
 
   fixture.signedIn = true;

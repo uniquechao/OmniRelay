@@ -18,7 +18,7 @@ function syncFailure(reason, scopeHidden) {
   return '同步未完成，请检查飞书应用的通讯录授权和连接状态后重试。';
 }
 const activeRun = run => ['queued','running'].includes(run?.status);
-const scopes = { org:'组织级', project:'项目级' };
+const scopes = { system:'系统级', project:'项目级' };
 const eventKinds = { login:'身份认证', account:'用户管理', role:'角色授权', config:'系统配置', directory:'组织同步' };
 const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并' };
 const statusTone = status => status === 'active' ? 'success' : 'pending';
@@ -115,7 +115,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   if (!Object.hasOwn(titles,section)) throw new Error('未知的系统管理页面');
   const { escape, mountList, openDialog, toast } = window.OmniRelayUI;
   const usersPage = section === 'users';
-  const maySync = user?.adminCapabilities?.directory_sync ?? user?.roles?.includes('system_admin');
+  const canManageAccounts = user.permissions?.['account.manage'] === true;
+  const canManageRoles = user.permissions?.['role.manage'] === true;
+  const maySync = user.permissions?.['directory.sync'] === true;
   const ifUsers = html => usersPage ? html : '';
   const request = (path,options) => api(system + path, { signal, ...options });
   const userPath = id => '/users/' + encodeURIComponent(id);
@@ -218,7 +220,12 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const refresh = () => mounted.refresh();
   const findUser = id => rows.find(record => String(record.id) === id);
   const roleName = id => catalog.get(id)?.name ?? id;
-  const userRoles = record => [...new Set((record.roles ?? []).map(grant => roleName(grant.role)))];
+  const displayedRoles = record => [
+    ...(record.systemRoles ?? []).filter(id => !record.roles.some(grant => grant.role === id))
+      .map(id => ({ role:id, scope:'system', default:catalog.get(id)?.default === true })),
+    ...record.roles
+  ];
+  const userRoles = record => [...new Set(displayedRoles(record).map(grant => roleName(grant.role)))];
   const sourceOf = record => record.source || '—';
   const isCurrent = record => user?.id != null && String(user.id) === String(record.id);
   const badge = (tone,label) => '<span class="chip" data-tone="' + tone + '">' + escape(label) + '</span>';
@@ -231,7 +238,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     '<div><dt>' + escape(label) + '</dt><dd>' + (tone ? badge(tone,value) : escape(value ?? '—')) + '</dd></div>').join('') + '</dl>';
   const grantScopeLabel = (grant,record) => grant.scope === 'project'
     ? record.projects?.find(project => project.id === grant.project)?.name || grant.project || '项目'
-    : '本组织';
+    : grant.default ? '系统级 · 默认拥有' : record.status === 'disabled' ? '系统级 · 已停用' : '系统级';
   const focusAction = (key,id) => [...list.querySelectorAll('[data-admin-action]')].find(button =>
     button.dataset.adminAction === key && button.dataset.record === String(id)) ?? focusHeading();
 
@@ -253,7 +260,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         column('status','账号状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知') +
           (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : ''),record => record.status),
         column('actions','操作',record => '<div class="admin-actions">' + action('user',record.id,'查看') +
-          (!isCurrent(record) && ['active','disabled'].includes(record.status) ?
+          (canManageAccounts && !isCurrent(record) && ['active','disabled'].includes(record.status) ?
             action('toggle',record.id,record.status === 'active' ? '停用' : '启用',record.status === 'active') : '') + '</div>')
       ]
     };
@@ -262,9 +269,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       filters:[{ key:'scope', label:'授权范围', options:scopes }],
       columns:[
         column('name','角色名称',role => '<strong>' + escape(role.name) + '</strong>',role => role.name),
-        column('scope','范围',role => badge(role.scope === 'org' ? 'progress' : 'important',scopes[role.scope]),role => scopes[role.scope]),
+        column('scope','范围',role => badge(role.scope === 'system' ? 'progress' : 'important',scopes[role.scope]),role => scopes[role.scope]),
         column('permissions','权限摘要',role => escape(role.permissions[0] ?? '—'),null,true),
-        column('grants','授权数',role => escape(role.count ?? '—'),role => role.count ?? -1),
+        column('grants','授权数',role => role.default ? '默认拥有 · ' + escape(role.count) + ' 人' : escape(role.count ?? '—'),role => role.count ?? -1),
         column('actions','操作',role => action('role',role.id,'查看权限'))
       ]
     };
@@ -471,10 +478,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       async change() {
         await request(userPath(record.id), { method:'PATCH', body:{ status } });
         if (!inPage()) return;
-        record.status = status;
-        const current = findUser(String(record.id));
-        if (current) current.status = status;
-        refresh();
+        await refreshUsers();
         toast('success',record.name + '的账号' + statuses[status] + '。');
       }
     });
@@ -487,18 +491,18 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   function showUser(record) {
     const unprovisioned = record.status === 'unprovisioned';
     let replacementDrawer = false;
-    const canProvision = unprovisioned && record.directoryStatus === 'active';
+    const canProvision = canManageAccounts && unprovisioned && record.directoryStatus === 'active';
     const provision = canProvision ? '<div class="user-grant-tools">' +
       '<button class="button primary" type="button" data-admin-action="provision">开通账号</button></div>' : '';
-    const content = () => (record.roles ?? []).length ? '<ul class="admin-grants">' + record.roles.map(grant =>
+    const content = () => displayedRoles(record).length ? '<ul class="admin-grants">' + displayedRoles(record).map(grant =>
       '<li><div class="user-grant-label"><strong>' + escape(roleName(grant.role)) + '</strong>' +
-      '<small class="user-grant-scope" data-scope="' + (grant.scope === 'project' ? 'project' : 'org') + '">' + escape(grantScopeLabel(grant,record)) +
-      '</small></div>' + (!isCurrent(record) || grant.role !== 'admin' ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
+      '<small class="user-grant-scope" data-scope="' + (grant.scope === 'project' ? 'project' : 'system') + '">' + escape(grantScopeLabel(grant,record)) +
+      '</small></div>' + (canManageRoles && grant.id && catalog.get(grant.role)?.grantable === true && (!isCurrent(record) || grant.role !== 'system_admin') ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
       '</ul>' : '<p class="aux">' + (record.status === 'unprovisioned' ?
         '飞书目录人员尚未开通账号。开通后可在此授予角色。' : '当前无角色授权。') + '</p>';
-    const roleOptions = options([...catalog.values()].filter(role => role.grantable !== false)
+    const roleOptions = options([...catalog.values()].filter(role => role.grantable === true && !role.default)
       .map(role => [role.id,role.name + ' · ' + scopes[role.scope]]),'选择角色');
-    const editor = record.status === 'active' ? '<div class="user-grant-tools">' +
+    const editor = canManageRoles && record.status === 'active' ? '<div class="user-grant-tools">' +
       '<button class="button" type="button" data-admin-action="add-role" aria-expanded="false" aria-controls="user-grant-editor">' +
       '<span aria-hidden="true">＋</span> 添加角色</button></div>' +
       '<div class="user-grant-editor" id="user-grant-editor" hidden>' +
@@ -553,7 +557,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       const role = catalog.get(roleField?.value);
       const project = role?.scope === 'project' ? scopeField.value : '';
       const invalid = (field,message) => ({ error:{ field,message } });
-      if (!role || role.grantable === false) return invalid(roleField,'请选择可授权的角色。');
+      if (!role || role.grantable !== true || role.default) return invalid(roleField,'请选择可授权的角色。');
       if (role.scope === 'project' && !project) {
         return scopeField.disabled ? invalid(roleField,'该用户没有可授权的项目。') : invalid(scopeField,'请选择项目。');
       }
@@ -598,7 +602,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       try {
         await refreshUsers();
         if (!dialog.open) return;
-        record.roles = findUser(String(record.id))?.roles ?? [];
+        const updated = findUser(String(record.id));
+        record.roles = updated?.roles ?? [];
+        record.systemRoles = updated?.systemRoles ?? [];
         grantBody.innerHTML = content();
       } catch (error) {
         if (dialog.open && inPage()) {
@@ -698,7 +704,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   function showRole(role,trigger) {
     showDialog({
       title:'角色权限', description:role.name, drawer:'standard', tone:'info', restoreFocus:() => trigger.isConnected ? trigger : focusHeading(),
-      body:group('授权范围',details([['范围',scopes[role.scope]],['适用条件',role.condition ?? role.boundary]])) +
+      body:group('授权范围',details([['范围',scopes[role.scope]],['授权方式',role.default ? '默认拥有' : role.grantable ? '手动授权' : '由项目成员关系确定']])) +
         group('可执行操作','<ul class="admin-permissions">' + role.permissions.map(item => '<li>' + escape(item) + '</li>').join('') + '</ul>')
     });
   }
@@ -882,7 +888,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     list.innerHTML = '<p class="empty" role="status">加载中…</p>';
     try {
       if (usersPage) {
-        replaceCatalog(await request('/roles'));
+        replaceCatalog(await request('/role-catalog'));
         if (!inPage()) return;
         await refreshUsers();
       } else {
@@ -904,7 +910,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     if (!record) return;
     switch (trigger.dataset.adminAction) {
       case 'user': showUser(record); break;
-      case 'toggle': toggleUser(record,trigger); break;
+      case 'toggle': if (canManageAccounts) toggleUser(record,trigger); break;
       case 'role': showRole(record,trigger); break;
       case 'event': showEvent(record,trigger); break;
     }
@@ -922,5 +928,5 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     updateSyncControls();
     void readSync();
   }
-  return { confirmNavigation };
+  return { confirmNavigation, hasDraft:() => Boolean(userDrawer?.dirty()) };
 }
