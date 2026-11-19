@@ -1,6 +1,6 @@
 # 飞书跨角色验收矩阵与预发布准备
 
-本清单对应 [目标契约](feishu-integration-contract.md) 与[工程标准](feishu-integration-standards.md)。本 issue 完成契约固定与离线样例验证；平台与真实服务验收由实现负责人及最终联调执行，不能以样例通过替代。以下未执行的预发布项统一为“待验证”，不作为契约开发的硬阻塞。
+本清单对应目标契约与工程标准。系统角色的本地联调记录见下节。标为「待验证」的预发布场景仍需在对应环境执行。 [目标契约](feishu-integration-contract.md) · [工程标准](feishu-integration-standards.md)
 
 ## 角色与接口矩阵
 
@@ -16,6 +16,27 @@
 | 前端入口和直达路由 | 按 access.admin.feishu_bot 展示并逐请求鉴权 | 可看可测，不能启停 | 无入口，直达显示无权 | 转登录 | 前端 |
 
 所有 POST/PATCH 的同源 Origin、有效 CSRF 为必要条件，正例与缺失/错误各自覆盖。PATCH 必须带当前强 If-Match；检测必须带合法 Idempotency-Key。`tests/fixtures/feishu/http-matrix.json` 为可重放输入，覆盖 200/202/400/401/403/404/409/412/428。真实适配器先为对应账号获取会话与 CSRF，再将 same/cross/absent、valid/invalid/absent 转成实际请求头；同一行同时比较状态、错误正文、ETag 和持久化副作用。请求体的 malformed JSON、重复头、多 ETag 及非法字段也应由后端 HTTP 测试补充，不应由 mock 宣称通过。
+
+## 系统角色联调记录
+
+在系统已合入前后端依赖的分支上，用真实 Go HTTPS 服务、嵌入的正式前端、Chromium 和隔离 PostgreSQL 16 验证了五个独立账号。飞书出站使用测试替身，项目权限通过注入的权威测试适配器解析。预发布飞书连接和线上项目权限源的状态仍以各自环境的验收记录为准。
+
+| 验证范围 | 通过的场景 |
+| --- | --- |
+| 系统角色矩阵 | 普通用户、系统管理员、系统运维者、审计查看者和运维叠加正式项目授权的 `/me` 能力、默认落点、桌面及移动导航。运维者可同步和提交 Bot 检测，账号管理、系统授权和 Bot 保存按能力隐藏并由服务端拒绝。 |
+| 兼容与默认角色 | `/me` 旧字段、角色目录、账号字段及原账号和授权接口。五个启用账号的默认角色计数在停用和恢复时由 5 变 4 再回到 5。系统和项目范围过滤分别展示四项和两项，数据库中无自动角色授权行。 |
+| 写入和会话 | 授予、撤权、停用、恢复、最后管理员保护、并发授权与停用、并发管理员停用、权限版本及事务审计。有效会话越权返回 403，失效会话返回 401，不可读的授权返回 404，最后管理员冲突返回 409。 |
+| 项目隔离 | 系统角色本身无法取得项目数据或委派权限。使用项目权威适配器验证成员关系、派单能力、项目授权接口、成员重入和委派代次。权限源报错时项目写入失败。 |
+| 浏览器与回跳 | 桌面 1366×900、移动 390×844、直达、后退和前进、密码登录恢复有权路由及撤权后回落。Go OAuth 回调配合飞书替身验证取消、拒绝、暂不可用、成功和退出。撤权后同一浏览器的两个标签页在恢复焦点时退出。 |
+| 联调修复 | 另一标签页切换共享会话后，旧标签页的个人信息弹窗仍显示原账号。会话刷新发现账号或能力变化时先清理弹窗和浮层，再渲染当前账号与路由。回归在修复前复现，修复后通过。 |
+
+复现时将 `OMNIRELAY_TEST_DATABASE_URL` 和 `OMNIRELAY_IDENTITY_TEST_DSN` 指向专用 PostgreSQL 测试实例。浏览器用例需 Node.js、Playwright 和 Chromium。将 `OMNIRELAY_PLAYWRIGHT_MODULE` 设为 Playwright 模块路径，使用已配置的 Playwright Chromium，或通过 `OMNIRELAY_CHROME` 指定可执行文件。测试自动创建并清理各自的 schema。多标签页在无头环境中触发页面的焦点事件来运行应用的会话刷新逻辑，浏览器、会话请求和后端均真实运行。
+
+```sh
+go test -count=1 -v ./cmd/omnirelay -run 'Test(SystemRolesBrowser|BackendFeishuBrowser|BackendFeishuAdmissionAndRevocation|FeishuBotManagement)$'
+go test -count=1 -v ./internal/access ./internal/identity -run 'Test(AuthorizationUsesCurrentAccountAndProjectMembership|RoleRevocationAndDisableProtectLastAdmin|ProjectDelegationStopsWhenMembershipEnds|DirectorySyncAuthorizesAgainstSerializedRoleChanges|SystemRoleCatalogAndEffectiveRoles|ConcurrentSystemGrantAndAccountDisable|OAuthSessionLifecycleWithPostgres|PasswordSessionLifecycle)$'
+node --test tests/contract/directory_client.test.mjs tests/contract/feishu_bot_client.test.mjs
+```
 
 ## 跨链路与故障验收
 
