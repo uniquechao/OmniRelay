@@ -268,6 +268,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, message = http.StatusForbidden, "permission denied"
 	case errors.Is(err, errNotFound):
 		status, message = http.StatusNotFound, "resource not found"
+	case errors.Is(err, errAccountResigned):
+		status, message = http.StatusConflict, "account_resigned"
 	case errors.Is(err, errLastAdmin), errors.Is(err, errDuplicateGrant), errors.Is(err, errDuplicateAccount):
 		status, message = http.StatusConflict, err.Error()
 	}

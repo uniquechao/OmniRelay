@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
@@ -28,6 +29,7 @@ type Config struct {
 
 type Service struct {
 	db     *pgxpool.Pool
+	access *access.Service
 	cfg    Config
 	client *http.Client
 	wake   chan struct{}
@@ -62,7 +64,7 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 		}
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Service{db: pool, cfg: cfg, client: &client, wake: make(chan struct{}, 1)}, nil
+	return &Service{db: pool, access: access.New(pool, cfg.TenantKey, cfg.AppID), cfg: cfg, client: &client, wake: make(chan struct{}, 1)}, nil
 }
 
 func (s *Service) sameSource(p identity.Principal) bool {
@@ -167,7 +169,7 @@ func (s *Service) runClaim(ctx context.Context, job claim) {
 	defer cancel()
 	result, err := s.collect(workCtx, func(authorization scope, departments, people int) error {
 		return s.recordProgress(workCtx, job, authorization, departments, people)
-	})
+	}, s.verifyDepartures)
 	if err == nil {
 		err = s.publish(workCtx, job, result)
 		if err != nil && !errors.Is(err, errLostClaim) && ctx.Err() == nil {
@@ -261,11 +263,12 @@ func (s *Service) failClaim(ctx context.Context, job claim, reason string, revok
 }
 
 func (s *Service) publish(ctx context.Context, job claim, result snapshot) error {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
+	return s.access.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+		return s.publishSnapshot(ctx, tx, job, result)
+	})
+}
+
+func (s *Service) publishSnapshot(ctx context.Context, tx pgx.Tx, job claim, result snapshot) error {
 	if err := s.lockClaim(ctx, tx, job); err != nil {
 		return err
 	}
@@ -297,7 +300,7 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 		return err
 	}
 	scopeJSON, _ := json.Marshal(result.Scope.summary())
-	_, err = tx.Exec(ctx, `WITH people AS (
+	_, err := tx.Exec(ctx, `WITH people AS (
 		SELECT p.open_id,p.name,p.avatar_url,p.directory_status,p.snapshot_version=$3 AS incoming,
 			(SELECT jsonb_agg(jsonb_build_array(m.department_id,d.path) ORDER BY m.department_id)
 				FROM department_memberships m JOIN departments d
@@ -327,6 +330,12 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 	if err != nil {
 		return err
 	}
+	if err := s.updateRoster(ctx, tx, job.id, result); err != nil {
+		return err
+	}
+	if err := s.access.ReclaimDepartedAccounts(ctx, tx, job.id); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, `UPDATE directory_sources SET active_version=$3,active_scope_hash=$4,visible=true,
 		last_success_at=statement_timestamp(),failures=0,next_run_at=statement_timestamp()+($5::double precision * interval '1 second')
 		WHERE tenant_key=$1 AND app_id=$2`, tenant, app, job.id, result.Scope.hash(), s.cfg.Interval.Seconds())
@@ -349,5 +358,5 @@ func (s *Service) publish(ctx context.Context, job claim, result snapshot) error
 	if finished.RowsAffected() != 1 {
 		return errLostClaim
 	}
-	return tx.Commit(ctx)
+	return nil
 }

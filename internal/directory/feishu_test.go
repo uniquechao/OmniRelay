@@ -73,7 +73,7 @@ func TestCollectRetainsOnlyVerifiedHierarchyAndDeduplicatesPeople(t *testing.T) 
 		}
 		fmt.Fprintf(w, `{"code":0,"data":%s}`, data)
 	})
-	result, err := service.collect(context.Background(), func(scope, int, int) error { return nil })
+	result, err := service.collect(context.Background(), func(scope, int, int) error { return nil }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestCollectRejectsRepeatedScopePage(t *testing.T) {
 	_, err := service.collect(context.Background(), func(scope, int, int) error {
 		t.Error("incomplete permission scope reached persistence")
 		return nil
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected incomplete snapshot error")
 	}
@@ -116,7 +116,7 @@ func TestCollectRejectsScopeChangesDuringRead(t *testing.T) {
 		}
 		fmt.Fprint(w, `{"code":0,"data":{"department_ids":["new-root"],"has_more":false}}`)
 	})
-	if _, err := service.collect(context.Background(), func(scope, int, int) error { return nil }); err == nil {
+	if _, err := service.collect(context.Background(), func(scope, int, int) error { return nil }, nil); err == nil {
 		t.Fatal("expected changing authorization scope to discard the snapshot")
 	}
 }
@@ -155,7 +155,7 @@ func TestCollectRejectsMissingOrNullPageItems(t *testing.T) {
 						w.WriteHeader(http.StatusBadRequest)
 					}
 				})
-				_, err := service.collect(context.Background(), func(scope, int, int) error { return nil })
+				_, err := service.collect(context.Background(), func(scope, int, int) error { return nil }, nil)
 				if err == nil {
 					t.Fatal("malformed page was accepted as an empty page")
 				}
@@ -234,7 +234,7 @@ func TestCollectRejectsInconsistentPages(t *testing.T) {
 					w.WriteHeader(http.StatusNotFound)
 				}
 			})
-			if _, err := service.collect(context.Background(), func(scope, int, int) error { return nil }); err == nil {
+			if _, err := service.collect(context.Background(), func(scope, int, int) error { return nil }, nil); err == nil {
 				t.Fatal("inconsistent directory was accepted")
 			}
 		})

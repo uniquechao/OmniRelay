@@ -16,8 +16,8 @@ func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != 8 {
-		t.Fatalf("expected eight migrations, got %d", len(versions))
+	if len(versions) != 9 {
+		t.Fatalf("expected nine migrations, got %d", len(versions))
 	}
 	for i, change := range versions {
 		if change.version != i+1 || len(change.digest) != 64 || change.sql == "" {
@@ -69,8 +69,8 @@ func TestApplyAndCheckPostgreSQL(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM omnirelay_schema_migrations").Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 8 {
-		t.Fatalf("expected eight applied migrations, got %d", n)
+	if n != 9 {
+		t.Fatalf("expected nine applied migrations, got %d", n)
 	}
 }
 
@@ -124,6 +124,14 @@ func TestFeishuBotUpgradeFromPasswordSchema(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO accounts (tenant_key,app_id,open_id) VALUES ('tenant','app','ou_existing')"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO directory_sources (tenant_key,app_id) VALUES ('tenant','app');
+		INSERT INTO directory_sync_runs (tenant_key,app_id,trigger,state) VALUES ('tenant','app','initial','succeeded');
+		UPDATE directory_sources SET active_version=(SELECT id FROM directory_sync_runs),active_scope_hash='scope',visible=true;
+		INSERT INTO directory_people (tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status)
+		SELECT tenant_key,app_id,id,'ou_existing','Existing','','active' FROM directory_sync_runs
+		UNION ALL SELECT tenant_key,app_id,id,'ou_previously_resigned','Resigned','','resigned' FROM directory_sync_runs;`); err != nil {
+		t.Fatal(err)
+	}
 	if err := Apply(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -138,4 +146,14 @@ func TestFeishuBotUpgradeFromPasswordSchema(t *testing.T) {
 	if accounts != 1 || botConfigs != 0 {
 		t.Fatalf("unexpected upgrade state: %d accounts, %d Bot configurations", accounts, botConfigs)
 	}
+	var roster, current int
+	if err := pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (
+		WHERE open_id='ou_existing' AND last_scope_hash='scope' AND resigned_at IS NULL)
+		FROM directory_roster WHERE tenant_key='tenant' AND app_id='app'`).Scan(&roster, &current); err != nil {
+		t.Fatal(err)
+	}
+	if roster != 1 || current != 1 {
+		t.Fatalf("unexpected backfilled roster: %d people, %d current", roster, current)
+	}
+
 }

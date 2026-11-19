@@ -20,7 +20,7 @@ function syncFailure(reason, scopeHidden) {
 const activeRun = run => ['queued','running'].includes(run?.status);
 const scopes = { system:'系统级', project:'项目级' };
 const eventKinds = { login:'身份认证', account:'用户管理', role:'角色授权', config:'系统配置', directory:'组织同步' };
-const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并' };
+const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并', protected:'最后一位管理员保护' };
 const statusTone = status => status === 'active' ? 'success' : 'pending';
 const dateFormat = new Intl.DateTimeFormat('sv-SE', {
   timeZone:'Asia/Singapore', year:'numeric', month:'2-digit', day:'2-digit',
@@ -258,9 +258,11 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         column('org','组织',record => escape(record.org || '—'),record => record.org || '',true),
         column('roles','角色',record => escape(userRoles(record).join('、') || '未授权'),null,true),
         column('status','账号状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知') +
-          (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : ''),record => record.status),
+          (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : '') +
+          (record.disableProtected ? '<small class="admin-cell-sub">最后一位管理员保护</small>' : ''),record => record.status),
         column('actions','操作',record => '<div class="admin-actions">' + action('user',record.id,'查看') +
-          (canManageAccounts && !isCurrent(record) && ['active','disabled'].includes(record.status) ?
+          (canManageAccounts && !isCurrent(record) &&
+            (record.status === 'active' || (record.status === 'disabled' && !record.resignedAt)) ?
             action('toggle',record.id,record.status === 'active' ? '停用' : '启用',record.status === 'active') : '') + '</div>')
       ]
     };
@@ -525,7 +527,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       body:group('账号信息',details([
         ['账号编号',record.status === 'unprovisioned' ? '尚未开通' : record.id],['所属组织',record.org || '—'],
         ['身份来源',sourceOf(record)],['账号状态',statuses[record.status] ?? '未知',statusTone(record.status)],
-        ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : [])
+        ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : []),
+        ...(record.resignedAt ? [['离职确认时间',showTime(record.resignedAt) + ' (UTC+08:00)']] : []),
+        ...(record.disableProtected ? [['停用保护','同步尝试停用时，该账号是最后一位已启用的系统管理员。转交权限后可停用。']] : [])
       ]) + provision) + group('角色授权','<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
       isDirty:() => dirty(),
       onClose() {
@@ -726,7 +730,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       title:'审计详情', description:entry.id, drawer:'wide', tone:'info', restoreFocus:() => trigger.isConnected ? trigger : focusHeading(),
       body:group('事件信息',details([
         ['操作时间',showTime(entry.time) + ' (UTC+08:00)'],['操作者',entry.actor],['事件类型',eventKinds[entry.kind] ?? entry.kind],
-        ['操作',entry.action],['对象',entry.target],['结果',eventResults[entry.result] ?? entry.result]
+        ['操作',entry.action],['对象',entry.target],['结果',eventResults[entry.result] ?? entry.result],
+        ...(entry.directorySyncRunId ? [['同步批次',entry.directorySyncRunId]] : [])
       ])) + group('变更摘要','<div class="admin-diff">' + details([['变更前',entry.before || '—'],['变更后',entry.after || '—']]) + '</div>')
     });
   }
