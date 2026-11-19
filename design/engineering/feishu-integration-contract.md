@@ -94,7 +94,7 @@ POST `/api/v1/system/feishu-bot/checks` 使用 `system.operate`，须通过 Orig
 5. `OMNIRELAY_FEISHU_CREDENTIALS_GENERATION=1` 是非敏感、单调递增的部署版本字符串，轮换 App Secret 时所有副本原子更新并递增，不使用秘密值或其哈希。新键仅合并当前代次活动任务；旧键仍回原 ID。读取、领取、续租和提交必须核对代次，禁止旧代次任务更新当前状态。旧活动任务由协调/租约恢复终结为 failed，失败码为 provider_temporarily_unavailable；不新增 cancelled 检测状态。
 6. 同键不同指纹返回 409 `idempotency_conflict`，不得覆盖绑定。当前合法正文只有 `{}`，非法正文先返回 400，因此该冲突主要是后续协议扩展的防护，不将非法正文改报 409。并发键绑定与活动任务唯一性依靠数据库事务，不能只用内存缓存。
 
-部署样例在 `config/backend.env.example`。服务启动前，以独立迁移角色运行 `omnirelay migrate` 应用迁移至 `0006_feishu_inbox.sql`。App ID 和租户标识用于隔离数据，必须配置。缺少 App Secret 时，已有本地账号仍可管理 Bot，检测返回 `credentials_missing`，飞书登录和目录同步需要有效凭据。配置变更写入 `feishu_bot.configure` 审计事件，包含操作者、应用资源和变更版本。
+部署样例在 `config/backend.env.example`。服务启动前，以独立迁移角色运行 `omnirelay migrate` 应用当前嵌入迁移，包括 `0009_directory_roster.sql`。App ID 和租户标识用于隔离数据，必须配置。缺少 App Secret 时，已有本地账号仍可管理 Bot，检测返回 `credentials_missing`，飞书登录和目录同步需要有效凭据。配置变更写入 `feishu_bot.configure` 审计事件，包含操作者、应用资源和变更版本。
 
 数据库拒绝旧凭据代次重新启用。检测任务的领取租约为 30 秒，Worker 完成令牌阶段后续租。异常退出后，同一代次的实例可在租约过期后重新领取。配置变更及凭据换代会清除当前连接的心跳和收信时间。幂等窗口固定为 24 小时。
 
@@ -128,7 +128,11 @@ OAuth：仅浏览器绑定、state 有效且原子消费成功的事务可 303 �
 
 部门查询省略 `parent_id` 或传 `0` 时返回可见树顶层，传实际 ID 时只返回直属子部门。人员查询省略 `department_id` 或传 `0` 时返回整个可见目录，含直接授权且无可见部门的人员。传实际 ID 时默认筛选直属人员，`include_descendants=true` 才包含下级。筛选命中后仍返回该人员的全部可见部门路径。分页排序为不区分大小写的姓名或部门名，同名以对应 ID 排序，`total` 表示筛选后、分页前的条数。
 
-例如 `GET /departments?parent_id=0&limit=1` 得到 `snapshot_version=42` 后，可以用 `GET /people?department_id=od-example&limit=1&snapshot_version=42` 读取同版，再加 `offset=1` 读取下一页。快照被隐藏或替换后，这两个集合携带旧版本均返回 `409 {"error":"directory_snapshot_changed"}`。目录缺失数表示同范围下未再观察到的人员，范围外计数表示授权集合变化后未再观察到的人员。两项均是快照比较结果。人员返回 `resigned` 需要飞书显式给出 `status.is_resigned=true`。
+例如 `GET /departments?parent_id=0&limit=1` 得到 `snapshot_version=42` 后，可以用 `GET /people?department_id=od-example&limit=1&snapshot_version=42` 读取同版，再加 `offset=1` 读取下一页。快照被隐藏或替换后，这两个集合携带旧版本均返回 `409 {"error":"directory_snapshot_changed"}`。目录缺失数表示同范围下未再观察到的人员，范围外计数表示授权集合变化后未再观察到的人员。两项均是快照比较结果。`GET /people` 只投影当前可见快照，`resigned` 来自飞书的 `status.is_resigned=true`。缺失人员的确认结果写入持久化在册记录。
+
+`GET /api/v1/system/accounts` 对已确认离职的账号追加 `directoryStatus: "resigned"` 和 RFC 3339 `resignedAt`。账号受最后管理员保护时追加 `disableProtected: true`。这些字段沿用 `account.read`，当前目录路径通过 `directory.read` 查询可见快照。已确认离职的停用账号在重新同步为在册前，启用请求返回 `409 {"error":"account_resigned"}`。重新同步为在册后清除这些字段，本地启用仍须管理员操作。
+
+`GET /api/v1/system/audit-events` 中，系统触发的 `directory.resign`、`account.disable`、`account.disable_protected` 带 `directorySyncRunId`，其 `actorAccountId` 为空字符串。离职事件对象使用 `directory_person` 和现有 `person_key`，停用及保护事件对象使用本地账号 ID，保护事件结果为 `protected`。账号实际停用时记录新权限版本，同一离职事件的重复同步沿用原确认时间。
 
 ## 验证边界
 

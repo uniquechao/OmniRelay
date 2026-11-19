@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/migrations"
 )
 
 func TestAuthorizationUsesCurrentAccountAndProjectMembership(t *testing.T) {
@@ -248,14 +249,8 @@ func testPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	for _, name := range []string{"0001_identity.sql", "0002_access.sql", "0003_directory.sql"} {
-		migration, err := os.ReadFile("../../migrations/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, string(migration)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
+	if err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
 	}
 	return ctx, pool
 }

@@ -91,10 +91,12 @@ type contactDepartment struct {
 }
 
 type snapshot struct {
-	Scope       scope
-	Departments map[string]department
-	People      map[string]contactPerson
-	Members     map[string]map[string]bool
+	Scope           scope
+	Departments     map[string]department
+	People          map[string]contactPerson
+	Members         map[string]map[string]bool
+	Departures      []string
+	MissingExplicit map[string]bool
 }
 
 type upstreamError struct {
@@ -353,7 +355,9 @@ func personIDs() url.Values {
 	return ids
 }
 
-func (s *Service) collect(ctx context.Context, progress func(scope, int, int) error) (snapshot, error) {
+func (s *Service) collect(ctx context.Context, progress func(scope, int, int) error,
+	verifyDepartures func(context.Context, *collector, *snapshot) error,
+) (snapshot, error) {
 	if s.cfg.AppSecret == "" {
 		return snapshot{}, errors.New("Feishu credentials are missing")
 	}
@@ -381,12 +385,17 @@ func (s *Service) collect(ctx context.Context, progress func(scope, int, int) er
 	if err := progress(authorization, 0, 0); err != nil {
 		return snapshot{}, err
 	}
-	result := snapshot{Scope: authorization, Departments: map[string]department{}, People: map[string]contactPerson{}, Members: map[string]map[string]bool{}}
+	result := snapshot{Scope: authorization, Departments: map[string]department{}, People: map[string]contactPerson{}, Members: map[string]map[string]bool{}, MissingExplicit: map[string]bool{}}
 	if err := f.readDepartments(ctx, &result); err != nil {
 		return snapshot{}, err
 	}
 	if err := f.readPeople(ctx, &result, progress); err != nil {
 		return snapshot{}, err
+	}
+	if verifyDepartures != nil {
+		if err := verifyDepartures(ctx, &f, &result); err != nil {
+			return snapshot{}, err
+		}
 	}
 	verified, err := f.readScope(ctx)
 	if err != nil {
@@ -576,16 +585,15 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		if _, found := result.People[id]; found {
 			continue
 		}
-		var reply struct {
-			User contactPerson `json:"user"`
+		person, err := f.readPerson(ctx, id)
+		if userDoesNotExist(err) {
+			result.MissingExplicit[id] = true
+			continue
 		}
-		if err := f.get(ctx, "/users/"+id, personIDs(), &reply); err != nil {
+		if err != nil {
 			return err
 		}
-		if reply.User.ID != id {
-			return errors.New("unexpected Feishu person")
-		}
-		if err := merge(reply.User, ""); err != nil {
+		if err := merge(person, ""); err != nil {
 			return err
 		}
 		if err := progress(result.Scope, departmentsRead, len(result.People)); err != nil {
@@ -600,4 +608,23 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 		}
 	}
 	return nil
+}
+
+func (f *collector) readPerson(ctx context.Context, id string) (contactPerson, error) {
+	var reply struct {
+		User contactPerson `json:"user"`
+	}
+	if err := f.get(ctx, "/users/"+id, personIDs(), &reply); err != nil {
+		return contactPerson{}, err
+	}
+	if reply.User.ID != id {
+		return contactPerson{}, errors.New("unexpected Feishu person")
+	}
+	return reply.User, nil
+}
+
+func userDoesNotExist(err error) bool {
+	var upstream upstreamError
+	return errors.As(err, &upstream) && upstream.code == 40007 &&
+		(upstream.status == http.StatusBadRequest || upstream.status == http.StatusOK)
 }

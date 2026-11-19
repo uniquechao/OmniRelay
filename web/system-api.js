@@ -58,7 +58,9 @@ function directoryFields(person, account) {
     personKey: person?.person_key ?? account?.personKey,
     departmentIds: [...new Set(departments.map(item => item.id))],
     org: departments.map(item => item.path.join(' / ')).join('；'),
-    directoryStatus: person?.directory_status
+    directoryStatus: person?.directory_status ?? account?.directoryStatus,
+    resignedAt: account?.resignedAt,
+    disableProtected: account?.disableProtected === true
   };
 }
 
@@ -117,7 +119,8 @@ const auditActions = new Map([
   ['identity.login', '登录'], ['identity.logout', '退出'], ['identity.password_change', '修改密码'],
   ['account.preauthorize', '开通飞书账号'], ['account.enable', '启用账号'], ['account.disable', '停用账号'],
   ['role.bootstrap', '初始化管理员'], ['role.grant', '授予角色'], ['role.revoke', '撤销角色'],
-  ['directory.sync', '同步组织和用户']
+  ['directory.sync', '同步组织和用户'], ['directory.resign', '确认人员离职'],
+  ['account.disable_protected', '保留最后一位管理员账号']
 ]);
 const eventKinds = new Map([
   ['identity', 'login'], ['account', 'account'], ['role', 'role'], ['directory', 'directory']
@@ -128,7 +131,8 @@ async function listAudit(api, options) {
   return events.map(event => ({
     id: String(event.id),
     time: event.createdAt,
-    actor: event.actorAccountId,
+    actor: event.directorySyncRunId ? '系统（飞书通讯录同步）' : event.actorAccountId,
+    directorySyncRunId: event.directorySyncRunId,
     kind: eventKinds.get(event.action.split('.')[0]) ?? 'config',
     action: auditActions.get(event.action) ?? event.action,
     target: event.resourceId,
@@ -249,6 +253,7 @@ const writeErrors = new Map([
   ['permission denied', '当前账号没有执行此操作的权限。'],
   ['resource not found', '记录不可用，请刷新后重试。'],
   ['at least one active system administrator is required', '系统必须保留至少一位已启用的管理员。'],
+  ['account_resigned', '飞书目录仍显示已离职。人员重新同步为在册后可启用账号。'],
   ['account already exists', '该用户的账号已开通，请刷新列表。'],
   ['role grant already exists', '该用户已有相同范围的角色授权。'],
   ['directory_unavailable', '飞书目录暂不可用，请稍后重试。']

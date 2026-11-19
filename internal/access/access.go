@@ -26,6 +26,7 @@ var (
 	ErrBootstrapRequired = errors.New("bootstrap administrator is required")
 	ErrForbidden         = errors.New("permission denied")
 	errNotFound          = errors.New("resource not found")
+	errAccountResigned   = errors.New("departed account cannot be enabled")
 	errLastAdmin         = errors.New("at least one active system administrator is required")
 	errDuplicateGrant    = errors.New("role grant already exists")
 	errDuplicateAccount  = errors.New("account already exists")
@@ -90,7 +91,7 @@ func (s *Service) inScope(p identity.Principal) bool {
 
 // Bootstrap establishes the first system administrator once for this tenant and app.
 func (s *Service) Bootstrap(ctx context.Context, openID string) error {
-	return s.mutate(ctx, func(tx pgx.Tx) error {
+	return s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		var initialized bool
 		err := tx.QueryRow(ctx, `SELECT EXISTS (
 			SELECT 1 FROM access_bootstraps WHERE tenant_key=$1 AND app_id=$2
@@ -135,7 +136,9 @@ func (s *Service) Bootstrap(ctx context.Context, openID string) error {
 	})
 }
 
-func (s *Service) mutate(ctx context.Context, fn func(pgx.Tx) error) error {
+// WithOrganizationMutation serializes access writes before locking directory
+// sources or account rows, including when a directory worker publishes a run.
+func (s *Service) WithOrganizationMutation(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		if err := s.lockOrganization(ctx, tx); err != nil {
 			return err

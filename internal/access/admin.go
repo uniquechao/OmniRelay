@@ -10,22 +10,34 @@ import (
 )
 
 type Account struct {
-	ID          string    `json:"id"`
-	PersonKey   string    `json:"personKey"`
-	Name        string    `json:"name"`
-	AvatarURL   string    `json:"avatarUrl"`
-	Active      bool      `json:"active"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	SystemRoles []string  `json:"systemRoles"`
+	ID               string     `json:"id"`
+	PersonKey        string     `json:"personKey"`
+	Name             string     `json:"name"`
+	AvatarURL        string     `json:"avatarUrl"`
+	Active           bool       `json:"active"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	SystemRoles      []string   `json:"systemRoles"`
+	DirectoryStatus  string     `json:"directoryStatus,omitempty"`
+	ResignedAt       *time.Time `json:"resignedAt,omitempty"`
+	DisableProtected bool       `json:"disableProtected,omitempty"`
 }
 
-var accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + identity.FeishuPersonKeySQL("a.open_id") + ", " + systemGrantRoles
+var accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + identity.FeishuPersonKeySQL("a.open_id") + ", " + systemGrantRoles + ", " + resignationColumn
+
+// Read only the durable departure marker here. The directory API supplies
+// current directory fields under its separate read permission.
+const resignationColumn = `(SELECT r.resigned_at FROM directory_roster r
+	WHERE (r.tenant_key,r.app_id,r.open_id)=(a.tenant_key,a.app_id,a.open_id))`
 
 func scanAccount(row pgx.Row, extra ...any) (Account, error) {
 	var a Account
-	fields := []any{&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt, &a.PersonKey, &a.SystemRoles}
+	fields := []any{&a.ID, &a.Name, &a.AvatarURL, &a.Active, &a.CreatedAt, &a.UpdatedAt, &a.PersonKey, &a.SystemRoles, &a.ResignedAt}
 	err := row.Scan(append(fields, extra...)...)
+	if a.ResignedAt != nil {
+		a.DirectoryStatus = "resigned"
+		a.DisableProtected = a.Active
+	}
 	a.SystemRoles = effectiveSystemRoles(a.Active, a.SystemRoles)
 	return a, err
 }
@@ -44,7 +56,7 @@ func (s *Service) listAccounts(ctx context.Context, after string, limit int, act
 
 func (s *Service) preauthorizeAccount(ctx context.Context, actor identity.Principal, openID string) (Account, error) {
 	var account Account
-	err := s.mutate(ctx, func(tx pgx.Tx) error {
+	err := s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		if err := s.require(ctx, tx, actor, "account.manage", ""); err != nil {
 			return err
 		}
@@ -77,7 +89,7 @@ func (s *Service) preauthorizeAccount(ctx context.Context, actor identity.Princi
 
 func (s *Service) setAccountActive(ctx context.Context, actor identity.Principal, accountID string, active bool) (Account, error) {
 	var account Account
-	err := s.mutate(ctx, func(tx pgx.Tx) error {
+	err := s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		if err := s.require(ctx, tx, actor, "account.manage", ""); err != nil {
 			return err
 		}
@@ -90,28 +102,38 @@ func (s *Service) setAccountActive(ctx context.Context, actor identity.Principal
 		if err != nil || account.Active == active {
 			return err
 		}
-		if !active {
-			if err := s.protectLastAdmin(ctx, tx, accountID); err != nil {
-				return err
-			}
+		if active && account.ResignedAt != nil {
+			return errAccountResigned
 		}
 		var version int64
-		account, err = scanAccount(tx.QueryRow(ctx, `UPDATE accounts AS a
-			SET active=$2, updated_at=now(), permission_version=permission_version+1
-			WHERE id=$1 RETURNING `+accountColumns+`, permission_version`, accountID, active), &version)
+		account, version, err = s.changeAccountActive(ctx, tx, accountID, active)
 		if err != nil {
 			return err
 		}
-		action := "account.enable"
-		if !active {
-			action = "account.disable"
-			if err := revokeSessions(ctx, tx, accountID); err != nil {
-				return err
-			}
+		action := "account.disable"
+		if active {
+			action = "account.enable"
 		}
 		return s.audit(ctx, tx, actor.AccountID, action, "account", accountID, version)
 	})
 	return account, err
+}
+
+// changeAccountActive requires the organization lock and a locked account row.
+func (s *Service) changeAccountActive(ctx context.Context, tx pgx.Tx, accountID string, active bool) (Account, int64, error) {
+	if !active {
+		if err := s.protectLastAdmin(ctx, tx, accountID); err != nil {
+			return Account{}, 0, err
+		}
+	}
+	var version int64
+	account, err := scanAccount(tx.QueryRow(ctx, `UPDATE accounts AS a
+		SET active=$2, updated_at=now(), permission_version=permission_version+1
+		WHERE id=$1 RETURNING `+accountColumns+`, permission_version`, accountID, active), &version)
+	if err == nil && !active {
+		err = revokeSessions(ctx, tx, accountID)
+	}
+	return account, version, err
 }
 
 func (s *Service) protectLastAdmin(ctx context.Context, tx pgx.Tx, accountID string) error {
@@ -191,7 +213,7 @@ func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r gra
 		return RoleGrant{}, errInvalidInput
 	}
 	var grant RoleGrant
-	err := s.mutate(ctx, func(tx pgx.Tx) error {
+	err := s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		source := "platform_admin"
 		if r.ProjectID == "" {
 			if err := s.require(ctx, tx, actor, "role.manage", ""); err != nil {
@@ -262,7 +284,7 @@ func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r gra
 }
 
 func (s *Service) revokeRole(ctx context.Context, actor identity.Principal, grantID string) error {
-	return s.mutate(ctx, func(tx pgx.Tx) error {
+	return s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		if !s.inScope(actor) {
 			return errNotFound
 		}
@@ -314,20 +336,21 @@ func (s *Service) revokeRole(ctx context.Context, actor identity.Principal, gran
 }
 
 type AuditEvent struct {
-	ID             int64     `json:"id"`
-	ActorAccountID string    `json:"actorAccountId"`
-	Action         string    `json:"action"`
-	ResourceType   string    `json:"resourceType"`
-	ResourceID     string    `json:"resourceId"`
-	Result         string    `json:"result"`
-	ChangeVersion  int64     `json:"changeVersion"`
-	CorrelationID  string    `json:"correlationId"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID                 int64     `json:"id"`
+	ActorAccountID     string    `json:"actorAccountId"`
+	Action             string    `json:"action"`
+	ResourceType       string    `json:"resourceType"`
+	ResourceID         string    `json:"resourceId"`
+	Result             string    `json:"result"`
+	ChangeVersion      int64     `json:"changeVersion"`
+	CorrelationID      string    `json:"correlationId"`
+	CreatedAt          time.Time `json:"createdAt"`
+	DirectorySyncRunID *int64    `json:"directorySyncRunId,omitempty"`
 }
 
 func (s *Service) listAudit(ctx context.Context, before *int64, limit int) ([]AuditEvent, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, actor_account_id, action, resource_type,
-		resource_id, result, change_version, correlation_id, created_at FROM audit_events
+	rows, err := s.pool.Query(ctx, `SELECT id, coalesce(actor_account_id,''), action, resource_type,
+		resource_id, result, change_version, correlation_id, created_at, directory_sync_run_id FROM audit_events
 		WHERE tenant_key=$1 AND app_id=$2 AND ($3::bigint IS NULL OR id<$3) ORDER BY id DESC LIMIT $4`,
 		s.tenantKey, s.appID, before, limit)
 	if err != nil {
@@ -336,7 +359,7 @@ func (s *Service) listAudit(ctx context.Context, before *int64, limit int) ([]Au
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (AuditEvent, error) {
 		var event AuditEvent
 		err := row.Scan(&event.ID, &event.ActorAccountID, &event.Action, &event.ResourceType, &event.ResourceID,
-			&event.Result, &event.ChangeVersion, &event.CorrelationID, &event.CreatedAt)
+			&event.Result, &event.ChangeVersion, &event.CorrelationID, &event.CreatedAt, &event.DirectorySyncRunID)
 		return event, err
 	})
 }
