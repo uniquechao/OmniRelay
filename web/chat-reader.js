@@ -1,3 +1,4 @@
+import { mountChatComposer } from './chat-composer.js';
 const base = '/api/v1/feishu/chats';
 const chatHash = '#/feishu/bot-chats';
 const identifier = /^[A-Za-z0-9_-]{1,160}$/;
@@ -39,6 +40,15 @@ export function chatAPI(request) {
       (id ? path(id) : '') + (q ? '/search' : '/messages'), { q, kind, cursor }, signal),
     context: (id, message, signal) => read(path(id) + '/messages' + path(message) + '/context', {}, signal),
     members: (id, offset, signal) => read(path(id) + '/members', { offset }, signal),
+    capabilities: (id, signal) => read(path(id) + '/send-capabilities', {}, signal),
+    mentionMembers: (id, offset, signal) => read(path(id) + '/members', { purpose: 'mention', offset }, signal),
+    upload: (id, kind, file, signal) => {
+      const body = new FormData();
+      body.append('file', file);
+      return request(base + path(id) + '/attachments?kind=' + kind, { method: 'POST', body, signal });
+    },
+    send: (id, body, signal) => request(base + path(id) + '/messages', { method: 'POST', body, signal }),
+    delivery: (id, key, signal) => read(path(id) + '/deliveries' + path(key), {}, signal),
     sync: signal => read('/sync', {}, signal),
     refresh: signal => request(base + '/sync', { method: 'POST', signal })
   };
@@ -92,7 +102,7 @@ function messageBody(item) {
 // 项目宿主提供限高容器和项目范围内的数据适配器。会话读取仍走授权接口。
 // 宿主可以通过 AbortSignal 卸载阅读器，并将当前会话同步到项目路由。
 export function mountChatReader(host, api, {
-  signal: parentSignal, project = false, chatId, messageId, onLocation = () => {}
+  signal: parentSignal, project = false, draftScope, chatId, messageId, onLocation = () => {}
 } = {}) {
   const lifetime = new AbortController();
   const signal = parentSignal ? AbortSignal.any([parentSignal, lifetime.signal]) : lifetime.signal;
@@ -145,6 +155,7 @@ export function mountChatReader(host, api, {
       </header>
       ${search('messages', '搜索当前会话')}
       <div class="chat-timeline" data-timeline tabindex="0" aria-label="消息时间线"><p class="chat-empty">没有可显示的会话。</p></div>
+      <div data-composer-host></div>
     </section>
   </div></div>`;
   const root = host.querySelector('.bot-chat');
@@ -179,6 +190,10 @@ export function mountChatReader(host, api, {
   let statusTimer;
   let listTrigger;
   let pendingListFocus;
+
+  const composer = api.capabilities && mountChatComposer(get('[data-composer-host]'), api, {
+    signal, draftScope, onConfirmed: () => loadMessages({ preserve: true })
+  });
 
   mountPersonCards(root, { signal });
   window.connectOmniRelaySplitPane(root, {
@@ -230,6 +245,7 @@ export function mountChatReader(host, api, {
     cancel('members');
     clearTimeout(messageTimer);
     for (const dialog of dialogs) if (dialog.open) dialog.close();
+    composer?.show(null);
     selected = undefined;
     title.textContent = '聊天记录';
     title.removeAttribute('aria-label');
@@ -457,6 +473,7 @@ export function mountChatReader(host, api, {
       }
       selected = item;
       renderTitle(item);
+      composer?.show({ id: item.id, title: nameOf(item) });
       void loadMessages({ focus: Boolean(target) });
     } catch (error) {
       if (!current()) return;

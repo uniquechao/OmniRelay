@@ -145,6 +145,20 @@ func TestDeliveryLedger(t *testing.T) {
 	if capability.Code != http.StatusOK || !strings.Contains(capability.Body.String(), "ou_bot") {
 		t.Fatalf("Bot capability: %d %s", capability.Code, capability.Body)
 	}
+	choices := do(http.MethodGet, "/oc_group/members?purpose=mention&offset=1", "", nil)
+	if choices.Code != http.StatusOK || !strings.Contains(choices.Body.String(), `"mention_open_id":"ou_bob"`) {
+		t.Fatalf("提及成员分页失败 %d %s", choices.Code, choices.Body)
+	}
+	ordinary := do(http.MethodGet, "/oc_group/members", "", nil)
+	if ordinary.Code != http.StatusOK || strings.Contains(ordinary.Body.String(), "ou_bob") {
+		t.Fatalf("普通成员投影错误 %d %s", ordinary.Code, ordinary.Body)
+	}
+	s.ConfigureDelivery(f, false)
+	closed := do(http.MethodGet, "/oc_group/members?purpose=mention", "", nil)
+	if closed.Code != http.StatusServiceUnavailable || strings.Contains(closed.Body.String(), "ou_bob") {
+		t.Fatalf("发送关闭时的提及响应错误 %d %s", closed.Code, closed.Body)
+	}
+	s.ConfigureDelivery(f, true)
 	content := DeliveryContent{Text: "你好\n世界 😀", Attachments: []string{attachment.ID}}
 	type sendResult struct {
 		status DeliveryStatus

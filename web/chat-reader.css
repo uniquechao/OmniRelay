@@ -53,3 +53,5 @@
   .chat-message .chat-message-body { max-width: min(calc(100% - 54px), 780px); }
   .chat-back { min-width: 44px; }
 }
+.chat-delivery-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--or-text-secondary); font-size: .75rem; }
+.chat-composer-choice { overflow-y: auto; max-height: min(35dvh, 16rem); }
