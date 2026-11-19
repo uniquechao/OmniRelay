@@ -120,7 +120,9 @@ export function mountChatReader(host, api, {
         </div>
         <div class="chat-sync">
           <span data-sync role="status"></span>
-          <div>${tool('sync', 'chat-info', '查看同步详情', 'aria-haspopup="dialog"')}${tool('refresh', 'chat-refresh', '刷新会话')}</div>
+          <div>${tool('sync', 'chat-info', '查看同步详情', 'aria-haspopup="dialog"')}
+            <button class="button chat-page-action" type="button" data-action="retry-sync" hidden>重试同步</button>
+            ${tool('refresh', 'chat-refresh', '刷新会话')}</div>
         </div>
         <div id="${id}-filters" class="chat-filters" role="group" aria-label="会话类型" hidden>
           ${Object.entries(types).map(([kind, label]) => `<button class="chat-filter" type="button"
@@ -153,6 +155,8 @@ export function mountChatReader(host, api, {
   const tools = get('[data-tools]');
   const count = get('[data-count]');
   const syncStatus = get('[data-sync]');
+  const refreshButton = get('[data-action="refresh"]');
+  const refreshRetry = get('[data-action="retry-sync"]');
   const listSearch = get('[name="directory"]');
   const localSearch = get('[name="messages"]');
   const searchButton = get('[data-action="search"]');
@@ -172,6 +176,9 @@ export function mountChatReader(host, api, {
   let listTimer;
   let messageTimer;
   let refreshPending = false;
+  let statusTimer;
+  let listTrigger;
+  let pendingListFocus;
 
   mountPersonCards(root, { signal });
   window.connectOmniRelaySplitPane(root, {
@@ -181,6 +188,7 @@ export function mountChatReader(host, api, {
   signal.addEventListener('abort', () => {
     clearTimeout(listTimer);
     clearTimeout(messageTimer);
+    clearTimeout(statusTimer);
     for (const dialog of dialogs) if (dialog.open) dialog.close();
   }, { once: true });
 
@@ -201,6 +209,10 @@ export function mountChatReader(host, api, {
   }
   function fail(node, error, retry) {
     finish(node, status(errorText(error)) + (retry ? button(retry, '重试') : ''));
+  }
+  function offerReadRetry(node, error, retry) {
+    node.querySelector('[data-read-retry]')?.remove();
+    node.insertAdjacentHTML('afterbegin', '<div data-read-retry>' + status(errorText(error)) + button(retry, '重试') + '</div>');
   }
   function openReaderDialog(title, description, trigger) {
     const dialog = openDialog({
@@ -251,7 +263,15 @@ export function mountChatReader(host, api, {
       else row.removeAttribute('aria-current');
     }
   }
+  function findDirectoryRow({ chatId, messageId }) {
+    return [...directory.querySelectorAll('[data-chat-id]')].find(item =>
+      item.dataset.chatId === chatId && item.dataset.messageId === messageId);
+  }
+
   function paintDirectory() {
+    const activeRow = directory.contains(document.activeElement) ? document.activeElement.closest('[data-chat-id]') : null;
+    const pending = pendingListFocus;
+    pendingListFocus = undefined;
     const scroll = directory.scrollTop;
     const query = listSearch.value.trim();
     const rows = conversations.map(record => {
@@ -283,6 +303,10 @@ export function mountChatReader(host, api, {
       (matchCursor ? button('more-matches', '加载更多消息结果') : ''));
     paintSelection();
     directory.scrollTop = scroll;
+    if (activeRow) (findDirectoryRow(activeRow.dataset) ?? listSearch).focus({ preventScroll: true });
+    if (pending && document.activeElement === listSearch) {
+      (findDirectoryRow(pending) ?? findDirectoryRow({ chatId: pending.chatId }))?.focus();
+    }
   }
 
   function renderTitle(record) {
@@ -332,13 +356,43 @@ export function mountChatReader(host, api, {
     }
   }
 
-  function loseSelection(error) {
+  function loseDirectory(error) {
+    cancel('directory');
+    cancel('sync');
+    cancel('refresh');
+    clearTimeout(listTimer);
+    clearTimeout(statusTimer);
+    refreshRetry.hidden = true;
+    syncStatus.dataset.state = 'access_lost';
+    syncStatus.textContent = syncLabel('access_lost');
+    conversations = [];
+    matches = [];
+    matchCursor = undefined;
+    directoryTotal = 0;
+    count.textContent = '';
+    count.removeAttribute('aria-label');
     clearDetails();
     finish(timeline, status(errorText(error)));
-    void loadDirectory();
+    fail(directory, error, 'retry-directory');
   }
 
-  async function loadMessages({ older = false, focus = false } = {}) {
+  function loseSelection(error) {
+    if (error.status === 403) {
+      loseDirectory(error);
+      return;
+    }
+    clearDetails();
+    finish(timeline, status(errorText(error)));
+    const remaining = conversations.filter(item => item.id !== desiredId);
+    directoryTotal -= conversations.length - remaining.length;
+    conversations = remaining;
+    matches = matches.filter(item => item.chat_id !== desiredId);
+    matchCursor = undefined;
+    paintDirectory();
+    void loadDirectory('reset', { preserve: true });
+  }
+
+  async function loadMessages({ older = false, focus = false, preserve = false } = {}) {
     const record = selected;
     if (!record) return;
     const { scope, current } = requestSlot('messages');
@@ -347,7 +401,7 @@ export function mountChatReader(host, api, {
     const target = anchor;
     const trigger = get('[data-action="older"]');
     if (older) trigger?.setAttribute('aria-disabled', 'true');
-    else {
+    else if (!preserve) {
       messages = [];
       historyCursor = undefined;
       loading(timeline, '正在加载消息…');
@@ -367,7 +421,11 @@ export function mountChatReader(host, api, {
       else if (older) {
         trigger?.removeAttribute('aria-disabled');
         toast('error', errorText(error));
+      } else if (preserve && !['message_deleted', 'message_not_found'].includes(error.data?.error)) {
+        offerReadRetry(timeline, error, 'retry-retained-messages');
       } else {
+        messages = [];
+        historyCursor = undefined;
         fail(timeline, error, 'retry-messages');
         if (target) timeline.insertAdjacentHTML('afterbegin', button('latest', '返回最新消息'));
       }
@@ -375,6 +433,7 @@ export function mountChatReader(host, api, {
   }
 
   async function choose(id, target, { open = true, route = true, focus = true, record } = {}) {
+    pendingListFocus = undefined;
     hasSelection = true;
     clearDetails();
     desiredId = id;
@@ -406,18 +465,19 @@ export function mountChatReader(host, api, {
     }
   }
 
-  async function loadDirectory(mode = 'reset', { reconcile = false } = {}) {
+  async function loadDirectory(mode = 'reset', { reconcile = false, preserve = false } = {}) {
     clearTimeout(listTimer);
     const { scope, current } = requestSlot('directory');
     const q = listSearch.value.trim();
     const reset = mode === 'reset';
     const moreChats = mode === 'more-chats';
-    if (reset) {
+    if (reset && !preserve) {
       conversations = [];
       matches = [];
       matchCursor = undefined;
       directoryTotal = 0;
       count.textContent = '';
+      count.removeAttribute('aria-label');
       directory.scrollTop = 0;
       loading(directory, '正在加载会话…');
     }
@@ -425,10 +485,15 @@ export function mountChatReader(host, api, {
     trigger?.setAttribute('aria-disabled', 'true');
     try {
       const [list, results] = await Promise.all([
-        reset || moreChats ? api.conversations({ q, kind, limit: pageSize, offset: conversations.length }, scope) : null,
-        q && !moreChats ? api.messages(null, { q, kind, cursor: matchCursor }, scope) : null
+        reset || moreChats ? api.conversations({ q, kind, limit: pageSize, offset: reset ? 0 : conversations.length }, scope) : null,
+        q && !moreChats ? api.messages(null, { q, kind, cursor: reset ? undefined : matchCursor }, scope) : null
       ]);
       if (!current()) return;
+      if (reset) {
+        conversations = [];
+        matches = [];
+        matchCursor = undefined;
+      }
       if (list) {
         const seen = new Set(conversations.map(item => item.id));
         conversations = conversations.concat((list.items ?? []).filter(item => !seen.has(item.id)));
@@ -440,6 +505,13 @@ export function mountChatReader(host, api, {
         matchCursor = results.next_cursor;
       }
       paintDirectory();
+      if (preserve && selected) {
+        const fresh = conversations.find(item => item.id === selected.id);
+        if (fresh) {
+          selected = fresh;
+          renderTitle(fresh);
+        }
+      }
       if (!reset) (get('[data-action="' + mode + '"]') ?? listSearch).focus({ preventScroll: true });
       const missing = !conversations.some(item => item.id === desiredId);
       if ((!hasSelection || (reconcile && missing)) && (conversations.length || desiredId)) {
@@ -448,14 +520,12 @@ export function mountChatReader(host, api, {
       }
     } catch (error) {
       if (!current()) return;
-      if (reset || accessLost(error)) fail(directory, error, 'retry-directory');
+      if (accessLost(error)) loseDirectory(error);
+      else if (preserve) offerReadRetry(directory, error, 'retry-retained-directory');
+      else if (reset) fail(directory, error, 'retry-directory');
       else {
         trigger?.removeAttribute('aria-disabled');
         toast('error', errorText(error));
-      }
-      if (accessLost(error) && selected) {
-        clearDetails();
-        finish(timeline, status(errorText(error)));
       }
     }
   }
@@ -510,7 +580,10 @@ export function mountChatReader(host, api, {
         syncStatus.textContent = syncLabel(state);
       }
     } catch (error) {
-      if (current()) syncStatus.textContent = '同步状态暂不可用';
+      if (!current()) return;
+      syncStatus.dataset.state = '';
+      syncStatus.textContent = '同步状态暂不可用';
+      if (accessLost(error)) loseDirectory(error);
     }
   }
   async function showSync(trigger) {
@@ -534,16 +607,18 @@ export function mountChatReader(host, api, {
             result.scope === 'all_authorized_bot_chats' ? '此部署已授权的 Bot 会话' : '当前群成员身份及本人的 1:1 会话')}</dl>
         ${details ? '<ul class="chat-sync-details">' + details + '</ul>' : ''}`);
     } catch (error) {
-      if (current() && dialog.open) fail(content, error);
+      if (!current() || !dialog.open) return;
+      if (accessLost(error)) loseDirectory(error);
+      else fail(content, error);
     }
   }
 
-  let statusTimer;
-  signal.addEventListener('abort', () => clearTimeout(statusTimer), { once: true });
-  async function refresh(trigger) {
+  async function refresh() {
     if (refreshPending) return;
     refreshPending = true;
-    trigger.disabled = true;
+    if (document.activeElement === refreshRetry) refreshButton.focus();
+    refreshRetry.hidden = true;
+    refreshButton.setAttribute('aria-disabled', 'true');
     const { scope, current } = requestSlot('refresh');
     clearTimeout(statusTimer);
     cancel('sync');
@@ -554,28 +629,25 @@ export function mountChatReader(host, api, {
       if (!current()) return;
       syncStatus.textContent = '已请求同步';
       toast('success', '已请求同步飞书会话。');
-      await loadDirectory();
-      if (!current()) return;
-      if (selected) {
-        selected = conversations.find(item => item.id === selected.id) ?? selected;
-        renderTitle(selected);
-        void loadMessages();
-      }
       // 刷新由后台队列执行，稍后复查实际同步状态。
       statusTimer = setTimeout(() => void readSync(), 5000);
+      // 目录可能被筛选或分页，当前会话需单独复核授权。
+      await Promise.all([loadDirectory('reset', { preserve: true }), loadMessages({ preserve: true })]);
     } catch (error) {
       if (current()) {
         syncStatus.textContent = '请求同步失败';
         toast('error', errorText(error));
-        if (accessLost(error)) loseSelection(error);
+        if (accessLost(error)) loseDirectory(error);
+        else refreshRetry.hidden = false;
       }
     } finally {
       refreshPending = false;
-      trigger.disabled = false;
+      refreshButton.removeAttribute('aria-disabled');
     }
   }
 
   function resetDirectorySearch() {
+    pendingListFocus = undefined;
     cancel('directory');
     clearTimeout(listTimer);
     count.textContent = '';
@@ -617,7 +689,6 @@ export function mountChatReader(host, api, {
     void loadMessages({ focus: true });
   }
 
-  let listTrigger;
   const actions = {
     filters(trigger) {
       const filters = get('.chat-filters');
@@ -629,14 +700,19 @@ export function mountChatReader(host, api, {
       const previous = desiredId;
       root.removeAttribute('data-detail-open');
       onLocation();
-      const rows = [...directory.querySelectorAll('[data-chat-id]')];
-      const row = listTrigger?.isConnected ? listTrigger : rows.find(item => item.dataset.chatId === previous);
+      const record = { chatId: previous };
+      const origin = listTrigger?.chatId === previous ? listTrigger : record;
+      const row = findDirectoryRow(origin) ?? findDirectoryRow(record);
+      pendingListFocus = row || !previous ? undefined : origin;
       (row ?? listSearch).focus({ preventScroll: !row });
     },
     'more-chats': () => loadDirectory('more-chats'),
     'more-matches': () => loadDirectory('more-matches'),
     older: () => loadMessages({ older: true }),
     'retry-directory': () => loadDirectory(),
+    'retry-retained-directory': () => loadDirectory('reset', { preserve: true }),
+    'retry-retained-messages': () => loadMessages({ preserve: true, focus: Boolean(anchor) }),
+    'retry-sync': refresh,
     'retry-selection': () => choose(desiredId, anchor, { focus: false }),
     'retry-messages': () => loadMessages({ focus: Boolean(anchor) }),
     locate: trigger => locate(trigger.dataset.messageId),
@@ -663,8 +739,8 @@ export function mountChatReader(host, api, {
     }
     const row = event.target.closest('[data-chat-id]');
     if (row) {
-      listTrigger = row;
       const { chatId, messageId } = row.dataset;
+      listTrigger = { chatId, messageId };
       void choose(chatId, messageId, { record: conversations.find(item => item.id === chatId) });
     }
   }, { signal });
