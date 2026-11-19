@@ -1,3 +1,4 @@
+import { assignmentAPI, editAssignment } from './chat-assignment.js';
 import { mountChatComposer } from './chat-composer.js';
 const chatBase = '/api/v1/feishu/chats';
 const chatHash = '#/feishu/bot-chats';
@@ -34,6 +35,7 @@ export function chatAPI(request, base = chatBase) {
   }
   const path = id => '/' + encodeURIComponent(id);
   return {
+    assignments: assignmentAPI(request),
     conversations: (params, signal) => read('', params, signal),
     conversation: (id, signal) => read(path(id), {}, signal),
     messages: (id, { q, kind, cursor }, signal) => read(
@@ -129,7 +131,7 @@ export function mountChatReader(host, api, {
           <${heading} id="${headingId}" tabindex="-1">${project ? '项目关联群' : '机器人记录'}</${heading}>
           <span data-count role="status"></span>
         </div>
-        <div class="chat-sync">
+        <div class="chat-sync" ${project ? 'hidden' : ''}>
           <span data-sync role="status"></span>
           <div>${tool('sync', 'chat-info', '查看同步详情', 'aria-haspopup="dialog"')}
             <button class="button chat-page-action" type="button" data-action="retry-sync" hidden>重试同步</button>
@@ -152,7 +154,10 @@ export function mountChatReader(host, api, {
         <div class="chat-reading-tools" data-tools hidden>
           ${tool('members', 'nav-team', '会话成员', 'aria-haspopup="dialog"')}
           ${tool('search', 'chat-search-icon', '搜索当前会话', `aria-expanded="false" aria-controls="${id}-messages"`)}
+          ${project ? tool('primary', 'chat-star-icon', '设为项目主群', 'data-chat-action="primary" hidden aria-haspopup="dialog"') : ''}
+          ${tool('project', 'chat-project-icon', '修改项目归属', 'hidden aria-haspopup="dialog"')}
         </div>
+        <div class="chat-project-meta" hidden></div>
       </header>
       ${search('messages', '搜索当前会话')}
       <div class="chat-timeline" data-timeline tabindex="0" aria-label="消息时间线"><p class="chat-empty">没有可显示的会话。</p></div>
@@ -242,6 +247,9 @@ export function mountChatReader(host, api, {
     return dialog;
   }
   function clearDetails() {
+    cancel('assignment-dialog');
+    cancel('project-name');
+    get('.chat-project-meta').hidden = true;
     cancel('selection');
     cancel('messages');
     cancel('members');
@@ -286,6 +294,9 @@ export function mountChatReader(host, api, {
       item.dataset.chatId === chatId && item.dataset.messageId === messageId);
   }
 
+  const star = record => record.project_assignment?.primary
+    ? '<span class="chat-primary-star" role="img" aria-label="项目主群" title="项目主群">' + icon('chat-star-icon') + '</span>' : '';
+
   function paintDirectory() {
     const activeRow = directory.contains(document.activeElement) ? document.activeElement.closest('[data-chat-id]') : null;
     const pending = pendingListFocus;
@@ -299,8 +310,8 @@ export function mountChatReader(host, api, {
       const target = `data-chat-id="${esc(record.id)}" aria-label="打开会话 ${label}"`;
       if (record.kind === 'group') {
         return `<li><button type="button" class="chat-conversation" ${target}>${groupAvatar()}
-          <span class="chat-conversation-copy"><span class="chat-conversation-top"><strong title="${label}">${displayName}</strong>${time(record.last_message_at)}</span>
-          <span class="person-org">群聊</span></span></button></li>`;
+          <span class="chat-conversation-copy"><span class="chat-conversation-top"><span class="chat-title-name"><strong title="${label}">${displayName}</strong>${star(record)}</span>${time(record.last_message_at)}</span>
+          <span class="person-org">${record.project_assignment?.primary ? '项目主群' : '群聊'}</span></span></button></li>`;
       }
       const person = personOf(record);
       const organization = orgOf(person);
@@ -330,9 +341,37 @@ export function mountChatReader(host, api, {
   function renderTitle(record) {
     title.setAttribute('aria-label', nameOf(record));
     title.innerHTML = record.kind === 'p2p' ? personView(personOf(record)) :
-      `<span class="person-view">${groupAvatar()}<span class="person-copy"><strong class="person-name" title="${esc(nameOf(record))}">
-      ${esc(nameOf(record))}</strong><span class="person-org">群聊</span></span></span>`;
+      `<span class="person-view">${groupAvatar()}<span class="person-copy"><span class="chat-title-name"><strong class="person-name" title="${esc(nameOf(record))}">
+      ${esc(nameOf(record))}</strong>${star(record)}</span><span class="person-org">${record.project_assignment?.primary ? '项目主群' : '群聊'}</span></span></span>`;
     tools.hidden = false;
+    const assignment = record.kind === 'group' && record.project_assignment;
+    const projectButton = get('[data-action="project"]');
+    projectButton.hidden = !api.assignments || !assignment;
+    projectButton.title = assignment?.project_id ? '修改项目归属' : '标记项目归属';
+    projectButton.setAttribute('aria-label', projectButton.title);
+    if (project) {
+      const primary = get('[data-action="primary"]');
+      primary.hidden = !api.assignments || !assignment;
+      primary.title = assignment?.primary ? '已设为项目主群' : '设为项目主群';
+      primary.setAttribute('aria-label', primary.title);
+      primary.setAttribute('aria-disabled', String(Boolean(assignment?.primary)));
+    }
+    const meta = get('.chat-project-meta');
+    meta.hidden = project || !api.assignments || !assignment;
+    const { scope, current } = requestSlot('project-name');
+    if (meta.hidden) return;
+    const id = assignment.project_id;
+    if (!id) {
+      meta.innerHTML = '<span class="chip">未关联项目</span>';
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = '#/projects/' + encodeURIComponent(id) + '/overview';
+    link.textContent = id;
+    meta.replaceChildren(link);
+    api.assignments.projectName(id, scope).then(name => {
+      if (current()) link.textContent = name;
+    }).catch(() => {});
   }
   function paintTimeline({ prepend = false, focus = false } = {}) {
     const before = timeline.scrollHeight - timeline.scrollTop;
@@ -709,7 +748,63 @@ export function mountChatReader(host, api, {
     void loadMessages({ focus: true });
   }
 
+  const channel = api.assignments && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('omni-relay.chat-assignments') : null;
+  signal.addEventListener('abort', () => channel?.close(), { once: true });
+
+  function reloadAssignment() {
+    const record = selected;
+    if (record) {
+      const { scope, current } = requestSlot('selection');
+      api.conversation(record.id, scope).then(result => {
+        if (!current()) return;
+        const fresh = result.items?.find(item => item.id === record.id);
+        if (!fresh) return removeSelection();
+        selected = fresh;
+        renderTitle(fresh);
+      }).catch(error => {
+        if (!current()) return;
+        if (accessLost(error) || error.status === 404) removeSelection();
+        else toast('error', errorText(error));
+      });
+    }
+    void loadDirectory('reset', { preserve: true });
+  }
+
+  function removeSelection() {
+    void choose(undefined, undefined, { open: false });
+    hasSelection = false;
+    void loadDirectory('reset', { reconcile: true });
+  }
+
+  function assignmentChanged(id, assignment) {
+    if (project && selected?.id === id && assignment.project_id !== projectId) {
+      removeSelection();
+      return;
+    }
+    if (selected?.id === id && Number.isInteger(assignment.version)) {
+      selected = { ...selected, project_assignment: assignment };
+      conversations = conversations.map(item => item.id === id ? selected : item);
+      renderTitle(selected);
+      paintDirectory();
+    }
+    reloadAssignment();
+  }
+  channel?.addEventListener('message', () => reloadAssignment(), { signal });
+  function edit(trigger) {
+    if (!selected?.project_assignment) return;
+    const { scope } = requestSlot('assignment-dialog');
+    void editAssignment({ api: api.assignments, primary: trigger.dataset.action === 'primary',
+      projectId, record: selected, trigger, signal: scope, dialogs, reload: reloadAssignment,
+      changed(id, assignment) {
+        if (signal.aborted) return;
+        channel?.postMessage(null);
+        assignmentChanged(id, assignment);
+      }
+    });
+  }
+
   const actions = {
+    primary: edit, project: edit,
     filters(trigger) {
       const filters = get('.chat-filters');
       filters.hidden = !filters.hidden;
@@ -780,7 +875,7 @@ export function mountChatReader(host, api, {
 
   if (chatId) void choose(chatId, messageId, { route: false, focus: false });
   void loadDirectory();
-  void readSync();
+  if (!project) void readSync();
 
   return {
     dispose() { lifetime.abort(); },

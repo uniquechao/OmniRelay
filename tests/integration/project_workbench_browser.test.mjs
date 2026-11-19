@@ -100,6 +100,8 @@ async function fixture(page) {
           briefings: list([history]),
         });
       if (section === 'chat-reader' || section === 'chat-reader/' + group.id) return respond(list([group]));
+      if (section === 'chat-reader/' + group.id + '/send-capabilities')
+        return respond({ can_send: false, reason: 'send_disabled' });
       if (section === 'chat-reader/sync') return respond(list([]));
       if (section === 'chat-reader/' + group.id + '/messages')
         return respond(

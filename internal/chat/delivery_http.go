@@ -38,14 +38,21 @@ func (s *Service) registerDelivery(mux *http.ServeMux, auth deliveryAuth) {
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 			defer cancel()
+			if project := r.PathValue("projectID"); project != "" {
+				if _, err := s.authorizeProject(ctx, actor, target, project); err != nil {
+					sourceError(w, err)
+					return
+				}
+			}
 			next(w, r.WithContext(ctx), actor, target)
 		}
 	}
-	base := route + "/{chatID}"
-	mux.HandleFunc("GET "+base+"/send-capabilities", protect(s.getSendCapabilities))
-	mux.HandleFunc("POST "+base+"/attachments", protect(s.postAttachment))
-	mux.HandleFunc("POST "+base+"/messages", protect(s.postDelivery))
-	mux.HandleFunc("GET "+base+"/deliveries/{operationKey}", protect(s.getDelivery))
+	for _, base := range []string{route + "/{chatID}", "/api/v1/projects/{projectID}/chat-reader/{chatID}"} {
+		mux.HandleFunc("GET "+base+"/send-capabilities", protect(s.getSendCapabilities))
+		mux.HandleFunc("POST "+base+"/attachments", protect(s.postAttachment))
+		mux.HandleFunc("POST "+base+"/messages", protect(s.postDelivery))
+		mux.HandleFunc("GET "+base+"/deliveries/{operationKey}", protect(s.getDelivery))
+	}
 }
 
 func (s *Service) getSendCapabilities(w http.ResponseWriter, r *http.Request, p identity.Principal, target string) {
@@ -88,7 +95,14 @@ func (s *Service) postDelivery(w http.ResponseWriter, r *http.Request, p identit
 		deliveryHTTPError(w, errDeliveryInput)
 		return
 	}
-	result, err := s.send(r.Context(), p, target, input.OperationKey, input.DeliveryContent, nil, nil)
+	var authorize func(context.Context) error
+	if project := r.PathValue("projectID"); project != "" {
+		authorize = func(ctx context.Context) error {
+			_, err := s.authorizeProject(ctx, p, target, project)
+			return err
+		}
+	}
+	result, err := s.send(r.Context(), p, target, input.OperationKey, input.DeliveryContent, nil, authorize)
 	if err != nil {
 		deliveryHTTPError(w, err)
 		return

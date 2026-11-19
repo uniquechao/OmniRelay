@@ -344,13 +344,13 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 }
 
 func TestProjectChatReaderScope(t *testing.T) {
-	src := &fakeSource{members: map[string][]Member{"g1": {{"ou_alice", "甲"}}, "g2": {{"ou_bob", "乙"}}}}
+	src := &fakeSource{members: map[string][]Member{"oc_g1": {{"ou_alice", "甲"}}, "oc_g2": {{"ou_bob", "乙"}}}}
 	s, ctx := testChat(t, src)
-	for _, id := range []string{"g1", "g2"} {
+	for _, id := range []string{"oc_g1", "oc_g2"} {
 		msg := exampleMessage(id, "m"+id, "项目消息", 1)
 		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: id, Kind: orchestrator.ChatGroup, Message: &msg})
 	}
-	if _, err := s.pool.Exec(ctx, `INSERT INTO project_chat_links(tenant_key,app_id,project_id,chat_id) VALUES ('tenant_chat','cli_chat','p1','g1'),('tenant_chat','cli_chat','p1','g2')`); err != nil {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO project_chat_links(tenant_key,app_id,project_id,chat_id) VALUES ('tenant_chat','cli_chat','p1','oc_g1'),('tenant_chat','cli_chat','p1','oc_g2')`); err != nil {
 		t.Fatal(err)
 	}
 	s.check = func(_ context.Context, _ identity.Principal, action, project string) (bool, error) {
@@ -370,14 +370,39 @@ func TestProjectChatReaderScope(t *testing.T) {
 		return w.Body.String()
 	}
 	result := get("p1/chat-reader", 200)
-	if !strings.Contains(result, "g1") || strings.Contains(result, "g2") {
+	if !strings.Contains(result, "oc_g1") || strings.Contains(result, "oc_g2") {
 		t.Fatal("项目群可见范围错误", result)
 	}
-	get("p1/chat-reader/g2/messages", 404)
-	get("p2/chat-reader/g1/messages", 404)
-	get("p1/chat-reader/g1/messages", 200)
-	if _, err := s.pool.Exec(ctx, `UPDATE project_chat_links SET project_id='p2' WHERE chat_id='g1'`); err != nil {
+	get("p1/chat-reader/oc_g2/messages", 404)
+	get("p2/chat-reader/oc_g1/messages", 404)
+	get("p1/chat-reader/oc_g1/send-capabilities", 200)
+	get("p1/chat-reader/oc_g2/send-capabilities", 404)
+	get("p2/chat-reader/oc_g1/send-capabilities", 404)
+	get("p1/chat-reader/oc_g1/messages", 200)
+	s.ConfigureDelivery(deliveryFixture{fakeSource: src, sent: func(target, kind, body, uuid string) DeliveryResult {
+		if target != "oc_g1" {
+			t.Fatalf("项目消息发送到了其他群 %s", target)
+		}
+		return DeliveryResult{State: "success", MessageID: "om_scoped"}
+	}}, true)
+	req := httptest.NewRequest("POST", "/api/v1/projects/p1/chat-reader/oc_g1/messages",
+		strings.NewReader(`{"operation_key":"project-send","text":"项目消息"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "om_scoped") {
+		t.Fatalf("项目发送未确认 %d %s", w.Code, w.Body)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE project_chat_links SET project_id='p2' WHERE chat_id='oc_g1'`); err != nil {
 		t.Fatal(err)
 	}
-	get("p1/chat-reader/g1/messages", 404)
+	get("p1/chat-reader/oc_g1/messages", 404)
+	get("p1/chat-reader/oc_g1/send-capabilities", 404)
+	for _, suffix := range []string{"attachments", "messages"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/projects/p1/chat-reader/oc_g1/"+suffix, nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("群已移出，%s 应拒绝，得到 %d", suffix, w.Code)
+		}
+	}
 }
