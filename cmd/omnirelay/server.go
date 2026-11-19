@@ -41,7 +41,7 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 	identityService, err := identity.New(pool, identity.Config{
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, PublicOrigin: cfg.publicOrigin,
 		Transport: transport, Audit: roles.AuditIdentity, Access: roles.WorkbenchAccess,
-		OAuthProxyToken: cfg.oauthProxyToken,
+		OAuthProxyToken: cfg.oauthProxyToken, IdleTTL: cfg.sessionIdleTTL,
 	})
 	if err != nil {
 		return nil, nil, err

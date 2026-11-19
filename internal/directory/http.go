@@ -19,12 +19,12 @@ type authorizeSync func(context.Context, pgx.Tx, identity.Principal) (bool, erro
 
 var errSyncForbidden = errors.New("directory sync forbidden")
 
-func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *http.Request, bool) (identity.Principal, bool),
+func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool),
 	check func(context.Context, identity.Principal, string, string) (bool, error), syncPermission authorizeSync) {
 	secured := func(action string, handler func(http.ResponseWriter, *http.Request, identity.Principal)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
-			p, ok := auth(w, r, false)
+			p, ok := auth(w, r, identity.ValidateSession)
 			if !ok {
 				return
 			}
@@ -50,7 +50,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	mux.HandleFunc("GET "+route+"/sync-runs/{syncID}", secured("directory.read", s.getRun))
 	mux.HandleFunc("POST "+route+"/sync-runs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		actor, ok := auth(w, r, true)
+		actor, ok := auth(w, r, identity.RefreshSessionWithCSRF)
 		if ok {
 			s.postRun(w, r, actor, syncPermission)
 		}

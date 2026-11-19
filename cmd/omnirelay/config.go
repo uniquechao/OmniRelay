@@ -13,7 +13,7 @@ type configuration struct {
 	databaseURL, listenAddr, publicOrigin  string
 	tlsCertFile, tlsKeyFile                string
 	appID, appSecret, tenantKey, bootstrap string
-	syncInterval                           time.Duration
+	syncInterval, sessionIdleTTL           time.Duration
 	pageBudget                             int
 	credentialsGeneration                  int64
 	botHeartbeatTTL                        time.Duration

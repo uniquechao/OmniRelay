@@ -152,7 +152,9 @@ func TestSynchronizationClaimsPublicationAndAccess(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	agents[0].Register(mux, func(http.ResponseWriter, *http.Request, bool) (identity.Principal, bool) { return actor, true },
+	agents[0].Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
+		return actor, true
+	},
 		func(_ context.Context, _ identity.Principal, action, resource string) (bool, error) {
 			return action == "directory.read" && resource == "", nil
 		}, nil)

@@ -200,7 +200,7 @@ func TestRosterFullSyncReclaimsAccountsAndProtectsLastAdmin(t *testing.T) {
 	assertRosterAccount(t, pool, "ou_member", false, false, 1, 0, 1)
 
 	adminAPI := http.NewServeMux()
-	service.access.Register(adminAPI, func(http.ResponseWriter, *http.Request, bool) (identity.Principal, bool) {
+	service.access.Register(adminAPI, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
 		return identity.Principal{AccountID: "successor", OpenID: "ou_successor", TenantKey: "tenant", AppID: "app"}, true
 	})
 	changeMember := func(body string) *httptest.ResponseRecorder {

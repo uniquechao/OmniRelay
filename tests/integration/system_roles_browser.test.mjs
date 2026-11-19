@@ -269,3 +269,53 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   await profile.waitFor({ state: 'hidden' });
   assert.deepEqual(errors, []);
 });
+
+test('后台轮询持续成功时，会话仍按空闲期限失效', { skip: !process.env.OMNIRELAY_IDLE_BROWSER }, async t => {
+  const { chromium } = require(process.env.OMNIRELAY_PLAYWRIGHT_MODULE);
+  const browser = await chromium.launch({
+    executablePath: process.env.OMNIRELAY_CHROME, args: ['--ignore-certificate-errors']
+  });
+  t.after(() => browser.close());
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const users = await context.newPage();
+  const detector = await context.newPage();
+  users.setDefaultTimeout(22000);
+  detector.setDefaultTimeout(22000);
+  const results = { directory: [], checks: [], probes: [] };
+  const errors = [];
+  for (const page of [users, detector]) page.on('pageerror', error => errors.push(error.message));
+  users.on('response', response => {
+    const path = new URL(response.url()).pathname;
+    if (path === sync) results.directory.push(response.status());
+    if (path === mePath) results.probes.push(response.status());
+  });
+  detector.on('response', response => {
+    if (new URL(response.url()).pathname.startsWith(bot + '/checks/')) results.checks.push(response.status());
+  });
+  await users.goto(origin + '/#/system/users');
+  await login(users, 'admin', 'system/users');
+  await users.locator('[data-admin-action=user]').first().click();
+  await users.locator('dialog[open]').waitFor();
+  await navigate(detector, 'system/feishu-bot');
+  await detector.locator('#bot-test').click();
+
+  // 等到首次后台状态查询成功，再触发应用实际使用的焦点探活。
+  await users.waitForResponse(response => new URL(response.url()).pathname === sync && response.status() === 200);
+  const probe = users.waitForResponse(response => new URL(response.url()).pathname === mePath);
+  await users.evaluate(() => window.dispatchEvent(new Event('focus')));
+  assert.equal((await probe).status(), 200);
+  await Promise.all([users, detector].map(page => page.waitForURL('**/#/login')));
+  for (const name of ['directory', 'checks']) {
+    assert.ok(results[name].filter(status => status === 200).length >= 2, JSON.stringify(results));
+    assert.equal(results[name].at(-1), 401, JSON.stringify(results));
+  }
+  assert.equal(await users.locator('#page').textContent(), '');
+  assert.equal(await users.locator('dialog[open]').count(), 0);
+  assert.equal(await detector.locator('#page').textContent(), '');
+
+  await login(users, 'auditor', 'system/audit');
+  assert.deepEqual(await users.locator('#system-nav [data-system]:not([hidden])')
+    .evaluateAll(nodes => nodes.map(node => node.dataset.system)), ['audit']);
+  assert.equal(await users.locator('[data-admin-action=user]').count(), 0);
+  assert.deepEqual(errors, []);
+});

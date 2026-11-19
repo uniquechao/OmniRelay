@@ -19,23 +19,24 @@ const (
 type authenticatedHandler func(http.ResponseWriter, *http.Request, identity.Principal)
 
 // Register exposes the administrative API using the supplied session and CSRF validator.
-func (s *Service) Register(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, bool) (identity.Principal, bool)) {
-	register := func(pattern string, write bool, handler authenticatedHandler) {
+func (s *Service) Register(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
+	register := func(pattern string, policy identity.SessionPolicy, handler authenticatedHandler) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
-			if principal, ok := authenticate(w, r, write); ok {
+			if principal, ok := authenticate(w, r, policy); ok {
 				handler(w, r, principal)
 			}
 		})
 	}
-	register("GET /api/v1/system/accounts", false, s.handleAccounts)
-	register("POST /api/v1/system/accounts", true, s.handlePreauthorizeAccount)
-	register("PATCH /api/v1/system/accounts/{accountID}", true, s.handleAccountStatus)
-	register("GET /api/v1/system/roles", false, s.handleRoles)
-	register("GET /api/v1/system/role-grants", false, s.handleRoleGrants)
-	register("POST /api/v1/system/role-grants", true, s.handleCreateGrant)
-	register("DELETE /api/v1/system/role-grants/{grantID}", true, s.handleRevokeGrant)
-	register("GET /api/v1/system/audit-events", false, s.handleAuditEvents)
+	// The directory view also reads accounts and grants during snapshot refresh.
+	register("GET /api/v1/system/accounts", identity.ValidateSession, s.handleAccounts)
+	register("POST /api/v1/system/accounts", identity.RefreshSessionWithCSRF, s.handlePreauthorizeAccount)
+	register("PATCH /api/v1/system/accounts/{accountID}", identity.RefreshSessionWithCSRF, s.handleAccountStatus)
+	register("GET /api/v1/system/roles", identity.RefreshSession, s.handleRoles)
+	register("GET /api/v1/system/role-grants", identity.ValidateSession, s.handleRoleGrants)
+	register("POST /api/v1/system/role-grants", identity.RefreshSessionWithCSRF, s.handleCreateGrant)
+	register("DELETE /api/v1/system/role-grants/{grantID}", identity.RefreshSessionWithCSRF, s.handleRevokeGrant)
+	register("GET /api/v1/system/audit-events", identity.RefreshSession, s.handleAuditEvents)
 }
 
 func (s *Service) handleRoles(w http.ResponseWriter, r *http.Request, actor identity.Principal) {

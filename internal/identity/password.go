@@ -187,7 +187,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) changePassword(w http.ResponseWriter, r *http.Request) {
-	p, _, ok := s.authenticate(w, r, true)
+	p, _, ok := s.authenticate(w, r, RefreshSessionWithCSRF)
 	if !ok {
 		return
 	}
