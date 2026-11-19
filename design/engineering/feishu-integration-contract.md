@@ -20,6 +20,36 @@ Go 服务已接入 Bot 管理接口与 OAuth 固定错误回跳。目录响应�
 
 `GET /api/v1/system/roles` 要求 `role.read`，返回 `items` 数组。每个角色条目包含 `id`、`name`、`scope`（`system` 或 `project`）、`default` 和 `grantable` 布尔值以及中文说明字符串数组 `permissions`。账号接口的 `systemRoles` 为有效系统角色字符串数组，停用账号返回 `[]`。默认普通用户由启用状态计算，现有授权记录仅包含真实授权。项目权限继续由可信项目成员关系和业务能力计算。
 
+旧客户端可以继续读取 `principal`、`csrf_token`、`access.roles`、`access.admin`、原账号字段和授权列表。以下为运维账号的 `access` 和账号项的相关字段示例。
+
+```json
+{
+  "roles": ["system_operator", "system_user"],
+  "admin": {"users": true, "roles": true, "audit": true, "feishu_bot": true},
+  "permissions": {
+    "account.read": true,
+    "account.manage": false,
+    "role.read": true,
+    "role.manage": false,
+    "directory.read": true,
+    "directory.sync": true,
+    "system.read": true,
+    "system.configure": false,
+    "system.operate": true,
+    "audit.read": true
+  },
+  "navigation": {"workbench": false, "system": true},
+  "default_route": "/#/system/users",
+  "permission_version": "7"
+}
+```
+
+```json
+{"id":"account_example","active":true,"systemRoles":["system_operator","system_user"]}
+```
+
+系统角色授予成功后，仍在使用的会话可从 `/me` 取得新能力。撤权或停用使旧会话下一次请求返回 401。已登录但缺少操作点时返回 403，调用者无法读取的授权记录返回 404。并发操作会重新检查最后管理员约束，触发保护时返回 409。
+
 ## 文件与运行方式
 
 在项目根执行 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/contract -p 'test_*.py' -v`，只需 Python 3 标准库，不联网、不用数据库、不跳过测试。

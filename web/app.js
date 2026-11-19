@@ -90,9 +90,14 @@ async function protectedAPI(path, options) {
 const adminAPI = systemAPI(protectedAPI);
 const botAPI = feishuBotAPI(protectedAPI);
 
+function closeSessionOverlays() {
+  for (const popover of document.querySelectorAll(':popover-open')) popover.hidePopover();
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close('cancel');
+}
+
 function showLogin({ preserveTarget = true } = {}) {
   if (view?.hasDraft?.()) ui.toast('warning', '会话已结束，未保存的修改已清除。');
-  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close('cancel');
+  closeSessionOverlays();
   sessionCheck?.abort();
   session = null;
   setSession(null);
@@ -133,6 +138,7 @@ function refreshAccess() {
       const visibleAccess = access => [access?.roles, access?.admin, access?.navigation, access?.default_route, access?.permissions];
       if (current.user.id !== next.user.id || JSON.stringify(visibleAccess(current.access)) !== JSON.stringify(visibleAccess(next.access))) {
         ui.toast('warning', view?.hasDraft?.() ? '当前账号或权限已变更，未保存的修改已清除。' : '账号权限已更新。');
+        closeSessionOverlays();
         await establishSession(next);
         void render();
       } else {
@@ -271,7 +277,7 @@ async function render() {
 
 function clearSessionView() {
   routeRequest?.abort();
-  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close('cancel');
+  closeSessionOverlays();
   view = null;
   page.replaceChildren();
   shell.hidden = true;

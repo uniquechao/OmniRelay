@@ -29,7 +29,7 @@ func TestAuthorizationUsesCurrentAccountAndProjectMembership(t *testing.T) {
 	foreign := addAccount(t, ctx, pool, "foreign", "app", "ou_foreign")
 	service.ProjectAccess = testProjects{
 		admin.AccountID:  {Member: true},
-		member.AccountID: {Member: true, Manager: true},
+		member.AccountID: {Member: true, Manager: true, CanAssign: true},
 	}
 
 	cases := []struct {
@@ -44,6 +44,8 @@ func TestAuthorizationUsesCurrentAccountAndProjectMembership(t *testing.T) {
 		{"foreign tenant cannot read directory", foreign, "directory.read", "", false},
 		{"admin role alone cannot manage project", admin, "project.settings", "project", false},
 		{"trusted project member can read assigned project", admin, "project.read", "project", true},
+		{"system administrator without project assignment capability cannot assign", admin, "project.assign", "project", false},
+		{"member with formal project assignment capability can assign", member, "project.assign", "project", true},
 		{"trusted manager can manage assigned project", member, "project.settings", "project", true},
 		{"member cannot read different project", member, "project.read", "other", false},
 	}

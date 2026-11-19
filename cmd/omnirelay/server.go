@@ -22,7 +22,10 @@ import (
 )
 
 func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper) (http.Handler, *backendWorkers, error) {
-	roles := access.New(pool, cfg.tenantKey, cfg.appID)
+	return newBackendWithAccess(ctx, pool, cfg, transport, access.New(pool, cfg.tenantKey, cfg.appID))
+}
+
+func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper, roles *access.Service) (http.Handler, *backendWorkers, error) {
 	if err := roles.Bootstrap(ctx, cfg.bootstrap); err != nil {
 		if errors.Is(err, access.ErrBootstrapRequired) {
 			return nil, nil, errors.New("set OMNIRELAY_BOOTSTRAP_OPEN_ID to the first administrator's verified Feishu Open ID")
