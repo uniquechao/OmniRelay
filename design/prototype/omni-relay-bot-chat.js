@@ -1,6 +1,6 @@
 /* Local conversations for the Bot chat history prototype. */
 window.OmniRelayBotChat = (() => {
-  const { escape,icon,personAvatar,openDialog,toast } = OmniRelayUI;
+  const { escape,icon,personAvatar,personButton,personView,mountPersonCards,openDialog,toast } = OmniRelayUI;
   const bot = 'OmniRelay';
   const sentMessages = new Map();
   const message = (at,author,text,card) => ({ at,author,text,card });
@@ -112,9 +112,9 @@ window.OmniRelayBotChat = (() => {
     return '<span class="chat-avatar" data-kind="' + kind + '" aria-hidden="true">' + content + '</span>';
   }
 
+  const profileOf = name => ({ name, personKey:people[name]?.[0], org:people[name]?.[1], source:'feishu' });
   const personControl = (name, content, className = '') =>
-    '<button type="button" class="chat-person-button ' + className + '" data-chat-person="' + escape(name) +
-    '" aria-haspopup="dialog" aria-expanded="false" aria-label="查看' + escape(name) + '的个人详情">' + content + '</button>';
+    personButton(profileOf(name),content,'chat-person-button ' + className);
 
   function personCopy(name, detail, isPrimary = false) {
     return '<span class="person-copy"><span class="chat-title-name"><strong class="person-name" title="' + escape(name) + '">' + escape(name) +
@@ -304,60 +304,7 @@ window.OmniRelayBotChat = (() => {
       }
     }
 
-    let profilePopover;
-    function showPerson(name, trigger) {
-      const person = people[name];
-      if (!person) return;
-      if (profilePopover?.matches(':popover-open')) {
-        const previous = profilePopover;
-        previous.hidePopover();
-        if (previous.profileTrigger === trigger) return;
-      }
-      const card = document.createElement('div');
-      card.className = 'chat-person-popover';
-      card.popover = 'auto';
-      card.setAttribute('role','dialog');
-      card.setAttribute('aria-label',name + '的基本信息');
-      card.tabIndex = -1;
-      card.profileTrigger = trigger;
-      card.innerHTML = '<div class="person-view">' + avatar(name,'person') + personCopy(name,person[1]) +
-        '</div><p class="aux">身份来源　飞书</p>';
-      (trigger.closest('dialog') || root).append(card);
-      card.showPopover({source:trigger});
-      profilePopover = card;
-      function position() {
-        const anchor = trigger.getBoundingClientRect();
-        const width = card.offsetWidth;
-        const height = card.offsetHeight;
-        const left = Math.max(8,Math.min(anchor.left,innerWidth - width - 8));
-        const preferredTop = anchor.bottom + height + 6 <= innerHeight - 8 ? anchor.bottom + 6 : anchor.top - height - 6;
-        const top = Math.max(8,Math.min(preferredTop,innerHeight - height - 8));
-        card.style.left = left + 'px';
-        card.style.top = top + 'px';
-      }
-      position();
-      trigger.setAttribute('aria-expanded','true');
-      card.focus({preventScroll:true});
-      const tracking = new AbortController();
-      const dismiss = () => {
-        if (card.matches(':popover-open')) card.hidePopover();
-        else if (!card.isConnected) tracking.abort();
-      };
-      window.addEventListener('resize',position,{signal:tracking.signal});
-      window.addEventListener('hashchange',dismiss,{signal:tracking.signal});
-      window.addEventListener('scroll',position,{capture:true,signal:tracking.signal});
-      card.addEventListener('beforetoggle',event => {
-        if (event.newState !== 'closed') return;
-        tracking.abort();
-        trigger.setAttribute('aria-expanded','false');
-      });
-      card.addEventListener('toggle',event => {
-        if (event.newState === 'closed') {
-          if (profilePopover === card) profilePopover = undefined;
-          card.remove();
-        }
-      });
-    }
+    mountPersonCards(root);
 
     let filter = 'all';
     const initialGroup = subview === 'main' ? 'beichen' : subview;
@@ -406,10 +353,9 @@ window.OmniRelayBotChat = (() => {
         return;
       }
       const groupRole = scope && primaryOf(scope) === record.id ? '项目主群' : '群聊';
-      const detail = person ? people[record.title]?.[1] : groupRole + ' · ' + members[record.id].length + ' 人';
-      const identity = avatar(record.title,person ? 'person' : 'group') + personCopy(record.title,detail,groupRole === '项目主群');
-      title.innerHTML = '<h2 tabindex="-1" aria-label="' + escape(record.title) + '">' +
-        (person ? personControl(record.title,identity,'person-view') : '<span class="person-view">' + identity + '</span>') + '</h2>';
+      const identity = person ? personView(profileOf(record.title)) : '<span class="person-view">' + avatar(record.title,'group') +
+        personCopy(record.title,groupRole + ' · ' + members[record.id].length + ' 人',groupRole === '项目主群') + '</span>';
+      title.innerHTML = '<h2 tabindex="-1" aria-label="' + escape(record.title) + '">' + identity + '</h2>';
       updateTranscript(record);
     }
 
@@ -424,15 +370,22 @@ window.OmniRelayBotChat = (() => {
         const groupRole = scope && primaryOf(scope) === record.id ? '项目主群' : '群聊';
         const groupLabel = groupRole + ' · ' + (members[record.id]?.length || 0) + ' 人';
         const isDirect = record.kind === 'direct';
-        return (isDirect ? '<li class="chat-direct-row">' + personControl(record.title,avatar(record.title,'person'))
-          : '<li>') + '<button class="chat-conversation" type="button" data-chat-id="' + record.id + '">' +
-          (isDirect ? '' : avatar(record.title,'group')) + '<span class="chat-conversation-copy">' +
-          '<span class="chat-conversation-top"><strong class="person-name" title="' + escape(record.title) + '">' +
-          highlight(record.title,query) + '</strong>' + time(recent,true) + '</span>' +
-          '<span class="chat-conversation-preview person-org" title="' + escape(record.kind === 'group'
-            ? groupLabel : people[record.title]?.[1] || kindLabels.direct) + '">' +
-          (hit ? highlight(messageText(hit),query) : record.kind === 'group' ? groupLabel
-            : '1:1 · ' + escape(people[record.title]?.[1] || '员工')) + '</span></span></button></li>';
+        const name = highlight(record.title,query);
+        const org = people[record.title]?.[1] || kindLabels.direct;
+        const preview = hit ? highlight(messageText(hit),query) : isDirect ? '1:1 · ' + escape(org) : groupLabel;
+        const previewLine = '<span class="chat-conversation-preview person-org" title="' +
+          escape(isDirect ? org : groupLabel) + '">' + preview + '</span>';
+        if (isDirect) {
+          return '<li class="chat-direct-row">' + personControl(record.title,avatar(record.title,'person')) +
+            '<div class="chat-conversation-copy"><div class="chat-conversation-top">' +
+            personControl(record.title,name,'person-name') + time(recent,true) + '</div>' +
+            '<button class="chat-conversation chat-direct-preview" type="button" data-chat-id="' + record.id +
+            '" aria-label="打开与' + escape(record.title) + '的会话">' + previewLine + '</button></div></li>';
+        }
+        return '<li><button class="chat-conversation" type="button" data-chat-id="' + record.id + '">' +
+          avatar(record.title,'group') + '<span class="chat-conversation-copy"><span class="chat-conversation-top">' +
+          '<strong class="person-name" title="' + escape(record.title) + '">' + name + '</strong>' + time(recent,true) +
+          '</span>' + previewLine + '</span></button></li>';
       }).join('');
       const empty = root.querySelector('[data-chat-empty]');
       empty.hidden = Boolean(visible.length);
@@ -466,14 +419,11 @@ window.OmniRelayBotChat = (() => {
         const participants = selected.kind === 'group' ? members[selected.id] : [selected.title,bot];
         const dialog = openDialog({title:'会话成员',description:selected.title,drawer:'standard',body:
           '<ul class="chat-members">' + participants.map(name => {
-            const identity = avatar(name,name === bot ? 'bot' : 'person') + personCopy(name,people[name]?.[1] || '会话机器人');
-            return '<li>' + (name === bot ? '<span class="person-view">' + identity + '</span>'
-              : personControl(name,identity,'person-view')) + '</li>';
+            const identity = name === bot ? '<span class="person-view">' + avatar(name,'bot') +
+              personCopy(name,'会话机器人') + '</span>' : personView(profileOf(name));
+            return '<li>' + identity + '</li>';
           }).join('') + '</ul>'});
-        dialog.addEventListener('click',event => {
-          const trigger = event.target.closest('[data-chat-person]');
-          if (trigger) showPerson(trigger.dataset.chatPerson,trigger);
-        });
+        mountPersonCards(dialog);
       },
       primary(trigger) {
         const record = selected;
@@ -532,8 +482,6 @@ window.OmniRelayBotChat = (() => {
       }
     };
     root.addEventListener('click',event => {
-      const profile = event.target.closest('[data-chat-person]');
-      if (profile) showPerson(profile.dataset.chatPerson,profile);
       const action = event.target.closest('[data-chat-action]');
       if (action) actions[action.dataset.chatAction](action);
       const filterButton = event.target.closest('[data-chat-filter]');

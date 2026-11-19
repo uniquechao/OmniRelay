@@ -89,6 +89,7 @@
 .login-entry .login-feedback[data-tone="error"] { background: var(--or-danger-bg); color: var(--or-danger-text); }
 .system-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-cell-sub { display: block; font-size: .75rem; color: var(--or-text-secondary); margin-top: 2px; }
+.admin-org-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-compact-actor { display: none; }
 .admin-actions { display: flex; flex-wrap: wrap; gap: 2px; }
 .row-action.admin-danger { color: var(--or-danger-text); }
