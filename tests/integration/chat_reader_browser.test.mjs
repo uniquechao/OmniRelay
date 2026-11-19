@@ -761,6 +761,16 @@ test('项目群主群替换、改绑、失败重试和清除在两个入口即�
   await scoped.locator('[data-title]').getByText('候选群').waitFor();
   assert.equal(await scoped.locator('[data-chat-id="oc_group"]').count(), 0);
   await scoped.locator('[data-title] .chat-primary-star').waitFor({ state: 'detached' });
+  await Promise.all([scoped.reload(), global.reload()]);
+  await scoped.locator('[data-title]').getByText('候选群').waitFor();
+  assert.deepEqual(await scoped.locator('.chat-conversation').evaluateAll(rows => rows.map(row => row.dataset.chatId)), [candidate.id]);
+  await global.locator('.chat-project-meta').getByRole('link', { name: '启明' }).waitFor();
+  await scoped.goto(origin + '/#/projects/p1/chats/' + group.id);
+  await scoped.locator('[data-title]').getByText(group.name).waitFor();
+  assert.deepEqual(await scoped.locator('.chat-conversation').evaluateAll(rows => rows.map(row => row.dataset.chatId)), [group.id]);
+  assert.equal(await scoped.locator('.chat-primary-star').count(), 0);
+  await scoped.goto(origin + '/#/projects/p2/chats/' + candidate.id);
+  await scoped.locator('[data-title]').getByText('候选群').waitFor();
   for (const attempt of [1, 2]) {
     await global.getByRole('button', { name: '修改项目归属' }).click();
     await global.getByRole('button', { name: '移除 启明' }).click();
