@@ -533,7 +533,6 @@ export async function mountProjects(host, route, request, { signal, memory, user
     if (tab === 'chats') {
       let chatHash = route.hash;
       const reader = chatAPI(request, '/api/v1/projects/' + id + '/chat-reader');
-      delete reader.capabilities;
       delete reader.refresh;
       mountChatReader(body, reader, {
         signal,

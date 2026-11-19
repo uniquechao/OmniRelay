@@ -37,19 +37,7 @@ window.OmniRelayDeveloper = (() => {
     return '<div class="field ' + extra + '"><label for="' + id + '">' + label + '</label>' + control + '</div>';
   }
 
-  function combo(id, label, source, multiple = false) {
-    return `<div class="field"><label for="${id}">${label}</label>
-      <div class="dev-combo" data-combo data-source="${source}" data-multiple="${multiple}">
-        <input id="${id}" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-options" placeholder="输入关键词搜索">
-        <input type="hidden" name="${id}" data-combo-result>
-        <div class="combo-box" id="${id}-options" hidden>
-          <div role="listbox" aria-label="${label}选项"${multiple ? ' aria-multiselectable="true"' : ''}></div>
-          <p class="combo-empty" role="status" hidden>没有匹配的选项。</p>
-        </div>
-        <div class="combo-values" aria-label="已选内容"></div>
-      </div>
-    </div>`;
-  }
+  const { combo } = OmniRelayUI;
 
   const personView = person => OmniRelayUI.personView({ name:person.label, personKey:person.id, org:person.detail });
 
@@ -184,107 +172,9 @@ window.OmniRelayDeveloper = (() => {
       '</header>' + content[view]();
   }
 
-  function mountCombo(root, { choices, initial } = {}) {
-    const input = root.querySelector('[role="combobox"]');
-    const output = root.querySelector('[data-combo-result]');
-    const box = root.querySelector('.combo-box');
-    const list = root.querySelector('[role="listbox"]');
-    const empty = root.querySelector('.combo-empty');
-    const values = root.querySelector('.combo-values');
-    const multiple = root.dataset.multiple === 'true';
-    const source = choices || (root.dataset.source === 'people' ? people : categories);
-    const selected = new Set(initial ? [].concat(initial) : []);
-    let active = -1;
-    let matches = [];
-
-    function highlight() {
-      const options = [...list.children];
-      options.forEach((option,index) => { option.dataset.active = String(index === active); });
-      if (active < 0) input.removeAttribute('aria-activedescendant');
-      else {
-        input.setAttribute('aria-activedescendant',options[active].id);
-        options[active].scrollIntoView({block:'nearest',inline:'nearest'});
-      }
-    }
-    function show(query) {
-      const needle = query.trim().toLocaleLowerCase();
-      matches = source.filter(item => [item.label,item.detail,item.search].join(' ').toLocaleLowerCase().includes(needle));
-      list.innerHTML = matches.map((item,index) => '<div class="combo-option" role="option" id="' + input.id + '-option-' + index +
-        '" data-option="' + escape(item.id) + '" aria-selected="' + selected.has(item.id) + '"><span>' + escape(item.label) +
-        (item.detail ? '<small>' + escape(item.detail) + '</small>' : '') + '</span>' + (selected.has(item.id) ? '<span aria-hidden="true">✓</span>' : '') + '</div>'
-      ).join('');
-      empty.hidden = Boolean(matches.length);
-      box.hidden = false;
-      input.setAttribute('aria-expanded','true');
-      active = -1;
-      highlight();
-    }
-    function close() {
-      box.hidden = true;
-      input.setAttribute('aria-expanded','false');
-      input.removeAttribute('aria-activedescendant');
-    }
-    function sync() {
-      output.value = [...selected].join(',');
-      output.dispatchEvent(new Event('input',{bubbles:true}));
-      values.innerHTML = source.filter(item => selected.has(item.id)).map(item =>
-        '<button class="combo-value" type="button" data-remove="' + escape(item.id) + '" aria-label="移除 ' + escape(item.label) + '">' + escape(item.label) + ' ×</button>'
-      ).join('');
-    }
-    function pick(id) {
-      if (selected.has(id) && multiple) selected.delete(id);
-      else {
-        if (!multiple) selected.clear();
-        selected.add(id);
-      }
-      input.value = '';
-      sync();
-      if (multiple) show(''); else close();
-    }
-    input.addEventListener('focus',() => show(input.value));
-    input.addEventListener('click',() => { if(box.hidden) show(input.value); });
-    input.addEventListener('input',() => show(input.value));
-    input.addEventListener('keydown',event => {
-      if (event.key === 'Escape' && !box.hidden) {
-        if (choices) event.preventDefault();
-        close();
-        return;
-      }
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        if (box.hidden) show(input.value);
-        if (!matches.length) return;
-        if (active < 0) active = event.key === 'ArrowDown' ? 0 : matches.length-1;
-        else active = (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
-        highlight();
-      }
-      if (event.key === 'Enter' && !box.hidden && active >= 0) {
-        event.preventDefault();
-        pick(matches[active].id);
-      }
-    });
-    list.addEventListener('pointerdown',event => { if(event.target.closest('[data-option]')) event.preventDefault(); });
-    list.addEventListener('click',event => {
-      const option = event.target.closest('[data-option]');
-      if (option) pick(option.dataset.option);
-    });
-    values.addEventListener('click',event => {
-      const button = event.target.closest('[data-remove]');
-      if (!button) return;
-      selected.delete(button.dataset.remove);
-      input.focus();
-      sync();
-      if (!box.hidden) show(input.value);
-    });
-    root.addEventListener('focusout',event => {
-      if (!root.contains(event.relatedTarget)) close();
-    });
-    root.closest('form')?.addEventListener('reset',() => {
-      selected.clear();
-      sync();
-      close();
-    });
-    if (initial) sync();
+  function mountCombo(root, options = {}) {
+    const choices = options.choices || (root.dataset.source === 'people' ? people : categories);
+    return OmniRelayUI.mountCombo(root, { ...options, choices, preventEscape: Boolean(options.choices) });
   }
 
   function mountStrip(root) {

@@ -645,3 +645,131 @@ test('分栏与切会话保留草稿，超时后并发恢复只投递一次', { 
   assert.equal(await editor.inputValue(), '独立草稿');
   assert.equal(await page.getByText(/飞书已确认接收/).count(), 0);
 });
+
+test('项目群主群替换、改绑、失败重试和清除在两个入口即时一致', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const context = await browser.newContext();
+  const global = await context.newPage();
+  const scoped = await context.newPage();
+  const projects = [{ id: 'p1', name: '北辰' }, { id: 'p2', name: '启明' }];
+  const groups = [group, { ...group, id: 'oc_second', name: '候选群' }].map((row, i) => ({
+    ...row, project_assignment: { project_id: 'p1', primary: i === 0, version: 1 }
+  }));
+  const candidate = groups[1];
+  let primaryVersion = 1;
+  let failOnce = true;
+  let conflictOnce = true;
+  const scopedCapabilities = new Set();
+  for (const page of [global, scoped]) {
+    await mountFixture(page);
+    await page.route(/\/api\/v1\/(projects|feishu\/chats)(\/|\?|$)/, async route => {
+      const { pathname } = new URL(route.request().url());
+      const respond = json => route.fulfill({ json });
+      const project = projects.find(item => pathname.startsWith('/api/v1/projects/' + item.id + '/'));
+      if (pathname === '/api/v1/projects') return respond({ items: projects, total: projects.length });
+      if (pathname.endsWith('/overview')) return respond({ data: { workspace: { project } } });
+      const visible = groups.filter(item => !project || item.project_assignment.project_id === project.id);
+      if (pathname.endsWith('/chats/primary')) {
+        const body = route.request().postDataJSON();
+        assert.deepEqual(body, { chat_id: candidate.id, assignment_version: 1, primary_version: primaryVersion });
+        for (const item of visible) {
+          item.project_assignment.primary = item === candidate;
+          item.project_assignment.version++;
+        }
+        return respond({ chat_id: candidate.id, primary_version: ++primaryVersion });
+      }
+      if (pathname.endsWith('/project')) {
+        const body = route.request().postDataJSON();
+        assert.equal(body.version, candidate.project_assignment.version);
+        if (failOnce) {
+          failOnce = false;
+          return route.fulfill({ status: 503, json: { error: 'project_unavailable' } });
+        }
+        if (!body.project_id && conflictOnce) {
+          conflictOnce = false;
+          candidate.project_assignment.version++;
+          return route.fulfill({ status: 409, json: { error: 'project_conflict' } });
+        }
+        candidate.project_assignment = { project_id: body.project_id, version: body.version + 1, primary: false };
+        return respond(candidate.project_assignment);
+      }
+      if (project && pathname.endsWith('/chats'))
+        return respond({ primary_version: primaryVersion, items: visible.map(row => ({ ...row, ...row.project_assignment })) });
+      const suffix = pathname.split(project ? '/chat-reader' : base)[1];
+      if (suffix === '') return respond({ items: visible, total: visible.length });
+      if (suffix === '/sync') return respond({ items: [], total: 0 });
+      const item = visible.find(row => row.id === suffix?.split('/')[1]);
+      if (!item) return route.fulfill({ status: 404, json: { error: 'chat_access_lost' } });
+      if (suffix.endsWith('/send-capabilities')) {
+        if (project) scopedCapabilities.add(item.id);
+        return respond({ can_send: false, reason: 'send_disabled' });
+      }
+      if (suffix.endsWith('/context')) return respond({ items: [{ ...oldMessage, chat_id: item.id }] });
+      if (suffix.endsWith('/messages')) return respond({ items: [] });
+      return respond({ items: [item], total: 1 });
+    });
+  }
+  // 两种视口和主题对照已确认原型的标题星标及归属按钮。
+  const prototype = await context.newPage();
+  for (const width of [1366, 390]) {
+    const viewport = { width, height: width === 390 ? 844 : 900 };
+    await Promise.all([scoped.setViewportSize(viewport), prototype.setViewportSize(viewport)]);
+    for (const theme of ['light', 'dark']) {
+      await scoped.goto(origin + '/?theme=' + theme + '#/projects/p1/chats/' + group.id);
+      const reference = new URL('../../design/prototype/omni-relay-workbench.html', import.meta.url);
+      reference.search = '?theme=' + theme;
+      reference.hash = '/projects/beichen/chats/main';
+      await prototype.goto(reference.href);
+      const geometry = async page => {
+        const star = page.locator('.chat-reading-title .chat-primary-star');
+        await star.waitFor();
+        const button = page.getByRole('button', { name: '修改项目归属' });
+        return [
+          await star.evaluate(el => [el.offsetWidth, el.offsetHeight, getComputedStyle(el).color]),
+          await button.evaluate(el => [el.offsetWidth, el.offsetHeight, getComputedStyle(el).color])
+        ];
+      };
+      assert.deepEqual(await geometry(scoped), await geometry(prototype));
+    }
+  }
+  await prototype.close();
+  await scoped.setViewportSize({ width: 1366, height: 900 });
+  await global.goto(origin + '/#/feishu/bot-chats/' + candidate.id);
+  await scoped.goto(origin + '/#/projects/p1/chats/' + candidate.id + '/' + oldMessage.id);
+  await scoped.locator('[data-source-message]').waitFor();
+  await scoped.locator('.chat-composer').waitFor();
+  assert.ok(scopedCapabilities.has(candidate.id));
+  await scoped.getByRole('button', { name: '设为项目主群', exact: true }).click();
+  await scoped.getByText('主群将从「北辰项目群」更换为当前群。').waitFor();
+  await scoped.getByRole('button', { name: '确认设置' }).click();
+  for (const page of [global, scoped]) {
+    await page.locator('[data-title] .chat-primary-star').waitFor();
+    assert.equal(await page.locator('[data-chat-id="oc_group"] .chat-primary-star').count(), 0);
+  }
+  await scoped.getByRole('button', { name: '修改项目归属' }).click();
+  await scoped.getByRole('combobox').fill('启');
+  await scoped.getByRole('option', { name: '启明' }).click();
+  await scoped.getByRole('button', { name: '保存', exact: true }).click();
+  await scoped.getByRole('alert').filter({ hasText: '保存失败' }).waitFor();
+  await global.locator('.chat-project-meta').getByRole('link', { name: '北辰' }).waitFor();
+  await scoped.getByRole('button', { name: '重试', exact: true }).click();
+  await global.locator('.chat-project-meta').getByRole('link', { name: '启明' }).waitFor();
+  await scoped.locator('[data-chat-id="oc_second"]').waitFor({ state: 'detached' });
+  assert.equal(await scoped.locator('.chat-reader-host a[href*="bot-chats"]').count(), 0);
+  await scoped.goto(origin + '/#/projects/p2/chats/' + candidate.id);
+  await scoped.locator('[data-title]').getByText('候选群').waitFor();
+  assert.equal(await scoped.locator('[data-chat-id="oc_group"]').count(), 0);
+  await scoped.locator('[data-title] .chat-primary-star').waitFor({ state: 'detached' });
+  for (const attempt of [1, 2]) {
+    await global.getByRole('button', { name: '修改项目归属' }).click();
+    await global.getByRole('button', { name: '移除 启明' }).click();
+    await global.getByRole('button', { name: '保存', exact: true }).click();
+    if (attempt === 1) await global.getByRole('button', { name: '重新读取' }).click();
+  }
+  await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
+  await scoped.getByText('暂无项目关联群。').waitFor();
+  await Promise.all([scoped.reload(), global.reload()]);
+  await scoped.getByText('暂无项目关联群。').waitFor();
+  await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
+});
