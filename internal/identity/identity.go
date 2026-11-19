@@ -357,7 +357,15 @@ const botChatsPath = "/#/feishu/bot-chats"
 
 var botChatsReturn = regexp.MustCompile(`^/#/(feishu/)?bot-chats(/[A-Za-z0-9_-]{1,160}){0,2}$`)
 
+// Project return routes stay in the workbench fragment and are authorized again on read.
+const projectSegment = `[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}`
+
+var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
+
 func (a WorkbenchAccess) canReturnTo(path string) bool {
+	if projectReturn.MatchString(path) {
+		return a.Navigation["workbench"]
+	}
 	if botChatsReturn.MatchString(path) {
 		return a.Navigation["bot_chats"]
 	}
@@ -393,6 +401,9 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func localReturnPath(raw string) (string, error) {
+	if len(raw) <= 4096 && projectReturn.MatchString(raw) {
+		return raw, nil
+	}
 	if botChatsReturn.MatchString(raw) {
 		return botChatsPath + strings.TrimPrefix(strings.TrimPrefix(raw, "/#/feishu/bot-chats"), "/#/bot-chats"), nil
 	}

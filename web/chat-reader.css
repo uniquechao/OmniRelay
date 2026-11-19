@@ -1,10 +1,10 @@
-.workspace:has(> .page[data-layout="bot-chat"]) {
+.workspace:has(> .page:is([data-layout="bot-chat"],[data-layout="project"])) {
   display: flex;
   flex-direction: column;
   height: 100dvh;
 }
-.workspace:has(> .page[data-layout="bot-chat"]) > .top { flex: none; }
-.page[data-layout="bot-chat"] { flex: 1; width: 100%; min-height: 0; }
+.workspace:has(> .page:is([data-layout="bot-chat"],[data-layout="project"])) > .top { flex: none; }
+.page:is([data-layout="bot-chat"],[data-layout="project"]) { flex: 1; width: 100%; min-height: 0; }
 .chat-reader-host { display: flex; flex: 1; min-width: 0; min-height: 0; container: chat-reader / inline-size; }
 .chat-reader-host > .bot-chat { min-height: 0; }
 .reader-directory ul { list-style: none; padding: 0; }
@@ -55,3 +55,5 @@
 }
 .chat-delivery-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--or-text-secondary); font-size: .75rem; }
 .chat-composer-choice { overflow-y: auto; max-height: min(35dvh, 16rem); }
+
+#project-panel > .chat-reader-host { flex: 1 1 auto; }

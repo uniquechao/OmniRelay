@@ -32,10 +32,11 @@ func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source
 }
 
 type conversation struct {
-	ID   string                `json:"id"`
-	Kind orchestrator.ChatKind `json:"kind"`
-	Name string                `json:"name"`
-	Peer string                `json:"-"`
+	assignmentVersion int64
+	ID                string                `json:"id"`
+	Kind              orchestrator.ChatKind `json:"kind"`
+	Name              string                `json:"name"`
+	Peer              string                `json:"-"`
 }
 
 func (s *Service) upsertConversation(ctx context.Context, tx pgx.Tx, id string, kind orchestrator.ChatKind, peer, name string) error {
@@ -155,18 +156,20 @@ func searchableText(kind, body string) string {
 	return strings.Join(parts, " ")
 }
 
-func (s *Service) listConversations(ctx context.Context, id string) ([]conversation, error) {
-	rows, err := s.pool.Query(ctx, `SELECT chat_id,kind,name,peer_open_id
+func (s *Service) listConversations(ctx context.Context, id, project string) ([]conversation, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chat_id,kind,name,peer_open_id,project_assignment_version
 		FROM feishu_chat_conversations c JOIN feishu_bot_configs b USING (tenant_key,app_id)
 		WHERE c.tenant_key=$1 AND c.app_id=$2 AND b.enabled AND b.credentials_generation=$3
-			AND ($4='' OR chat_id=$4) ORDER BY chat_id`, s.tenant, s.app, s.generation, id)
+			AND ($4='' OR chat_id=$4) AND ($5='' OR EXISTS (
+                SELECT 1 FROM project_chat_assignments a WHERE (a.tenant_key,a.app_id,a.chat_id,a.project_id)=(c.tenant_key,c.app_id,c.chat_id,$5)))
+            ORDER BY chat_id`, s.tenant, s.app, s.generation, id, project)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (conversation, error) {
 		var item conversation
-		err := row.Scan(&item.ID, &item.Kind, &item.Name, &item.Peer)
+		err := row.Scan(&item.ID, &item.Kind, &item.Name, &item.Peer, &item.assignmentVersion)
 		return item, err
 	})
 }

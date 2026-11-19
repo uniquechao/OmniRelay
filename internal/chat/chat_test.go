@@ -342,3 +342,42 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("admin", "GET", "/oc_group/messages/om_b/context", 404), "error", `"chat_access_lost"`)
 	expect(request("admin", "GET", "", 200), "total", "3")
 }
+
+func TestProjectChatReaderScope(t *testing.T) {
+	src := &fakeSource{members: map[string][]Member{"g1": {{"ou_alice", "甲"}}, "g2": {{"ou_bob", "乙"}}}}
+	s, ctx := testChat(t, src)
+	for _, id := range []string{"g1", "g2"} {
+		msg := exampleMessage(id, "m"+id, "项目消息", 1)
+		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: id, Kind: orchestrator.ChatGroup, Message: &msg})
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO project_chat_links(tenant_key,app_id,project_id,chat_id) VALUES ('tenant_chat','cli_chat','p1','g1'),('tenant_chat','cli_chat','p1','g2')`); err != nil {
+		t.Fatal(err)
+	}
+	s.check = func(_ context.Context, _ identity.Principal, action, project string) (bool, error) {
+		return action == "chat.read_all" || (action == "project.read" && project == "p1"), nil
+	}
+	mux := http.NewServeMux()
+	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
+		return identity.Principal{AccountID: "alice", OpenID: "ou_alice", TenantKey: "tenant_chat", AppID: "cli_chat"}, true
+	})
+	get := func(path string, status int) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/projects/"+path, nil))
+		if w.Code != status {
+			t.Fatalf("请求 %s 得到 %d %s", path, w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	result := get("p1/chat-reader", 200)
+	if !strings.Contains(result, "g1") || strings.Contains(result, "g2") {
+		t.Fatal("项目群可见范围错误", result)
+	}
+	get("p1/chat-reader/g2/messages", 404)
+	get("p2/chat-reader/g1/messages", 404)
+	get("p1/chat-reader/g1/messages", 200)
+	if _, err := s.pool.Exec(ctx, `UPDATE project_chat_links SET project_id='p2' WHERE chat_id='g1'`); err != nil {
+		t.Fatal(err)
+	}
+	get("p1/chat-reader/g1/messages", 404)
+}
