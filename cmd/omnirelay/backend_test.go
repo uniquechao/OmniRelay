@@ -112,9 +112,13 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		}
 	}
 	var sensitive []string
-	login := func(code, destination string) (*http.Cookie, identity.Principal, string) {
+	login := func(code, destination string, requested ...string) (*http.Cookie, identity.Principal, string) {
 		t.Helper()
-		start := do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(returnPath), "", nil, "")
+		target := returnPath
+		if len(requested) != 0 {
+			target = requested[0]
+		}
+		start := do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(target), "", nil, "")
 		wantStatus(start, http.StatusFound)
 		authorization, err := url.Parse(start.Header().Get("Location"))
 		if err != nil || authorization.Host != "accounts.feishu.cn" ||
@@ -157,6 +161,9 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
+	for _, asset := range []string{"/chat-reader.js", "/chat-reader.css", "/omni-relay-bot-chat.css", "/omni-relay-split-pane.js"} {
+		wantStatus(do("GET", asset, "", nil, ""), http.StatusOK)
+	}
 	for _, path := range []string{"https://offsite.test/", "/%2Foffsite.test", "/#/workbench?next=//offsite.test"} {
 		wantStatus(do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(path), "", nil, ""), http.StatusBadRequest)
 	}
@@ -235,7 +242,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatalf("provisioning changed the presentation key: %s %v", created.Body.String(), err)
 	}
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", "/#/workbench")
+	member, target, memberCSRF := login("ou_member", "/#/feishu/bot-chats/oc_project/om_receipt", "/#/bot-chats/oc_project/om_receipt")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)

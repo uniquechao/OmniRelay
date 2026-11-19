@@ -1,0 +1,320 @@
+import assert from 'node:assert/strict';
+import { mkdir, readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { extname } from 'node:path';
+import { test } from 'node:test';
+
+const require = createRequire(import.meta.url);
+const origin = 'https://relay.example.test';
+const base = '/api/v1/feishu/chats';
+const sent_at = '2026-11-19T16:14:00Z';
+const person = { name: '林晓', person_key: 'person_alice', source: 'feishu', organization_paths: [['研发中心', '平台组']] };
+const group = { id: 'oc_group', kind: 'group', name: '北辰项目群', last_message_at: sent_at };
+const direct = { id: 'oc_direct', kind: 'p2p', name: person.name, person, last_message_at: sent_at };
+const oldMessage = { id: 'om_old', chat_id: group.id, sender: person, type: 'text', body: '{"text":"会议纪要"}', sent_at, state: 'available' };
+const task = { id: 'om_task', chat_id: group.id, sender: { name: '飞书 Bot' }, sender_kind: 'app', type: 'interactive',
+  body: '{"header":{"title":{"content":"任务已分派"}}}',
+  business_receipt: { id: 'rc_1', project_id: 'beichen', target_kind: 'task', target_id: 'task_1' }, sent_at };
+const briefing = { ...task, id: 'om_brief', body: '{"title":"项目简报"}',
+  business_receipt: { id: 'rc_2', project_id: 'beichen', target_kind: 'briefing', target_id: 'brief_1' } };
+const p2pMessage = { ...oldMessage, id: 'om_direct', chat_id: direct.id, body: '收到，谢谢' };
+const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
+const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const packageName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
+
+async function mountFixture(page, { signedIn = true } = {}) {
+  let groupAccess = true;
+  let releaseSearch;
+  let releaseMembers;
+  const queries = [];
+  const items = (values, extra = {}) => ({ json: { items: values, total: values.length, ...extra } });
+  const error = (status, code) => ({ status, json: { error: code } });
+  const session = { csrf_token: 'fixture-csrf', principal: { account_id: 'alice', open_id: 'ou_alice' },
+    access: { navigation: { workbench: true, bot_chats: true }, default_route: '/#/workbench' } };
+  await page.route(origin + '/**', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const query = url.searchParams;
+    if (path === '/api/v1/me') return route.fulfill(signedIn ? { json: session } : error(401, 'unauthorized'));
+    if (path === '/auth/login') {
+      signedIn = true;
+      return route.fulfill({ json: session });
+    }
+    if (path === '/auth/feishu/start') {
+      queries.push([path, query.get('return_to')]);
+      signedIn = true;
+      return route.fulfill({ status: 302, headers: { location: query.get('return_to') } });
+    }
+    if (path === base || path.startsWith(base + '/')) {
+      const relative = path.slice(base.length);
+      const visible = groupAccess ? [group, direct] : [direct];
+      queries.push([request.method(), relative, query.toString()]);
+      if (relative.startsWith('/oc_group') && !groupAccess) return route.fulfill(error(404, 'chat_access_lost'));
+      if (relative === '') return route.fulfill(items(visible.filter(row => !query.get('kind') || row.kind === query.get('kind'))));
+      if (relative === '/search') return route.fulfill(items(
+        query.get('kind') === 'p2p' || !groupAccess ? [] : [oldMessage], { next_cursor: '' }));
+      if (relative === '/sync' && request.method() === 'POST') {
+        assert.equal(request.headers()['x-csrf-token'], 'fixture-csrf');
+        return route.fulfill({ status: 202, json: { state: 'queued' } });
+      }
+      if (relative === '/sync') return route.fulfill(items(visible.map(row => ({
+        chat_id: row.id, state: 'complete', coverage: 'all_source_visible_history', completed_at: sent_at
+      })), { scope: 'current_memberships_and_own_private_chats' }));
+      if (relative === '/oc_group') return route.fulfill(items([group]));
+      if (relative === '/oc_direct') return route.fulfill(items([direct]));
+      if (relative === '/oc_group/messages') {
+        return route.fulfill(query.has('cursor') ? items([oldMessage]) : items([briefing, task], { next_cursor: 'older' }));
+      }
+      if (relative === '/oc_direct/messages' || relative === '/oc_direct/search') return route.fulfill(items([p2pMessage]));
+      if (relative === '/oc_direct/messages/om_direct/context') return route.fulfill(items([p2pMessage]));
+      if (relative === '/oc_group/search') {
+        await new Promise(resolve => { releaseSearch = resolve; });
+        return route.fulfill(items([{ ...oldMessage, body: '迟到的北辰搜索' }])).catch(() => {});
+      }
+      if (relative === '/oc_group/members' && query.get('offset') === '0') {
+        await new Promise(resolve => { releaseMembers = resolve; });
+        return route.fulfill(items([{ ...person, name: '迟到的北辰成员' }], { state: 'complete' })).catch(() => {});
+      }
+      if (relative === '/oc_direct/members') return route.fulfill(items([person], { state: 'complete' }));
+      if (relative === '/oc_group/messages/om_old/context') return route.fulfill(items([oldMessage, task], { anchor_id: 'om_old' }));
+      if (relative === '/oc_group/messages/om_deleted/context') return route.fulfill(error(410, 'message_deleted'));
+      return route.fulfill(error(404, 'message_not_found'));
+    }
+    const prototype = path.startsWith('/prototype/');
+    const asset = prototype ? path.slice('/prototype/'.length) : path.slice(1) || 'index.html';
+    for (const folder of prototype ? ['design/prototype'] : ['web', 'design/prototype']) {
+      try {
+        const body = await readFile(new URL('../../' + folder + '/' + asset, import.meta.url));
+        return route.fulfill({ body, contentType: mime[extname(asset)], headers: prototype ? {} : { 'Content-Security-Policy': csp } });
+      } catch (failure) {
+        if (failure.code !== 'ENOENT') throw failure;
+      }
+    }
+    return route.fulfill({ status: 404 });
+  });
+  return {
+    queries,
+    revoke: () => { groupAccess = false; },
+    resolveSearch: () => releaseSearch?.(),
+    resolveMembers: () => releaseMembers?.()
+  };
+}
+
+test('机器人记录切换、搜索、成员、回执及分隔栏', { skip: !packageName }, async t => {
+  const { chromium } = require(packageName);
+  const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: 'reduce' });
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  const fixture = await mountFixture(page);
+  await page.goto(origin + '/#/bot-chats');
+  await page.getByRole('heading', { name: group.name }).waitFor();
+  assert.equal(new URL(page.url()).hash, '#/feishu/bot-chats');
+  await page.getByRole('link', { name: '查看关联任务' }).waitFor();
+  assert.equal(await page.getByRole('link', { name: '查看关联任务' }).getAttribute('href'), '#/projects/beichen/tasks/task_1');
+  assert.equal(await page.getByRole('link', { name: '查看项目简报' }).getAttribute('href'), '#/projects/beichen/reports/brief/brief_1');
+
+  await page.getByRole('button', { name: '加载更早消息' }).click();
+  await page.getByText('会议纪要', { exact: true }).waitFor();
+  const split = page.getByRole('separator', { name: '调整会话列表宽度' });
+  const width = () => page.locator('.chat-directory').evaluate(node => node.clientWidth);
+  const range = name => split.getAttribute('aria-value' + name).then(Number);
+  const total = await page.locator('.bot-chat').evaluate(node => node.clientWidth);
+  await split.press('Home');
+  assert.equal(await range('now'), await range('min'));
+  await split.press('ArrowRight');
+  assert.equal(await range('now'), await range('min') + 16);
+  await split.press('ArrowLeft');
+  assert.equal(await range('now'), await range('min'));
+  await split.press('End');
+  assert.equal(await range('now'), await range('max'));
+  await split.press('ArrowLeft');
+  const previous = await width();
+  const bounds = await split.boundingBox();
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x - 52, bounds.y + 100, { steps: 5 });
+  await page.mouse.up();
+  const dragged = await width();
+  assert.ok(dragged < previous);
+  assert.equal(await page.locator('.bot-chat').evaluate(node => node.clientWidth), total);
+  await page.reload();
+  await page.getByRole('heading', { name: group.name }).waitFor();
+  assert.equal(await width(), dragged);
+  await page.setViewportSize({ width: 820, height: 900 });
+  await page.waitForFunction(() => Number(document.querySelector('.chat-split-handle').getAttribute('aria-valuemax')) < 500);
+  assert.ok(await width() < dragged);
+  assert.ok(await page.locator('.chat-reading').evaluate(node => node.getBoundingClientRect().width >= 284));
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.waitForFunction(expected => document.querySelector('.chat-directory').clientWidth === expected, dragged);
+
+  await page.getByRole('button', { name: '搜索当前会话' }).click();
+  const searchRequest = page.waitForRequest(request => new URL(request.url()).pathname === base + '/oc_group/search');
+  await page.getByRole('searchbox', { name: '搜索当前会话' }).fill('北辰');
+  await searchRequest;
+  await page.getByRole('button', { name: '打开会话 林晓' }).click();
+  fixture.resolveSearch();
+  await page.getByText('收到，谢谢').waitFor();
+  assert.equal(await page.getByRole('searchbox', { name: '搜索当前会话' }).count(), 0);
+  assert.equal(await page.getByText('迟到的北辰搜索').count(), 0);
+
+  const directoryTone = await page.locator('.chat-direct-row .person-avatar').getAttribute('data-avatar-tone');
+  const titleTone = await page.locator('.chat-reading-title .person-avatar').getAttribute('data-avatar-tone');
+  assert.equal(titleTone, directoryTone);
+  await page.locator('.chat-reading-title .person-name').click();
+  const popover = page.locator('.person-popover:popover-open');
+  await popover.getByText('研发中心 / 平台组').waitFor();
+  await page.keyboard.press('Escape');
+  await popover.waitFor({ state: 'hidden' });
+
+  await page.getByRole('button', { name: '打开会话 北辰项目群' }).click();
+  const memberRequest = page.waitForRequest(request => new URL(request.url()).pathname === base + '/oc_group/members');
+  await page.getByRole('button', { name: '会话成员' }).click();
+  await memberRequest;
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '打开会话 林晓' }).click();
+  fixture.resolveMembers();
+  await page.getByRole('button', { name: '会话成员' }).click();
+  const members = page.getByRole('dialog', { name: '会话成员' });
+  await members.getByText('研发中心 / 平台组').waitFor();
+  assert.equal(await members.getByText('迟到的北辰成员').count(), 0);
+  assert.equal(await members.locator('.person-avatar').getAttribute('data-avatar-tone'), titleTone);
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: '搜索当前会话' }).click();
+  await page.getByRole('searchbox', { name: '搜索当前会话' }).fill('谢谢');
+  await page.getByRole('button', { name: '定位消息' }).click();
+  await page.locator('[data-source-message]').getByText('收到，谢谢').waitFor();
+  assert.match(page.url(), /oc_direct\/om_direct$/);
+
+  await page.getByRole('button', { name: '筛选会话' }).click();
+  await page.getByRole('button', { name: '群聊', exact: true }).click();
+  await page.getByRole('heading', { name: group.name }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '打开会话 林晓' }).count(), 0);
+  await page.getByRole('searchbox', { name: '搜索会话或消息' }).fill('会议');
+  await page.locator('.chat-result').click();
+  const anchor = page.locator('[data-source-message]');
+  await anchor.waitFor();
+  assert.ok(await anchor.evaluate(node => node === document.activeElement));
+  assert.match(page.url(), /#\/feishu\/bot-chats\/oc_group\/om_old$/);
+  await page.getByRole('button', { name: '查看同步详情' }).click();
+  await page.getByRole('dialog').getByText('当前群成员身份及本人的 1:1 会话').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '刷新会话' }).click();
+  await page.locator('[data-sync]').getByText('已请求同步').waitFor();
+  assert.deepEqual(pageErrors, []);
+});
+
+test('手机飞书登录回跳、深链失权与触摸返回', { skip: !packageName }, async t => {
+  const { chromium } = require(packageName);
+  const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const fixture = await mountFixture(page, { signedIn: false });
+  await page.goto(origin + '/#/bot-chats/oc_group/om_old');
+  await page.locator('#feishu-login').tap();
+  await page.locator('[data-source-message]').waitFor();
+  assert.ok(fixture.queries.some(([type, target]) => type === '/auth/feishu/start' && target === '/#/feishu/bot-chats/oc_group/om_old'));
+  assert.equal(await page.getByRole('separator', { name: '调整会话列表宽度' }).count(), 0);
+  assert.equal(await page.locator('.chat-directory').isVisible(), false);
+  await page.getByRole('button', { name: '返回会话列表' }).tap();
+  const row = page.getByRole('button', { name: '打开会话 北辰项目群' });
+  await row.waitFor();
+  assert.ok(await row.evaluate(node => node === document.activeElement));
+  assert.equal(await page.locator('.chat-reading').isVisible(), false);
+  await page.goto(origin + '/#/feishu/bot-chats/oc_group/om_deleted');
+  await page.getByText('这条消息已撤回。').waitFor();
+  fixture.revoke();
+  await page.reload();
+  await page.getByText('当前账号已无法访问此会话。').waitFor();
+  await page.getByRole('button', { name: '返回会话列表' }).tap();
+  await page.getByRole('button', { name: '打开会话 林晓' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '打开会话 北辰项目群' }).count(), 0);
+});
+
+test('项目宿主复用会话组件，按容器宽度切换并忽略过期适配器响应', { skip: !packageName }, async t => {
+  const { chromium } = require(packageName);
+  const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+  await mountFixture(page);
+  await page.goto(origin + '/#/workbench');
+  const first = { ...group, id: 'project_first' };
+  const second = { ...group, id: 'project_second', name: '第二个关联群' };
+  await page.getByRole('heading', { name: '工作台总览' }).waitFor();
+  await page.evaluate(async ({ first, second, task }) => {
+    const { mountChatReader } = await import('/chat-reader.js');
+    const host = document.createElement('div');
+    host.style.cssText = 'display:flex; inline-size:760px; block-size:430px';
+    document.getElementById('page').append(host);
+    window.projectPanel = host;
+    const rows = Array.from({ length: 35 }, (_, i) => ({ ...first, id: 'other_' + i, name: '关联群 ' + i }));
+    const records = [first, second, ...rows];
+    window.embedded = mountChatReader(host, {
+      conversations: async () => ({ items: records, total: records.length }),
+      conversation: async id => ({ items: records.filter(record => record.id === id) }),
+      messages: async id => {
+        if (id === first.id) return new Promise(resolve => { window.lateProjectMessages = resolve; });
+        const items = Array.from({ length: 30 }, (_, i) => ({ ...task, id: 'history_' + i, type: 'text', body: '第二群记录 ' + i }));
+        return { items };
+      },
+      sync: async () => ({ items: [], total: 0 })
+    }, { project: true });
+  }, { first, second, task });
+  await page.getByRole('heading', { name: '项目关联群' }).waitFor();
+  await page.waitForFunction(() => typeof window.lateProjectMessages === 'function');
+  await page.getByRole('button', { name: '打开会话 第二个关联群' }).click();
+  await page.getByText('第二群记录 29').waitFor();
+  await page.evaluate(message => window.lateProjectMessages({ items: [message] }),
+    { ...oldMessage, body: '迟到的项目会话' });
+  assert.equal(await page.getByText('迟到的项目会话').count(), 0);
+  assert.ok(await page.locator('.chat-timeline').evaluate(node => node.scrollHeight > node.clientHeight));
+  assert.ok(await page.locator('.chat-conversations').evaluate(node => node.scrollHeight > node.clientHeight));
+  await page.locator('.chat-conversations').evaluate(node => { node.scrollTop = 200; });
+  assert.ok(await page.locator('.chat-timeline').evaluate(node => node.scrollTop > 0));
+  await page.evaluate(() => { window.projectPanel.style.inlineSize = '470px'; });
+  await page.getByRole('separator', { name: '调整会话列表宽度' }).waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: '返回会话列表' }).click();
+  assert.ok(await page.getByRole('button', { name: '打开会话 第二个关联群' }).evaluate(node => node === document.activeElement));
+  await page.evaluate(() => window.embedded.dispose());
+});
+
+test('按桌面和手机视口核对原型的浅色及深色聊天界面', { skip: !packageName }, async t => {
+  const { chromium } = require(packageName);
+  const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const evidence = process.env.OMNIRELAY_CHAT_EVIDENCE;
+  if (evidence) await mkdir(evidence, { recursive: true });
+  for (const viewport of [{ width: 1366, height: 900 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport, hasTouch: viewport.width < 500, isMobile: viewport.width < 500 });
+    await mountFixture(page);
+    for (const theme of ['light', 'dark']) {
+      const results = [];
+      for (const [version, path] of [['prototype', '/prototype/omni-relay-workbench.html'], ['workbench', '/']]) {
+        await page.goto(origin + path + '?theme=' + theme + '#/feishu/bot-chats');
+        await page.locator('.chat-conversation').first().waitFor();
+        results.push(await page.evaluate(() => {
+          const directory = document.querySelector('.chat-directory');
+          const reading = document.querySelector('.chat-reading');
+          const tools = document.querySelector('.chat-directory-tools');
+          const split = document.querySelector('.chat-split-handle');
+          const panelStyle = getComputedStyle(directory);
+          return {
+            theme: document.documentElement.dataset.theme,
+            background: panelStyle.backgroundColor,
+            border: panelStyle.borderColor,
+            radius: panelStyle.borderRadius,
+            padding: getComputedStyle(tools).padding,
+            reading: getComputedStyle(reading).display,
+            split: getComputedStyle(split).display
+          };
+        }));
+        if (evidence) await page.screenshot({ path: evidence + '/' + version + '-' + viewport.width + '-' + theme + '.png' });
+      }
+      assert.deepEqual(results[1], results[0]);
+    }
+    await page.close();
+  }
+});

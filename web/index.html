@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="omni-relay-content.css">
 <link rel="stylesheet" href="omni-relay-interactions.css">
 <link rel="stylesheet" href="omni-relay-system.css">
+<link rel="stylesheet" href="omni-relay-bot-chat.css">
+<link rel="stylesheet" href="chat-reader.css">
 </head>
 <body>
 <!-- Navigation symbols from the existing OmniGrid icon sprite. -->
@@ -25,6 +27,11 @@
   <symbol id="nav-components" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
   <symbol id="action-expand" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="action-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="nav-bot-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Zm4 4h8m-8 3.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-filter-icon" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-7 6h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-search-icon" viewBox="0 0 24 24"><path d="M15.5 15.5 21 21M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-info" viewBox="0 0 24 24"><path d="M12 11v5m0-8v.1m9 3.9a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="chat-refresh" viewBox="0 0 24 24"><path d="M20 3v5h-5M4 21v-5h5M4.5 9a8 8 0 0 1 13-4L20 8m-16 8 2.5 3a8 8 0 0 0 13-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="nav-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="9" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 20c0-4 2.2-6 5.5-6s5.5 2 5.5 6M14 15c3.8-.8 6.5 1.2 6.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="status-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5m0 3v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
   <symbol id="status-danger" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m9 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
@@ -39,6 +46,14 @@
       <p class="rail-caption">工作空间</p>
       <nav class="nav" id="side-navigation" aria-label="工作台主导航">
         <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
+        <details class="nav-group" id="feishu-nav" hidden>
+          <summary aria-label="飞书" aria-controls="feishu-nav-children"><svg class="icon" aria-hidden="true"><use href="#nav-bot-chat"/></svg><span>飞书</span>
+            <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
+          </summary>
+          <div class="nav-children" id="feishu-nav-children">
+            <a href="#/feishu/bot-chats" data-nav="bot-chats">机器人记录</a>
+          </div>
+        </details>
         <details class="nav-group" id="system-nav">
           <summary aria-label="系统管理"><svg class="icon" aria-hidden="true"><use href="#nav-system"/></svg><span>系统管理</span>
             <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
@@ -69,6 +84,7 @@
         <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
         <select class="select" id="mobile-nav" aria-label="工作台主导航">
           <option value="workbench">工作台总览</option>
+          <option value="feishu/bot-chats" hidden>机器人记录</option>
           <optgroup label="系统管理">
             <option value="system/users">用户管理</option>
             <option value="system/roles">角色权限</option>
@@ -147,6 +163,7 @@
 <script src="omni-relay-ui.js"></script>
 <script src="omni-relay-loading.js"></script>
 <script src="omni-relay-login-motion.js"></script>
+<script src="omni-relay-split-pane.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

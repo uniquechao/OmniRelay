@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -352,7 +353,14 @@ func (s *Service) me(w http.ResponseWriter, r *http.Request) {
 	}{Principal: p, CSRFToken: csrfToken(token), Access: access})
 }
 
+const botChatsPath = "/#/feishu/bot-chats"
+
+var botChatsReturn = regexp.MustCompile(`^/#/(feishu/)?bot-chats(/[A-Za-z0-9_-]{1,160}){0,2}$`)
+
 func (a WorkbenchAccess) canReturnTo(path string) bool {
+	if botChatsReturn.MatchString(path) {
+		return a.Navigation["bot_chats"]
+	}
 	switch path {
 	case "/#/workbench":
 		return a.Navigation["workbench"]
@@ -385,6 +393,9 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func localReturnPath(raw string) (string, error) {
+	if botChatsReturn.MatchString(raw) {
+		return botChatsPath + strings.TrimPrefix(strings.TrimPrefix(raw, "/#/feishu/bot-chats"), "/#/bot-chats"), nil
+	}
 	switch raw {
 	case "":
 		return "/", nil

@@ -1,0 +1,55 @@
+.workspace:has(> .page[data-layout="bot-chat"]) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+.workspace:has(> .page[data-layout="bot-chat"]) > .top { flex: none; }
+.page[data-layout="bot-chat"] { flex: 1; width: 100%; min-height: 0; }
+.chat-reader-host { display: flex; flex: 1; min-width: 0; min-height: 0; container: chat-reader / inline-size; }
+.chat-reader-host > .bot-chat { min-height: 0; }
+.reader-directory ul { list-style: none; padding: 0; }
+.reader-directory h3 { margin: 8px; font-size: .75rem; color: var(--or-text-secondary); }
+.reader-directory .chat-result {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--or-text);
+  text-align: start;
+}
+.reader-directory .chat-result:hover { background: var(--or-hover-bg); }
+.reader-directory .chat-result:focus-visible { outline-offset: -2px; }
+.chat-result strong, .chat-message-meta .person-name { font-size: .8125rem; }
+.chat-reading-head .chat-reading-title:focus-visible { outline-offset: 2px; }
+.chat-message-meta .person-org { max-width: min(26ch, 100%); }
+.chat-message .chat-bubble { white-space: pre-wrap; }
+.chat-message .chat-message-body { max-width: min(calc(100% - 40px), 780px); }
+.chat-page-action { margin: 4px 4px 8px; font-size: .75rem; }
+.chat-sync > span::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--or-selected-edge);
+}
+.chat-sync > span[data-state="complete"]::before { background: var(--or-success-text); }
+.chat-sync > span:is([data-state="failed"], [data-state="access_lost"])::before { background: var(--or-danger-text); }
+.chat-sync > span:empty::before { display: none; }
+.chat-sync-details { display: grid; gap: 10px; margin-top: 12px; padding: 0; list-style: none; overflow-wrap: anywhere; }
+.chat-sync-details summary { cursor: pointer; padding-block: 6px; color: var(--or-link); }
+@container chat-reader (max-width: 505px) {
+  .chat-reader-host > .bot-chat { grid-template-columns: minmax(0, 1fr); }
+  .chat-reader-host .chat-split-handle,
+  .chat-reader-host .chat-reading,
+  .chat-reader-host .bot-chat[data-detail-open] .chat-directory { display: none; }
+  .chat-reader-host .bot-chat[data-detail-open] .chat-reading { display: flex; }
+  .chat-reader-host .chat-back { display: inline-grid; }
+}
+@media (pointer: coarse) {
+  .chat-message .chat-message-body { max-width: min(calc(100% - 54px), 780px); }
+  .chat-back { min-width: 44px; }
+}

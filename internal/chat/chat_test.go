@@ -287,6 +287,19 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("admin", "GET", "?kind=p2p", 200), "total", "2")
 	expect(request("admin", "GET", "", 200), "total", "4")
 	expect(request("alice", "GET", "/search?q=会议", 200), "total", "3")
+	expect(request("alice", "GET", "/search?q=会议&kind=p2p", 200), "total", "1")
+	expect(request("alice", "GET", "/search?q=会议&kind=group", 200), "total", "2")
+	direct := request("alice", "GET", "/oc_private", 200)
+	expect(direct, "total", "1")
+	members := request("alice", "GET", "/oc_private/members", 200)
+	var rows []conversationItem
+	if err := json.Unmarshal(direct["items"], &rows); err != nil || len(rows) != 1 ||
+		rows[0].Person == nil || rows[0].Person.PersonKey == "" ||
+		!strings.Contains(string(members["items"]), rows[0].Person.PersonKey) ||
+		strings.Contains(string(direct["items"]), "ou_alice") {
+		t.Fatalf("inconsistent private peer projection: %s / %s", direct["items"], members["items"])
+	}
+	expect(request("alice", "GET", "/oc_other", 404), "error", `"chat_access_lost"`)
 	expect(request("bob", "GET", "/search?q=会议", 200), "total", "2")
 	expect(request("alice", "GET", "/oc_bob/messages", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/members", 200), "total", "1")
@@ -320,6 +333,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 410), "error", `"message_deleted"`)
 	expect(request("alice", "GET", "/oc_group/search?q=会议", 200), "total", "1")
 	src.members["oc_group"] = nil
+	expect(request("alice", "GET", "/oc_group", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/sync", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/search?q=会议", 200), "total", "1")
