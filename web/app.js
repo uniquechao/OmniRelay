@@ -3,6 +3,7 @@ import { mountAdmin } from './admin.js';
 import { feishuBotAPI, systemAPI } from './system-api.js';
 import { mountFeishuBot } from './feishu-bot.js';
 import { mountConnectionSettings } from './connection-settings.js';
+import { clearChatDrafts } from './chat-composer.js';
 import { chatAPI, chatRoute, mountChatReader } from './chat-reader.js';
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
@@ -111,6 +112,7 @@ function closeSessionOverlays() {
 
 function showLogin({ preserveTarget = true } = {}) {
   if (view?.hasDraft?.()) ui.toast('warning', '会话已结束，未保存的修改已清除。');
+  clearChatDrafts();
   closeSessionOverlays();
   sessionCheck?.abort();
   session = null;
@@ -156,6 +158,7 @@ function refreshAccess() {
       const visibleAccess = access => [access?.roles, access?.admin, access?.navigation, access?.default_route, access?.permissions];
       if (current.user.id !== next.user.id || JSON.stringify(visibleAccess(current.access)) !== JSON.stringify(visibleAccess(next.access))) {
         ui.toast('warning', view?.hasDraft?.() ? '当前账号或权限已变更，未保存的修改已清除。' : '账号权限已更新。');
+        clearChatDrafts();
         closeSessionOverlays();
         await establishSession(next);
         void render();
@@ -281,7 +284,7 @@ async function render() {
   page.scrollTop = 0;
   if (chat) {
     mountChatReader(page, chats, {
-      signal, chatId: chat.chatId, messageId: chat.messageId,
+      signal, draftScope: session.user.id, chatId: chat.chatId, messageId: chat.messageId,
       onLocation(chatId, messageId) {
         if (signal.aborted || location.hash !== renderedHash) return;
         renderedHash = chatRoute('#/feishu/bot-chats' + (chatId ? '/' + chatId : '') +

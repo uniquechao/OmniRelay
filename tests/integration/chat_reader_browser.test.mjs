@@ -433,6 +433,20 @@ test('按桌面和手机视口核对原型的浅色及深色聊天界面', { ski
             split: getComputedStyle(split).display
           };
         }));
+        if (viewport.width < 500) await page.locator('.chat-conversation').first().click();
+        const composer = page.locator('.chat-composer');
+        await composer.waitFor();
+        const geometry = await composer.evaluate(form => {
+          const style = node => getComputedStyle(node);
+          const box = form.querySelector('.chat-composer-box');
+          const toolbar = form.querySelector('.chat-composer-tools');
+          return { padding: style(form).padding, border: style(box).border, radius: style(box).borderRadius,
+            fill: style(box).backgroundColor, textSize: style(form.querySelector('textarea')).fontSize,
+            buttons: [...toolbar.children].map(node => [node.offsetWidth, node.offsetHeight]),
+            fits: box.scrollWidth <= box.clientWidth + 1 };
+        });
+        assert.ok(geometry.fits);
+        Object.assign(results.at(-1), { composer: geometry });
         if (evidence) await page.screenshot({ path: evidence + '/' + version + '-' + viewport.width + '-' + theme + '.png' });
         if (version === 'prototype' && viewport.width === 1366 && theme === 'light') {
           const draft = page.getByRole('textbox', { name: '消息内容' });
@@ -453,4 +467,98 @@ test('按桌面和手机视口核对原型的浅色及深色聊天界面', { ski
     }
     await page.close();
   }
+});
+
+test('共享发送框按会话保存草稿并按原操作对账', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await mountFixture(page);
+  const sends = [], uploads = [];
+  let uploadFails = true, result = 'unknown';
+  const parts = () => [
+    { position: 0, kind: 'post', state: 'success', message_id: 'om_text' },
+    { position: 1, kind: 'image', attachment_id: 'image_ref', state: result,
+      message_id: result === 'success' ? 'om_image' : undefined }
+  ];
+  await page.route('**/send-capabilities', route => route.fulfill({ json: {
+    can_send: true, sender: { kind: 'bot', name: '测试机器人' }, mentions: true,
+    max_file_bytes: 10000, max_image_bytes: 10000, max_attachments: 5
+  } }));
+  await page.route('**/members?purpose=mention*', route => route.fulfill({ json: {
+    items: [{ name: '林晓', mention_open_id: 'ou_user' }], total: 1
+  } }));
+  await page.route('**/oc_group/attachments?kind=image', route => {
+    uploads.push(route.request().headers());
+    return route.fulfill(uploadFails ? { status: 422, json: { error: 'attachment_failed' } } :
+      { status: 201, json: { id: 'image_ref', expires_at: new Date(Date.now() + 60000).toISOString() } });
+  });
+  await page.route('**/oc_group/messages', route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const body = route.request().postDataJSON();
+    sends.push(body);
+    return route.fulfill({ json: { operation_key: body.operation_key, chat_id: group.id, state: result, parts: parts() } });
+  });
+  await page.route('**/oc_group/deliveries/*', route => {
+    assert.ok(route.request().url().endsWith('/' + sends.at(-1).operation_key));
+    return route.fulfill({ json: { operation_key: sends.at(-1).operation_key, chat_id: group.id, state: result, parts: parts() } });
+  });
+  await page.goto(origin + '/#/feishu/bot-chats/oc_group');
+  const box = page.locator('.chat-composer'), editor = box.locator('textarea');
+  const tool = name => box.getByRole('button', { name, exact: true });
+  await box.getByText('发送身份：机器人 测试机器人').waitFor();
+  await editor.fill('  ');
+  assert.ok(await tool('发送消息').isDisabled());
+  await editor.fill('正文');
+  await editor.press('ControlOrMeta+a');
+  await tool('文本格式').click();
+  await tool('加粗').click();
+  await editor.press('End');
+  await editor.press('Shift+Enter');
+  await tool('表情').click();
+  await tool('🎉').click();
+  await tool('提及成员').click();
+  await tool('林晓').click();
+  await tool('展开输入框').click();
+  assert.equal(await tool('收起输入框').getAttribute('aria-expanded'), 'true');
+  await editor.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+  assert.equal(sends.length, 0);
+  await box.locator('[type=file]').setInputFiles({ name: '图.png', mimeType: 'image/png', buffer: Buffer.from([137,80,78,71]) });
+  await tool('重试上传').waitFor();
+  assert.ok(await tool('发送消息').isDisabled());
+  uploadFails = false;
+  await tool('重试上传').click();
+  await box.getByText('图.png · 已上传').waitFor();
+  assert.match(uploads[1]['content-type'], /^multipart\/form-data; boundary=/);
+  assert.equal(uploads[1]['x-csrf-token'], 'fixture-csrf');
+  await page.locator('[data-chat-id="oc_direct"]').first().click();
+  assert.equal(await editor.inputValue(), '');
+  await page.locator('[data-chat-id="oc_group"]').first().click();
+  assert.equal(await editor.inputValue(), '**正文**\n🎉@林晓 ');
+  await editor.press('Enter');
+  await tool('查询发送结果').waitFor();
+  assert.deepEqual(sends[0].paragraphs, [[{ text: '正文', styles: ['bold'] }], [{ text: '🎉' }, { mention_open_id: 'ou_user' }, { text: ' ' }]]);
+  assert.deepEqual(sends[0].attachments, ['image_ref']);
+  assert.ok(await tool('发送消息').isDisabled());
+  await page.reload();
+  result = 'failed';
+  await tool('查询发送结果').click();
+  await tool('编辑未发送部分').waitFor();
+  assert.equal(await editor.inputValue(), '**正文**\n🎉@林晓 ');
+  await box.getByText('图.png · 已上传').waitFor();
+  await tool('编辑未发送部分').click();
+  assert.equal(await editor.inputValue(), '');
+  await page.route('**/oc_group/messages', route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const body = route.request().postDataJSON();
+    sends.push(body);
+    return route.fulfill({ json: { operation_key: body.operation_key, chat_id: group.id, state: 'success',
+      parts: [{ position: 0, attachment_id: 'image_ref', state: 'success', message_id: 'om_image' }] } });
+  });
+  await tool('发送消息').click();
+  await box.getByText(/飞书已确认接收/).waitFor();
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[1].attachments, ['image_ref']);
+  assert.equal(sends[1].paragraphs, undefined);
+  assert.equal(await box.locator('li').count(), 0);
 });

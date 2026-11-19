@@ -191,6 +191,18 @@ func (s *Service) getMembers(w http.ResponseWriter, r *http.Request, p identity.
 		writeError(w, 400, "invalid_chat_query")
 		return
 	}
+	// 只有具备当前群发送能力的调用者可以选择真实提及对象。
+	mentions := r.URL.Query().Get("purpose") == "mention"
+	if mentions {
+		if !s.deliveryEnabled || s.delivery == nil {
+			deliveryHTTPError(w, errDeliveryDisabled)
+			return
+		}
+		if _, err := s.deliveryTarget(ctx, p, c.ID, nil, true); err != nil {
+			deliveryHTTPError(w, err)
+			return
+		}
+	}
 	state := "complete"
 	var refs []directory.ResourcePersonRef
 	if c.Kind == orchestrator.ChatPrivate {
@@ -239,6 +251,18 @@ func (s *Service) getMembers(w http.ResponseWriter, r *http.Request, p identity.
 	items, err := s.projectPeople(ctx, p, c.ID, refs[first:min(first+limit, count)])
 	if err != nil {
 		sourceError(w, err)
+		return
+	}
+	if mentions {
+		type choice struct {
+			Name   string `json:"name"`
+			OpenID string `json:"mention_open_id"`
+		}
+		choices := make([]choice, 0, len(items))
+		for i, person := range items {
+			choices = append(choices, choice{person.Name, refs[first+i].OpenID})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": choices, "total": count, "state": state})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": count, "state": state})

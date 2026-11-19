@@ -35,11 +35,12 @@ export async function api(path, { method = 'GET', body, signal, ifMatch, idempot
   }
   if (ifMatch !== undefined) headers.set('If-Match', ifMatch);
   if (idempotencyKey !== undefined) headers.set('Idempotency-Key', idempotencyKey);
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  const multipart = body instanceof FormData;
+  if (body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
   const response = await fetch(url, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined || multipart ? body : JSON.stringify(body),
     credentials: 'same-origin',
     cache: 'no-store',
     redirect: 'error',
