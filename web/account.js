@@ -4,14 +4,14 @@ const ui = window.OmniRelayUI;
 const shell = document.querySelector('.shell');
 const menu = document.getElementById('account-menu');
 const roles = {
-  system_admin: '系统管理员', system_operator: '系统运维', audit_viewer: '审计查看者',
+  system_admin: '系统管理员', system_operator: '系统运维者', system_user: '普通用户', audit_viewer: '审计查看者',
   project_admin: '项目管理员', project_member: '项目成员'
 };
 
 function identity(user) {
   const name = user.name || user.display_name || '用户';
   const role = (user.roles || []).map(value => roles[value]).filter(Boolean).join('、');
-  return { name, role: role || '普通成员', source: user.auth_method === 'password' ? '账号密码' : '飞书' };
+  return { name, role: role || '—', source: user.auth_method === 'password' ? '账号密码' : '飞书' };
 }
 
 export function updateAccount(user) {
@@ -29,7 +29,7 @@ export function updateAccount(user) {
   menu.querySelector('.account-identity div span').textContent = role + ' · ' + source;
 }
 
-export function mountAccount({ currentUser, onLogout, onSessionChanged }) {
+export function mountAccount({ currentUser, onLogout, onSessionChanged, onAuthError }) {
   const toolbarTrigger = () => shell.querySelector('.rail').getBoundingClientRect().width
     ? shell.querySelector('.rail .account-trigger') : shell.querySelector('.mobile-account');
   let trigger;
@@ -90,6 +90,7 @@ export function mountAccount({ currentUser, onLogout, onSessionChanged }) {
             if (dialog.open) dialog.close('confirm');
           })
           .catch(error => {
+            onAuthError(error);
             feedback.textContent = error.data?.error === 'https_required' ? '修改密码需要 HTTPS 安全连接。'
               : error.status === 403 ? '无法验证当前账号。请重新登录后再试。'
               : error.status === 400 || error.status === 422 ? '请核对当前密码和新密码要求。'

@@ -16,36 +16,6 @@ export function feishuBotAPI(api) {
   };
 }
 
-// Keep the design's labels here. The server separately authorizes every action.
-const roles = [
-  {
-    id: 'admin', wireID: 'system_admin', name: '系统管理员', scope: 'org',
-    condition: '查看项目内容须具备相应项目授权。',
-    permissions: ['管理平台账号与角色授权', '管理连接状态和系统配置']
-  },
-  {
-    id: 'operator', wireID: 'system_operator', name: '系统运维', scope: 'org',
-    condition: '运行状态和回执以脱敏摘要展示。',
-    permissions: ['查看连接、队列与回执摘要', '暂停或恢复入口与调度', '取消运行并核对异常回执']
-  },
-  {
-    id: 'auditor', wireID: 'audit_viewer', name: '审计查看者', scope: 'org',
-    condition: '正文可见范围由项目与会话权限决定。',
-    permissions: ['查询本组织审计日志', '查看登录、授权、配置与运维变更']
-  },
-  {
-    id: 'project-admin', wireID: 'project_admin', name: '项目管理员', scope: 'project',
-    condition: '由正式项目管理员授权给当前项目成员。',
-    permissions: ['查看本项目数据和运行摘要', '管理项目群绑定与简报计划', '预览、启停项目简报']
-  },
-  {
-    id: 'member', wireID: 'project_member', name: '项目成员', scope: 'project', grantable: false,
-    condition: '成员资格由正式业务系统确认。',
-    permissions: ['查询项目共享任务', '查看自己的运行记录', '在飞书向同项目成员明确分派任务']
-  }
-];
-const displayRoles = new Map(roles.map(role => [role.wireID, role]));
-const wireRoles = new Map(roles.map(role => [role.id, role]));
 const accountPath = system + '/accounts';
 const grantsPath = system + '/role-grants';
 const syncPath = directory + '/sync-runs';
@@ -73,11 +43,10 @@ async function collectPages(api, path, { signal } = {}) {
 function groupGrants(grants) {
   const byAccount = new Map();
   for (const grant of grants) {
-    const role = displayRoles.get(grant.role);
-    if (!role) continue;
+
     if (!byAccount.has(grant.accountId)) byAccount.set(grant.accountId, []);
     byAccount.get(grant.accountId).push({
-      id: grant.id, role: role.id, scope: role.scope, project: grant.projectId ?? ''
+      id: grant.id, role: grant.role, scope: grant.projectId ? 'project' : 'system', project: grant.projectId ?? ''
     });
   }
   return byAccount;
@@ -103,6 +72,7 @@ function directoryUsers(accounts, grants, people) {
       name: person?.name || account.name || account.id,
       source: account.source === 'local' ? '本地账号' : '飞书',
       status: account.active ? 'active' : 'disabled',
+      systemRoles: account.active ? account.systemRoles ?? [] : [],
       roles: accountGrants.get(account.id) ?? [],
       projects: [],
       ...directoryFields(person)
@@ -121,13 +91,24 @@ function directoryUsers(accounts, grants, people) {
   return [...registered, ...unprovisioned];
 }
 
+async function roleCatalog(api, options) {
+  const response = await api(system + '/roles', options);
+  if (!Array.isArray(response?.items)) throw new Error('角色目录响应无效。');
+  return response.items;
+}
+
 async function listRoles(api, options) {
-  const grants = await collectPages(api, grantsPath, options);
+  const [catalog, grants, accounts] = await Promise.all([
+    roleCatalog(api, options),
+    collectPages(api, grantsPath, options),
+    collectPages(api, accountPath, options)
+  ]);
   const counts = new Map();
   for (const grant of grants) counts.set(grant.role, (counts.get(grant.role) ?? 0) + 1);
-  return roles.map(({ wireID, ...role }) => ({
+  return catalog.map(role => ({
     ...role,
-    count: role.scope === 'org' ? counts.get(wireID) ?? 0 : null
+    count: role.default ? accounts.filter(account => account.active && account.systemRoles?.includes(role.id)).length
+      : role.scope === 'system' ? counts.get(role.id) ?? 0 : null
   }));
 }
 
@@ -301,6 +282,7 @@ export function systemAPI(api) {
   return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion } = {}) => {
     if (method === 'GET') {
       switch (path) {
+        case system + '/role-catalog': return roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
         case system + '/audit': return listAudit(api, { signal });
         case directory + '/view': return directoryView(api, { signal, onSnapshot });
@@ -323,10 +305,11 @@ export function systemAPI(api) {
       });
     }
     if (method === 'POST' && grantRoute && !grant) {
-      const role = wireRoles.get(body?.role);
-      if (!role || role.grantable === false) throw new Error('该角色由正式业务系统确定。');
+      const roles = await roleCatalog(api, { signal });
+      const role = roles.find(item => item.id === body?.role);
+      if (role?.grantable !== true || role.default) throw new Error('该角色无法手动授予。');
       return write(api, grantsPath, {
-        method, signal, body: { accountId: id, role: role.wireID, projectId: body.project || '' }
+        method, signal, body: { accountId: id, role: role.id, ...(role.scope === 'project' && { projectId:body.project }) }
       });
     }
     if (method === 'DELETE' && grant) {
@@ -334,25 +317,4 @@ export function systemAPI(api) {
     }
     throw new Error('工作台请求无效。');
   };
-}
-
-// Authentication and authorization errors are server decisions. Probe each
-// protected entry with one record so no permissions are inferred from a name.
-export async function readAdminCapabilities(api, signal) {
-  async function canRead(path) {
-    try {
-      await api(path + '?limit=1', { signal });
-      return true;
-    } catch (error) {
-      if (error.status === 403) return false;
-      throw error;
-    }
-  }
-  const [accounts, roles, directoryPeople, audit] = await Promise.all([
-    canRead(accountPath),
-    canRead(grantsPath),
-    canRead(directory + '/people'),
-    canRead(system + '/audit-events')
-  ]);
-  return { users: accounts && roles && directoryPeople, roles, audit };
 }

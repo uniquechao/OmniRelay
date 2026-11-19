@@ -100,3 +100,32 @@ test('开通目录人员必须调用 accounts，提交稳定人员标识', async
   assert.deepEqual(await request(base + '/users/directory%3Aou_example/provision', { method:'POST' }), { id:'account-example' });
   await assert.rejects(request(base + '/users/account-example/provision', { method:'POST' }), /尚未开通/);
 });
+
+test('角色目录沿用服务端标识和说明，默认人数取自启用账号的有效角色', async () => {
+  const catalog = [
+    { id:'system_user', name:'普通用户', scope:'system', default:true, grantable:false, permissions:['登录系统'] },
+    { id:'system_operator', name:'系统运维者', scope:'system', default:false, grantable:true, permissions:['执行连接检测'] },
+    { id:'project_admin', name:'项目管理员', scope:'project', default:false, grantable:true, permissions:[] }
+  ];
+  const accounts = [{ id:'a', active:true, systemRoles:['system_user'] }, { id:'b', active:false, systemRoles:[] }];
+  const grants = [{ id:'g', accountId:'b', role:'system_operator' }];
+  const writes = [];
+  const request = systemAPI(async (path, options) => {
+    if (options.method === 'POST') return writes.push(options.body);
+    if (path === base + '/roles') return { items:catalog };
+    if (path.includes('/accounts?')) return { items:accounts };
+    if (path.includes('/role-grants?')) return { items:grants };
+    return { visible:false, snapshot_version:null, total:0, items:[] };
+  });
+  const roles = await request(base + '/roles');
+  assert.deepEqual(roles, catalog.map((role,i) => ({ ...role, count:[1,1,null][i] })));
+  const {users} = await request(directory + '/view');
+  assert.deepEqual(users[0].roles, []);
+  assert.deepEqual(users[0].systemRoles, ['system_user']);
+  assert.deepEqual(users[1].systemRoles, []);
+  assert.equal(users[1].roles[0].id, 'g');
+  const grant = role => request(base + '/users/a/roles', { method:'POST', body:{ role, project:'p' } });
+  await assert.rejects(grant('system_user'));
+  await grant('project_admin');
+  assert.deepEqual(writes, [{ accountId:'a', role:'project_admin', projectId:'p' }]);
+});

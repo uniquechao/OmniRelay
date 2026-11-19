@@ -31,7 +31,7 @@ function chip(node, [tone, label]) {
   node.textContent = label;
 }
 
-export function mountFeishuBot(page, api, { signal, canConfigure, canSyncDirectory }) {
+export function mountFeishuBot(page, api, { signal, canConfigure, canOperate, canSyncDirectory }) {
   const { openDialog, toast } = window.OmniRelayUI;
   page.innerHTML = `
     <header class="head">
@@ -112,7 +112,8 @@ export function mountFeishuBot(page, api, { signal, canConfigure, canSyncDirecto
     toggle.disabled = saving;
     saveButton.disabled = saving || reading || !etag || !dirty();
     saveButton.textContent = saving ? '保存中…' : '保存';
-    testButton.disabled = testing;
+    testButton.hidden = !canOperate;
+    testButton.disabled = !canOperate || testing;
     testButton.textContent = testing ? '检测中…' : checkKey ? '重试检测' : '测试连接';
   }
 
@@ -283,7 +284,7 @@ export function mountFeishuBot(page, api, { signal, canConfigure, canSyncDirecto
   }
 
   async function test() {
-    if (testing || forbidden || signal.aborted) return;
+    if (!canOperate || testing || forbidden || signal.aborted) return;
     testing = true;
     if (!checkKey) {
       checkKey = crypto.randomUUID();
@@ -346,5 +347,5 @@ export function mountFeishuBot(page, api, { signal, canConfigure, canSyncDirecto
 
   showCheckResults();
   void refresh();
-  return { confirmNavigation };
+  return { confirmNavigation, hasDraft:dirty };
 }

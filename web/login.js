@@ -90,7 +90,7 @@ const feishuErrors = new Map([
   ['unavailable', '飞书登录暂不可用。请稍后重试或使用账号密码。']
 ]);
 
-export function mountLogin(page, { onSuccess, returnTo = () => '/#/workbench' }) {
+export function mountLogin(page, { onSuccess, returnTo = () => '/' }) {
   const form = page.querySelector('#password-login');
   const username = form.elements.namedItem('username');
   const password = form.elements.namedItem('password');
