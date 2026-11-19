@@ -14,7 +14,7 @@ App ID、Tenant Key、App Secret 和公开地址由部署配置注入。管理�
 
 ## 2. 公共权限与接口约定
 
-- 复用 `GET /api/v1/me` 的 `principal`、`csrf_token` 与 `access.admin`。新增 `access.admin.feishu_bot` 控制菜单显示。接口每次重新鉴权。Bot 查看、检测、修改开关分别复用 `system.read`、`system.read`、`system.configure`。因此系统运维可查看和检测，系统管理员可启停。目录查看与同步继续使用 `directory.read` 和 `directory.sync`。
+- `GET /api/v1/me` 的 `access.admin.feishu_bot` 控制菜单显示。系统管理员和系统运维者可通过 `system.read` 查看 Bot 状态，通过 `system.operate` 提交检测。配置变更和启停要求 `system.configure`，由系统管理员执行。目录查看与同步分别使用 `directory.read` 和 `directory.sync`，两类角色均可执行。接口每次重新鉴权。
 - 管理接口使用同源会话 Cookie。写操作同时校验 `Origin` 与 `X-CSRF-Token`。会话无效返回 401，权限或 CSRF 不足返回 403。新增接口的业务错误形如 `{"error":"config_version_conflict"}`。页面只显示本地化的错误提示。
 - 进入飞书 API 的地址来自服务端适配器。App Secret、飞书访问令牌、OAuth code 和会话 Cookie 不出现在接口响应、日志、审计、APM 请求采集和前端存储。管理诊断保留请求 ID、飞书请求 ID 和映射后的错误码即可。
 - 三条链路独立显示状态。Bot 暂停或重连时，OAuth 和目录同步可以继续。租户密钥轮换后，分别验证换码、Bot 重连和目录读取。只采集各链路必要的飞书权限，应用可用范围也须单独核对。 [飞书应用鉴权](https://open.feishu.cn/document/home/introduction-to-scope-and-authorization/overview)

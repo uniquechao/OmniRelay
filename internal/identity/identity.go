@@ -41,8 +41,12 @@ type Principal struct {
 }
 
 type WorkbenchAccess struct {
-	Roles []string        `json:"roles"`
-	Admin map[string]bool `json:"admin"`
+	Roles             []string        `json:"roles"`
+	Admin             map[string]bool `json:"admin"`
+	Permissions       map[string]bool `json:"permissions"`
+	Navigation        map[string]bool `json:"navigation"`
+	DefaultRoute      string          `json:"default_route"`
+	PermissionVersion string          `json:"permission_version"`
 }
 
 type Config struct {
@@ -199,7 +203,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := newSecret()
-	err = s.createSession(r.Context(), principal, token, cookieSecret(r, sessionCookie))
+	err = s.createSession(r.Context(), &principal, token, cookieSecret(r, sessionCookie))
 	if errors.Is(err, ErrNotAdmitted) {
 		redirectLoginError(w, r, "denied")
 		return
@@ -212,6 +216,19 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	target, err := localReturnPath(returnPath)
 	if err != nil {
 		target = "/"
+	}
+	if s.cfg.Access != nil {
+		allowed, err := s.cfg.Access(r.Context(), principal)
+		if errors.Is(err, ErrNotAdmitted) {
+			redirectLoginError(w, r, "denied")
+			return
+		}
+		if err != nil || !allowed.canReturnTo(target) {
+			target = "/"
+			if err == nil && allowed.canReturnTo(allowed.DefaultRoute) {
+				target = allowed.DefaultRoute
+			}
+		}
 	}
 	setCookie(w, sessionCookie, token, int(s.cfg.SessionTTL.Seconds()))
 	redirect(w, target, http.StatusSeeOther)
@@ -288,6 +305,10 @@ func (s *Service) me(w http.ResponseWriter, r *http.Request) {
 	var access *WorkbenchAccess
 	if s.cfg.Access != nil {
 		allowed, err := s.cfg.Access(r.Context(), p)
+		if errors.Is(err, ErrNotAdmitted) {
+			writeFailure(w, http.StatusUnauthorized, "authentication_required")
+			return
+		}
 		if err != nil {
 			writeFailure(w, http.StatusServiceUnavailable, "authentication_unavailable")
 			return
@@ -299,6 +320,23 @@ func (s *Service) me(w http.ResponseWriter, r *http.Request) {
 		CSRFToken string           `json:"csrf_token"`
 		Access    *WorkbenchAccess `json:"access,omitempty"`
 	}{Principal: p, CSRFToken: csrfToken(token), Access: access})
+}
+
+func (a WorkbenchAccess) canReturnTo(path string) bool {
+	switch path {
+	case "/#/workbench":
+		return a.Navigation["workbench"]
+	case "/#/system/users":
+		return a.Admin["users"]
+	case "/#/system/roles":
+		return a.Admin["roles"]
+	case "/#/system/audit":
+		return a.Admin["audit"]
+	case "/#/system/feishu-bot":
+		return a.Admin["feishu_bot"]
+	default:
+		return false
+	}
 }
 
 func (s *Service) logout(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,22 @@
 
 Go 服务已接入 Bot 管理接口与 OAuth 固定错误回跳。目录响应字段按 `internal/directory/http.go` 固定。
 
+## 系统角色与权限能力
+
+`GET /api/v1/me` 保留 `principal`、`csrf_token`、`access.roles` 和 `access.admin`。有效系统角色使用字符串数组，启用账号自动包含 `system_user`。`access.admin` 提供 `users`、`roles`、`audit` 和 `feishu_bot` 菜单布尔值。
+
+`access.permissions` 将操作标识映射到布尔值，未知或缺省权限按拒绝处理。`access.navigation` 提供 `workbench` 和 `system` 一级导航布尔值。`access.default_route` 是白名单内的站内路径。多角色的默认路径优先级依次为系统管理员 `/#/workbench`、系统运维者 `/#/system/users`、审计查看者 `/#/system/audit`、普通用户 `/#/workbench`。OAuth 优先保留有权访问的白名单返回路径。`access.permission_version` 是十进制字符串，授权、撤权或账号启停成功时递增。
+
+系统运维者在没有系统管理员角色时默认仅显示系统管理。项目权限源确认有正式项目访问权限后同时显示工作台。
+
+| 权限 | 系统管理员 | 系统运维者 | 审计查看者 | 普通用户 |
+| --- | --- | --- | --- | --- |
+| `account.read`、`role.read`、`directory.read`、`directory.sync`、`system.read`、`system.operate` | 允许 | 允许 | 拒绝 | 拒绝 |
+| `account.manage`、`role.manage`、`system.configure` | 允许 | 拒绝 | 拒绝 | 拒绝 |
+| `audit.read` | 允许 | 允许 | 允许 | 拒绝 |
+
+`GET /api/v1/system/roles` 要求 `role.read`，返回 `items` 数组。每个角色条目包含 `id`、`name`、`scope`（`system` 或 `project`）、`default` 和 `grantable` 布尔值以及中文说明字符串数组 `permissions`。账号接口的 `systemRoles` 为有效系统角色字符串数组，停用账号返回 `[]`。默认普通用户由启用状态计算，现有授权记录仅包含真实授权。项目权限继续由可信项目成员关系和业务能力计算。
+
 ## 文件与运行方式
 
 在项目根执行 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/contract -p 'test_*.py' -v`，只需 Python 3 标准库，不联网、不用数据库、不跳过测试。
@@ -33,7 +49,7 @@ JSON 内的 `name` 是样例标签。`status/headers/body` 是 HTTP 外层封套
 
 ## 检测任务与幂等
 
-POST `/api/v1/system/feishu-bot/checks` 使用 `system.read`，仍须 Origin 和 CSRF，正文必须是空对象。202 正文固定 `id/state/reused`；GET `/checks/{id}` 返回 200 和完整任务。越界应用/组织及不存在任务统一 404；读取者须重新通过 `system.read`，不能仅凭知道 ID 查询。
+POST `/api/v1/system/feishu-bot/checks` 使用 `system.operate`，须通过 Origin 和 CSRF 校验，正文必须是空对象。202 正文包含 `id`、`state` 和 `reused`。GET `/checks/{id}` 要求 `system.read`，返回 200 和完整任务。越界应用、越界组织及不存在任务统一返回 404。
 
 实施约定：任务 ID 是不透明非空字符串，客户端不得推导。完整任务固定字段：`id`、`state`、`credentials_generation`（十进制正整数字符串）、`created_at`、`started_at`、`finished_at`、`results`。queued 的开始/结束为 null，running 的结束为 null，终态开始/结束均非空。results 是按 `tenant_token`、`bot_info` 排列的数组；queued 为空，running 可包含已完成项，终态包含两项。项固定 `name/state/checked_at`，失败项另有 `error`，通过及跳过项不得包含 error。checked_at 为该项完成/决定跳过的时间。
 

@@ -31,10 +31,21 @@ func (s *Service) Register(mux *http.ServeMux, authenticate func(http.ResponseWr
 	register("GET /api/v1/system/accounts", false, s.handleAccounts)
 	register("POST /api/v1/system/accounts", true, s.handlePreauthorizeAccount)
 	register("PATCH /api/v1/system/accounts/{accountID}", true, s.handleAccountStatus)
+	register("GET /api/v1/system/roles", false, s.handleRoles)
 	register("GET /api/v1/system/role-grants", false, s.handleRoleGrants)
 	register("POST /api/v1/system/role-grants", true, s.handleCreateGrant)
 	register("DELETE /api/v1/system/role-grants/{grantID}", true, s.handleRevokeGrant)
 	register("GET /api/v1/system/audit-events", false, s.handleAuditEvents)
+}
+
+func (s *Service) handleRoles(w http.ResponseWriter, r *http.Request, actor identity.Principal) {
+	if err := s.require(r.Context(), s.pool, actor, "role.read", ""); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items []roleDefinition `json:"items"`
+	}{Items: listRoleDefinitions()})
 }
 
 func (s *Service) handleAccounts(w http.ResponseWriter, r *http.Request, actor identity.Principal) {
@@ -140,10 +151,6 @@ func (s *Service) handleCreateGrant(w http.ResponseWriter, r *http.Request, acto
 	var body grantRequest
 	if err := readBody(w, r, &body); err != nil {
 		writeError(w, err)
-		return
-	}
-	if !body.valid() {
-		writeError(w, errInvalidInput)
 		return
 	}
 	grant, err := s.grantRole(r.Context(), actor, body)

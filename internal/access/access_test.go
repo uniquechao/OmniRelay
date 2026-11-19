@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -312,9 +313,13 @@ func TestPlatformRolesStayInTheirScope(t *testing.T) {
 	}{
 		{"system_admin", "role.manage", true},
 		{"system_admin", "audit.read", true},
-		{"system_admin", "system.operate", false},
+		{"system_admin", "system.operate", true},
 		{"system_operator", "system.operate", true},
-		{"system_operator", "directory.sync", false},
+		{"system_operator", "directory.sync", true},
+		{"system_operator", "account.manage", false},
+		{"system_operator", "role.manage", false},
+		{"system_operator", "audit.read", true},
+		{"system_user", "account.read", false},
 		{"audit_viewer", "audit.read", true},
 		{"audit_viewer", "account.read", false},
 		{"project_admin", "role.manage", false},
@@ -374,7 +379,8 @@ func TestAccountPreauthorizationRequiresAdminAndPreservesDisabledAccount(t *test
 	created := request(mux, http.MethodPost, path, admin, body)
 	assertStatus(t, created, 201)
 	var account Account
-	if err := json.Unmarshal(created.Body.Bytes(), &account); err != nil || !account.Active || account.Name != "Candidate" || account.ID == foreign.AccountID {
+	if err := json.Unmarshal(created.Body.Bytes(), &account); err != nil || !account.Active || account.Name != "Candidate" ||
+		account.ID == foreign.AccountID || !slices.Equal(account.SystemRoles, []string{RoleSystemUser}) {
 		t.Fatalf("invalid preauthorized account: %+v, error = %v", account, err)
 	}
 	candidate := principal(t, ctx, pool, "tenant", "app", "ou_candidate")
@@ -386,7 +392,11 @@ func TestAccountPreauthorizationRequiresAdminAndPreservesDisabledAccount(t *test
 		t.Fatalf("preauthorization grants no role: allowed = %v, error = %v", allowed, err)
 	}
 
-	assertStatus(t, request(mux, http.MethodPatch, path+"/"+account.ID, admin, `{"active":false}`), 200)
+	disabled := request(mux, http.MethodPatch, path+"/"+account.ID, admin, `{"active":false}`)
+	assertStatus(t, disabled, 200)
+	if err := json.Unmarshal(disabled.Body.Bytes(), &account); err != nil || account.SystemRoles == nil || len(account.SystemRoles) != 0 {
+		t.Fatalf("disabled account roles = %v, error = %v", account.SystemRoles, err)
+	}
 	assertStatus(t, request(mux, http.MethodPost, path, admin, body), 409)
 	var active bool
 	var name string
@@ -411,7 +421,7 @@ func TestDirectorySyncAuthorizesAgainstSerializedRoleChanges(t *testing.T) {
 	}
 	admin := principal(t, ctx, pool, "tenant", "app", "ou_admin")
 	operator := addAccount(t, ctx, pool, "tenant", "app", "ou_operator")
-	grant, err := service.grantRole(ctx, admin, grantRequest{AccountID: operator.AccountID, Role: "system_admin"})
+	grant, err := service.grantRole(ctx, admin, grantRequest{AccountID: operator.AccountID, Role: RoleSystemOperator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,5 +452,158 @@ func TestDirectorySyncAuthorizesAgainstSerializedRoleChanges(t *testing.T) {
 	defer tx.Rollback(ctx)
 	if err := service.AuthorizeDirectorySync(ctx, tx, operator); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("directory authorization after revoke: %v; want forbidden", err)
+	}
+}
+
+func TestSystemRoleCatalogAndEffectiveRoles(t *testing.T) {
+	ctx, pool := testPool(t)
+	service := New(pool, "tenant", "app")
+	if err := service.Bootstrap(ctx, "ou_admin"); err != nil {
+		t.Fatal(err)
+	}
+	admin := principal(t, ctx, pool, "tenant", "app", "ou_admin")
+	member := addAccount(t, ctx, pool, "tenant", "app", "ou_existing")
+	mux := testMux(service, admin, member)
+	rolesPath := "/api/v1/system/roles"
+	grantsPath := "/api/v1/system/role-grants"
+	assertStatus(t, request(mux, http.MethodGet, rolesPath, member, ""), 403)
+	response := request(mux, http.MethodGet, rolesPath, admin, "")
+	assertStatus(t, response, 200)
+	var catalog struct{ Items []roleDefinition }
+	if err := json.Unmarshal(response.Body.Bytes(), &catalog); err != nil || len(catalog.Items) != 6 {
+		t.Fatalf("role catalog = %+v, error = %v", catalog, err)
+	}
+	defaultRole := catalog.Items[0]
+	if defaultRole.ID != RoleSystemUser || defaultRole.Name != "普通用户" || defaultRole.Scope != "system" ||
+		!defaultRole.Default || defaultRole.Grantable || !slices.Equal(defaultRole.Permissions, []string{"登录系统", "维护本人资料"}) {
+		t.Fatalf("default role = %+v", defaultRole)
+	}
+	payload := fmt.Sprintf(`{"accountId":%q,"role":"system_user"}`, member.AccountID)
+	assertStatus(t, request(mux, http.MethodPost, grantsPath, admin, payload), 400)
+	assertStatus(t, request(mux, http.MethodDelete, grantsPath+"/"+RoleSystemUser, admin, ""), 404)
+	grants, err := service.listGrants(ctx, "", member.AccountID, "", 10)
+	if err != nil || len(grants) != 0 {
+		t.Fatalf("default role produced a grant: %+v, error = %v", grants, err)
+	}
+
+	assertAccess := func(version string, roles ...string) {
+		t.Helper()
+		view, err := service.WorkbenchAccess(ctx, member)
+		if err != nil || !slices.Equal(view.Roles, roles) || view.PermissionVersion != version {
+			t.Fatalf("access = %+v, error = %v, want roles %v and version %s", view, err, roles, version)
+		}
+	}
+	assertListedRoles := func(roles ...string) {
+		t.Helper()
+		response := request(mux, http.MethodGet, "/api/v1/system/accounts", admin, "")
+		assertStatus(t, response, 200)
+		var page struct{ Items []Account }
+		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		for _, account := range page.Items {
+			if account.ID == member.AccountID {
+				if account.SystemRoles == nil || !slices.Equal(account.SystemRoles, roles) {
+					t.Fatalf("listed roles = %v, want %v", account.SystemRoles, roles)
+				}
+				return
+			}
+		}
+		t.Fatal("account missing from list")
+	}
+	assertAccess("0", RoleSystemUser)
+	assertListedRoles(RoleSystemUser)
+	grant, err := service.grantRole(ctx, admin, grantRequest{AccountID: member.AccountID, Role: RoleSystemOperator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAccess("1", RoleSystemOperator, RoleSystemUser)
+	assertListedRoles(RoleSystemOperator, RoleSystemUser)
+	projectRoles := testProjects{member.AccountID: {Member: true}}
+	service.ProjectAccess = navigationProjects{testProjects: projectRoles}
+	view, err := service.WorkbenchAccess(ctx, member)
+	if err != nil || !view.Navigation["workbench"] || view.DefaultRoute != "/#/system/users" {
+		t.Fatalf("operator with project access = %+v, error = %v", view, err)
+	}
+	delete(projectRoles, member.AccountID)
+	view, err = service.WorkbenchAccess(ctx, member)
+	if err != nil || view.Navigation["workbench"] {
+		t.Fatalf("operator without project access = %+v, error = %v", view, err)
+	}
+	account, err := service.setAccountActive(ctx, admin, member.AccountID, false)
+	if err != nil || account.SystemRoles == nil || len(account.SystemRoles) != 0 {
+		t.Fatalf("disabled account = %+v, error = %v", account, err)
+	}
+	assertListedRoles()
+	grants, err = service.listGrants(ctx, "", member.AccountID, "", 10)
+	if err != nil || len(grants) != 1 || grants[0].ID != grant.ID {
+		t.Fatalf("disabled account grants = %+v, error = %v", grants, err)
+	}
+	if _, err := service.WorkbenchAccess(ctx, member); !errors.Is(err, identity.ErrNotAdmitted) {
+		t.Fatalf("disabled access error = %v", err)
+	}
+	account, err = service.setAccountActive(ctx, admin, member.AccountID, true)
+	if err != nil || !slices.Equal(account.SystemRoles, []string{RoleSystemOperator, RoleSystemUser}) {
+		t.Fatalf("reenabled account = %+v, error = %v", account, err)
+	}
+	assertAccess("3", RoleSystemOperator, RoleSystemUser)
+	if err := service.revokeRole(ctx, admin, grant.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertAccess("4", RoleSystemUser)
+}
+
+type navigationProjects struct{ testProjects }
+
+func (p navigationProjects) HasProjectAccess(_ context.Context, principal identity.Principal) (bool, error) {
+	return p.testProjects[principal.AccountID].Member, nil
+}
+
+func TestConcurrentSystemGrantAndAccountDisable(t *testing.T) {
+	ctx, pool := testPool(t)
+	service := New(pool, "tenant", "app")
+	if err := service.Bootstrap(ctx, "ou_admin"); err != nil {
+		t.Fatal(err)
+	}
+	admin := principal(t, ctx, pool, "tenant", "app", "ou_admin")
+	target := addAccount(t, ctx, pool, "tenant", "app", "ou_target")
+	start := make(chan struct{})
+	grantResults := make(chan error, 2)
+	disableResult := make(chan error, 1)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := service.grantRole(ctx, admin, grantRequest{AccountID: target.AccountID, Role: RoleSystemOperator})
+			grantResults <- err
+		}()
+	}
+	go func() {
+		<-start
+		_, err := service.setAccountActive(ctx, admin, target.AccountID, false)
+		disableResult <- err
+	}()
+	close(start)
+	var successes int
+	for range 2 {
+		switch err := <-grantResults; {
+		case err == nil:
+			successes++
+		case errors.Is(err, errDuplicateGrant), errors.Is(err, errNotFound):
+		default:
+			t.Fatalf("concurrent grant error = %v", err)
+		}
+	}
+	if err := <-disableResult; err != nil {
+		t.Fatal(err)
+	}
+	var active bool
+	var version, grants, events int
+	err := pool.QueryRow(ctx, `SELECT a.active,a.permission_version,
+		(SELECT count(*) FROM role_grants WHERE account_id=a.id AND revoked_at IS NULL),
+		(SELECT count(*) FROM audit_events e WHERE e.resource_id=a.id OR e.resource_id IN
+			(SELECT id FROM role_grants WHERE account_id=a.id))
+		FROM accounts a WHERE a.id=$1`, target.AccountID).Scan(&active, &version, &grants, &events)
+	if err != nil || active || successes > 1 || grants != successes || version != 1+successes || events != version {
+		t.Fatalf("active=%v version=%d grants=%d events=%d successful grants=%d error=%v", active, version, grants, events, successes, err)
 	}
 }

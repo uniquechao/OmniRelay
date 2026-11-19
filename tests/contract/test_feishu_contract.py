@@ -200,8 +200,6 @@ def expected_http(r):
         return 401, 'unauthorized'
     if r['role'] == 'member' or (r['method'] == 'PATCH' and r['role'] != 'admin'):
         return 403, 'forbidden'
-    if r['path'].startswith('/api/v1/system/directory') and r['role'] != 'admin':
-        return 403, 'forbidden'
     if r['method'] in {'PATCH', 'POST'}:
         if r['origin'] != 'same' or r['csrf'] != 'valid':
             return 403, 'forbidden'
@@ -213,6 +211,8 @@ def expected_http(r):
         if r['if_match'] != '"bot-0"':
             return 412, 'config_version_conflict'
     if r['method'] == 'POST':
+        if r['path'] == '/api/v1/system/directory/sync-runs':
+            return 202, None
         if r['body'] != {}:
             return 400, 'invalid_request'
         if type(r['idempotency_key']) is not str or not re.fullmatch('[A-Za-z0-9._:-]{1,128}', r['idempotency_key']):

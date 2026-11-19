@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,7 @@ const (
 	RoleSystemAdmin    = "system_admin"
 	RoleSystemOperator = "system_operator"
 	RoleAuditViewer    = "audit_viewer"
+	RoleSystemUser     = "system_user"
 	RoleProjectAdmin   = "project_admin"
 	RoleProjectMember  = "project_member"
 )
@@ -46,6 +48,12 @@ type ProjectAccessResolver interface {
 	ResolveProjectAccess(context.Context, identity.Principal, string) (ProjectAccess, error)
 }
 
+// ProjectNavigationResolver is implemented by authorities that can confirm access to
+// at least one project without a project ID supplied by the caller.
+type ProjectNavigationResolver interface {
+	HasProjectAccess(context.Context, identity.Principal) (bool, error)
+}
+
 type Service struct {
 	pool      *pgxpool.Pool
 	tenantKey string
@@ -61,6 +69,19 @@ func New(pool *pgxpool.Pool, tenantKey, appID string) *Service {
 
 type queryer interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+const systemGrantRoles = `ARRAY(
+	SELECT g.role FROM role_grants g
+	WHERE g.tenant_key=a.tenant_key AND g.app_id=a.app_id AND g.account_id=a.id
+	AND g.project_id IS NULL AND g.revoked_at IS NULL ORDER BY g.role
+)`
+
+func effectiveSystemRoles(active bool, grants []string) []string {
+	if !active {
+		return []string{}
+	}
+	return append(grants, RoleSystemUser)
 }
 
 func (s *Service) inScope(p identity.Principal) bool {
@@ -154,11 +175,7 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 	var active bool
 	var roles []string
 	var delegatedGeneration string
-	err := db.QueryRow(ctx, `SELECT a.active, ARRAY(
-		SELECT g.role FROM role_grants g
-		WHERE g.tenant_key=a.tenant_key AND g.app_id=a.app_id AND g.account_id=a.id
-		AND g.project_id IS NULL AND g.revoked_at IS NULL
-	), coalesce((
+	err := db.QueryRow(ctx, `SELECT a.active, `+systemGrantRoles+`, coalesce((
 		SELECT g.membership_generation FROM role_grants g
 		WHERE g.tenant_key=a.tenant_key AND g.app_id=a.app_id AND g.account_id=a.id
 		AND g.project_id=nullif($5,'') AND g.role='project_admin' AND g.revoked_at IS NULL
@@ -171,7 +188,7 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 		return false, err
 	}
 	if projectID == "" {
-		return platformAllowed(roles, action), nil
+		return platformAllowed(effectiveSystemRoles(active, roles), action), nil
 	}
 	switch action {
 	case "project.read", "project.assign", "project.settings", "project.delegate":
@@ -197,43 +214,59 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 // WorkbenchAccess provides navigation visibility. Every administrative request still
 // executes its own authorization checks against the current account and grants.
 func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (identity.WorkbenchAccess, error) {
-	view := identity.WorkbenchAccess{Roles: []string{}, Admin: map[string]bool{}}
 	if !s.inScope(p) {
-		return view, nil
+		return identity.WorkbenchAccess{}, identity.ErrNotAdmitted
 	}
-	err := s.pool.QueryRow(ctx, `SELECT ARRAY(
-		SELECT g.role FROM role_grants g
-		WHERE g.account_id=a.id AND g.tenant_key=a.tenant_key AND g.app_id=a.app_id
-		AND g.project_id IS NULL AND g.revoked_at IS NULL ORDER BY g.role
-	) FROM accounts a WHERE a.id=$1 AND a.tenant_key=$2 AND a.app_id=$3 AND a.open_id=$4 AND a.active`,
-		p.AccountID, p.TenantKey, p.AppID, p.OpenID).Scan(&view.Roles)
+	var roles []string
+	var version int64
+	err := s.pool.QueryRow(ctx, `SELECT `+systemGrantRoles+`, a.permission_version
+		FROM accounts a WHERE a.id=$1 AND a.tenant_key=$2 AND a.app_id=$3 AND a.open_id=$4 AND a.active`,
+		p.AccountID, p.TenantKey, p.AppID, p.OpenID).Scan(&roles, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return view, nil
+		return identity.WorkbenchAccess{}, identity.ErrNotAdmitted
 	}
 	if err != nil {
-		return view, err
+		return identity.WorkbenchAccess{}, err
 	}
-	view.Admin["users"] = platformAllowed(view.Roles, "account.read")
-	view.Admin["roles"] = platformAllowed(view.Roles, "role.read")
-	view.Admin["audit"] = platformAllowed(view.Roles, "audit.read")
-	view.Admin["feishu_bot"] = platformAllowed(view.Roles, "system.read")
+	roles = effectiveSystemRoles(true, roles)
+	permissions := make(map[string]bool, len(systemActions))
+	for _, action := range systemActions {
+		permissions[action] = platformAllowed(roles, action)
+	}
+	admin := map[string]bool{
+		"users": permissions["account.read"], "roles": permissions["role.read"],
+		"audit": permissions["audit.read"], "feishu_bot": permissions["system.read"],
+	}
+	view := identity.WorkbenchAccess{
+		Roles: roles, Permissions: permissions, Admin: admin,
+		Navigation: map[string]bool{
+			"workbench": true,
+			"system":    admin["users"] || admin["roles"] || admin["audit"] || admin["feishu_bot"],
+		},
+		DefaultRoute: "/#/workbench", PermissionVersion: strconv.FormatInt(version, 10),
+	}
+	switch {
+	case slices.Contains(roles, RoleSystemAdmin):
+	case slices.Contains(roles, RoleSystemOperator):
+		view.DefaultRoute = "/#/system/users"
+		view.Navigation["workbench"] = false
+		if resolver, ok := s.ProjectAccess.(ProjectNavigationResolver); ok {
+			member, err := resolver.HasProjectAccess(ctx, p)
+			view.Navigation["workbench"] = err == nil && member
+		}
+	case slices.Contains(roles, RoleAuditViewer):
+		view.DefaultRoute = "/#/system/audit"
+	}
 	return view, nil
 }
 
 func platformAllowed(roles []string, action string) bool {
-	admin := slices.Contains(roles, RoleSystemAdmin)
-	switch action {
-	case "directory.read", "directory.sync", "account.read", "account.manage", "role.read", "role.manage", "system.configure":
-		return admin
-	case "system.read":
-		return admin || slices.Contains(roles, RoleSystemOperator)
-	case "system.operate":
-		return slices.Contains(roles, RoleSystemOperator)
-	case "audit.read":
-		return admin || slices.Contains(roles, RoleAuditViewer)
-	default:
-		return false
+	for _, role := range roles {
+		if slices.Contains(roleCatalog[role].actions, action) {
+			return true
+		}
 	}
+	return false
 }
 
 func (s *Service) projectScope(ctx context.Context, p identity.Principal, projectID string) (ProjectAccess, error) {
@@ -286,7 +319,7 @@ func (s *Service) AuditIdentity(ctx context.Context, tx pgx.Tx, p identity.Princ
 
 // AuthorizeBotWrite rechecks current grants in the transaction that changes Bot state.
 func (s *Service) AuthorizeBotWrite(ctx context.Context, tx pgx.Tx, p identity.Principal, action string) error {
-	if action != "system.read" && action != "system.configure" {
+	if action != "system.operate" && action != "system.configure" {
 		return ErrForbidden
 	}
 	if err := s.lockOrganization(ctx, tx); err != nil {

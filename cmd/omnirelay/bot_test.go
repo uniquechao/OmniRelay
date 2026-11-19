@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,7 +87,8 @@ func TestFeishuBotManagement(t *testing.T) {
 	admin := seedBotSession(t, ctx, pool, "ou_admin", "")
 	operator := seedBotSession(t, ctx, pool, "ou_operator", access.RoleSystemOperator)
 	member := seedBotSession(t, ctx, pool, "ou_member", "")
-	for _, session := range []*botSession{&admin, &operator, &member} {
+	auditor := seedBotSession(t, ctx, pool, "ou_auditor", access.RoleAuditViewer)
+	for _, session := range []*botSession{&admin, &operator, &member, &auditor} {
 		req := httptest.NewRequest("GET", fixtureOrigin+"/api/v1/me", nil)
 		req.AddCookie(session.cookie)
 		res := httptest.NewRecorder()
@@ -123,14 +125,40 @@ func TestFeishuBotManagement(t *testing.T) {
 		request(test.method, test.path, "", botSession{}, nil, 401)
 		request(test.method, test.path, "", member, nil, 403)
 	}
+	const systemPath = "/api/v1/system"
+	const directoryPath = systemPath + "/directory"
+	for _, path := range []string{
+		systemPath + "/accounts", systemPath + "/roles", systemPath + "/role-grants",
+		directoryPath + "/people", directoryPath + "/departments", directoryPath + "/sync-runs", botPath,
+	} {
+		request("GET", path, "", operator, nil, 200)
+		request("GET", path, "", auditor, nil, 403)
+		request("GET", path, "", member, nil, 403)
+	}
+	request("GET", systemPath+"/audit-events", "", operator, nil, 200)
+	request("GET", systemPath+"/audit-events", "", auditor, nil, 200)
+	request("GET", systemPath+"/audit-events", "", member, nil, 403)
+	request("POST", directoryPath+"/sync-runs", "", operator, nil, 202)
+	request("POST", directoryPath+"/sync-runs", "", auditor, nil, 403)
+
 	me := request("GET", "/api/v1/me", "", operator, nil, 200)
-	if !strings.Contains(me.Body.String(), `"feishu_bot":true`) {
-		t.Fatal("operator menu capability missing")
+	view := decodeBot[struct{ Access identity.WorkbenchAccess }](t, me).Access
+	if !slices.Equal(view.Roles, []string{access.RoleSystemOperator, access.RoleSystemUser}) ||
+		view.DefaultRoute != "/#/system/users" || view.PermissionVersion != "0" ||
+		view.Navigation["workbench"] || !view.Navigation["system"] ||
+		len(view.Admin) != 4 || !view.Admin["users"] || !view.Admin["roles"] || !view.Admin["audit"] || !view.Admin["feishu_bot"] ||
+		!view.Permissions["directory.sync"] || !view.Permissions["system.operate"] || view.Permissions["system.configure"] {
+		t.Fatalf("invalid operator access: %+v", view)
 	}
-	me = request("GET", "/api/v1/me", "", member, nil, 200)
-	if !strings.Contains(me.Body.String(), `"feishu_bot":false`) {
-		t.Fatal("member received Bot capability")
+	request("POST", systemPath+"/accounts", `{"openId":"ou_candidate"}`, operator, nil, 403)
+	request("PATCH", systemPath+"/accounts/unknown", `{"active":false}`, operator, nil, 403)
+	request("POST", systemPath+"/role-grants", `{"accountId":"unknown","role":"audit_viewer"}`, operator, nil, 403)
+	var administratorGrant string
+	if err := pool.QueryRow(ctx, "SELECT id FROM role_grants WHERE role='system_admin'").Scan(&administratorGrant); err != nil {
+		t.Fatal(err)
 	}
+	request("DELETE", systemPath+"/role-grants/"+administratorGrant, "", operator, nil, 403)
+	request("DELETE", systemPath+"/role-grants/"+administratorGrant, "", member, nil, 404)
 	for range 3 {
 		res := request("GET", botPath, "", operator, nil, 200)
 		initial := decodeBot[system.Status](t, res)
