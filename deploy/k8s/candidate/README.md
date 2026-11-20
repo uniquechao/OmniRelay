@@ -15,3 +15,5 @@
 每次连接收发一行 UTF-8 JSON。调用方发送 `version=1`、`run`、`credential`、`operation` 及业务 `payload`。服务端从登记信息取资源，核对实际候选、授权期限、操作和剩余次数，落盘扣额后持锁同步派发。撤销、换版和新授权与派发共用互斥锁。结果未确认时冻结该 run 并保留已扣次数。
 
 后续适配服务接收 `method=readiness` 时只读检查指定场景与绑定，返回布尔值 `ready`。接收 `method=execute` 时按服务端传来的 `resources` 限定对象，仅接受该操作的业务字段，在实际写入前复核 `expires`，按 `attempt` 去重并同步完成，禁止排队延后写入。返回同一 `attempt` 和 `finished=true` 表示已终结。适配服务通过产品受控服务接口使用既有应用身份，调用方只持本次 run 凭据。
+
+单节点共用 Docker 运行时时，目标登记可指定 `delivery=node` 和 `buildNode`（节点的主机名标签）。此时镜像只保存在构建节点，迁移与服务均固定到该节点，锁定时核对 Pod 实际运行的 Docker 内容摘要。目标机可通过 `GO_MODULE_PROXY`、`CANDIDATE_PIP_INDEX` 复用网络镜像源。

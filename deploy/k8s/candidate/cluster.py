@@ -65,12 +65,20 @@ class Cluster:
         # 从 Git 对象构建，防止忽略目录中的额外文件混入源码。
         archive = subprocess.Popen(["git", "archive", sha], stdout=subprocess.PIPE)
         try:
-            subprocess.run(["docker", "build", "--label", "org.opencontainers.image.revision="+sha,
+            args=["--build-arg", "GO_MODULE_PROXY"] if os.getenv("GO_MODULE_PROXY") else []
+            if os.getenv("CANDIDATE_PIP_INDEX"):
+                args.extend(["--build-arg","CANDIDATE_PIP_INDEX"])
+            subprocess.run(["docker", "build", *args, "--label", "org.opencontainers.image.revision="+sha,
                             "-f", "deploy/k8s/base/go/image.Dockerfile", "-t", tag, "-"],
                            stdin=archive.stdout, check=True)
         finally:
             archive.stdout.close()
             require(archive.wait() == 0, "源码归档失败")
+        if cfg.get("delivery")=="node":
+            digest=command("docker","image","inspect","--format","{{.Id}}",tag)
+            require(re.fullmatch(r"sha256:[a-f0-9]{64}",digest),"构建镜像缺少内容摘要")
+            command("docker","tag",tag,cfg["repository"]+":"+digest.replace(":","-"))
+            return digest
         command("docker", "push", tag)
         refs = json.loads(command("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", tag))
         images = [x for x in refs if x.startswith(cfg["repository"]+"@sha256:")]
@@ -141,14 +149,27 @@ class Cluster:
         return self.object("Deployment",name,spec={"replicas":1,"strategy":{"type":"Recreate"},"selector":{"matchLabels":labels},
                     "template":{"metadata":{"labels":labels},"spec":pod}})
 
+    def workload_image(self,image):
+        if self.cfg.get("delivery")=="node":
+            require(re.fullmatch(r"sha256:[a-f0-9]{64}",image),"候选镜像内容摘要无效")
+            ref=self.cfg["repository"]+":"+image.replace(":","-")
+            require(command("docker","image","inspect","--format","{{.Id}}",ref)==image,"节点镜像内容已更换")
+            return ref
+        require(re.fullmatch(re.escape(self.cfg["repository"])+r"@sha256:[0-9a-f]{64}",image),"候选镜像摘要无效")
+        return image
+
     def launch(self,image):
         self.owned()
-        require(re.fullmatch(re.escape(self.cfg["repository"])+r"@sha256:[0-9a-f]{64}",image),"候选镜像摘要无效")
-        container={"name":"app","image":image,"args":["migrate"],"envFrom":[{"secretRef":{"name":"migration"}}],
+        ref=self.workload_image(image)
+        container={"name":"app","image":ref,"args":["migrate"],"envFrom":[{"secretRef":{"name":"migration"}}],
                    "securityContext":{"allowPrivilegeEscalation":False,"readOnlyRootFilesystem":True,"capabilities":{"drop":["ALL"]}},
                    "volumeMounts":[{"name":"ca","mountPath":"/ca","readOnly":True}]}
+        if self.cfg.get("delivery")=="node":
+            container["imagePullPolicy"]="Never"
         pod={"serviceAccountName":"candidate","automountServiceAccountToken":False,"securityContext":{"runAsNonRoot":True,"fsGroup":10000},
              "containers":[container],"volumes":[{"name":"ca","configMap":{"name":"pg-ca"}}]}
+        if self.cfg.get("delivery")=="node":
+            pod["nodeSelector"]={"kubernetes.io/hostname":self.cfg["buildNode"]}
         job=self.object("Job","migration-"+secrets.token_hex(6),spec={"backoffLimit":0,"activeDeadlineSeconds":120,"ttlSecondsAfterFinished":300,
                    "template":{"metadata":{"labels":{"component":"app","role":"migration"}},"spec":{**pod,"restartPolicy":"Never"}}})
         command(*self.k,"create","-f","-",data=json.dumps(job))
@@ -173,8 +194,8 @@ class Cluster:
         pod=pods[0]
         spec=pod["spec"]
         state=pod["status"]["containerStatuses"]
-        require(len(state)==1 and state[0]["ready"] and state[0]["imageID"].split("@")[-1]==image.split("@")[-1]
-                and spec["containers"][0]["image"]==image and spec["serviceAccountName"]=="candidate"
+        require(len(state)==1 and state[0]["ready"] and state[0]["imageID"].removeprefix("docker://").split("@")[-1]==image.split("@")[-1]
+                and spec["containers"][0]["image"]==self.workload_image(image) and spec["serviceAccountName"]=="candidate"
                 and spec["automountServiceAccountToken"] is False,"运行镜像或服务身份不匹配")
         services=self.get("service")["items"]
         require({s["metadata"]["name"] for s in services}=={"app","db"} and all(

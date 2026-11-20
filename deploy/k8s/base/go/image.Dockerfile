@@ -26,7 +26,8 @@ RUN CGO_ENABLED=0 go test -mod=readonly ./... && \
 FROM python:3.12-slim-bookworm
 LABEL io.omnirelay.ui.entry="react"
 COPY internal/drive/preview/requirements.txt /opt/preview/requirements.txt
-RUN pip install --no-cache-dir --only-binary=:all: -r /opt/preview/requirements.txt
+ARG CANDIDATE_PIP_INDEX
+RUN PIP_INDEX_URL="${CANDIDATE_PIP_INDEX:-${PIP_INDEX_URL:-https://pypi.org/simple}}" pip install --no-cache-dir --only-binary=:all: -r /opt/preview/requirements.txt
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/omnirelay /omnirelay
 COPY --from=builder /src/web/dist /opt/omnirelay/ui
