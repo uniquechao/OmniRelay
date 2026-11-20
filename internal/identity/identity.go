@@ -360,6 +360,11 @@ var botChatsReturn = regexp.MustCompile(`^/#/(feishu/)?bot-chats(/[A-Za-z0-9_-]{
 // Project return routes stay in the workbench fragment and are authorized again on read.
 const projectSegment = `[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}`
 
+var projectIDPattern = regexp.MustCompile("^" + projectSegment + "$")
+
+// ValidProjectID 检查项目深链中使用的稳定标识。
+func ValidProjectID(id string) bool { return projectIDPattern.MatchString(id) }
+
 var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
 
 func (a WorkbenchAccess) canReturnTo(path string) bool {

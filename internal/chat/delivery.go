@@ -143,7 +143,8 @@ func (s *Service) BriefingDeliveryStatus(ctx context.Context, actor identity.Pri
 func (s *Service) send(ctx context.Context, actor identity.Principal, target, operation string,
 	content DeliveryContent, receipt *BusinessReceiptKey, authorize func(context.Context) error,
 ) (DeliveryStatus, error) {
-	if !validIdentifier(operation) || len(operation) > 100 || !validIdentifier(target) || !strings.HasPrefix(target, "oc_") {
+	validOperation := validIdentifier(operation) || (receipt != nil && operation == receipt.OperationID && receipt.hasBriefingOperation())
+	if !validOperation || len(operation) > 100 || !validIdentifier(target) || !strings.HasPrefix(target, "oc_") {
 		return DeliveryStatus{}, errDeliveryInput
 	}
 	parts, mentions, err := content.parts()

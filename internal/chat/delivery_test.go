@@ -274,11 +274,11 @@ func TestDeliveryReconcilesAnchoredBriefing(t *testing.T) {
 		t.Fatal(err)
 	}
 	actor := identity.Principal{TenantKey: "tenant_chat", AppID: "cli_chat", AccountID: "alice", OpenID: "ou_alice"}
-	receipt := BusinessReceiptKey{OperationID: "published", Target: ReceiptTarget{
-		ReceiptID: "receipt", ProjectID: "project", TargetKind: "briefing", TargetID: "briefing",
+	receipt := BusinessReceiptKey{OperationID: "briefing:briefing", Target: ReceiptTarget{
+		ReceiptID: "receipt", ProjectID: "project:alpha.v1", TargetKind: "briefing", TargetID: "briefing",
 	}}
 	body := DeliveryContent{Text: "项目简报"}
-	const target, operation, id = "oc_group", "briefing-operation", "om_briefing"
+	const target, operation, id = "oc_group", "briefing:briefing", "om_briefing"
 	calls := 0
 	confirmed := false
 	allowed := false
@@ -296,6 +296,9 @@ func TestDeliveryReconcilesAnchoredBriefing(t *testing.T) {
 		},
 	}
 	s.ConfigureDelivery(f, true)
+	if _, err := s.send(ctx, actor, target, operation, body, nil, nil); !errors.Is(err, errDeliveryInput) {
+		t.Fatalf("普通发送不得占用简报操作键：%v", err)
+	}
 	result, err := s.SendBriefing(ctx, actor, target, "denied", body, receipt, authority)
 	if err != nil || result.State != "failed" || calls != 0 {
 		t.Fatalf("unauthorized briefing: %#v %v", result, err)
@@ -329,6 +332,11 @@ func TestDeliveryReconcilesAnchoredBriefing(t *testing.T) {
 	evidence, err := s.LookupDeliveries(ctx, scope, messages)
 	if err != nil || len(evidence) != 1 || evidence[0].Receipt != receipt || evidence[0].Message != messages[0] {
 		t.Fatalf("verified receipt: %#v %v", evidence, err)
+	}
+	items := []messageItem{{ID: id, ChatID: target, State: "available"}}
+	s.receipts.project(ctx, actor, items)
+	if items[0].BusinessReceipt == nil || *items[0].BusinessReceipt != receipt.Target {
+		t.Fatalf("群消息未关联原简报：%v", items[0].BusinessReceipt)
 	}
 }
 

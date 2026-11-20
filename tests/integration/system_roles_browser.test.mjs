@@ -71,7 +71,7 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     assert.match(access.permission_version, /^[0-9]+$/);
     assert.deepEqual(access.roles, role ? [role, 'system_user'] : ['system_user']);
     assert.deepEqual(access.permissions, Object.fromEntries(permissionKeys.map(key => [key, permissions.includes(key)])));
-    assert.deepEqual(access.navigation, { workbench, system: sections.length > 0 });
+    assert.deepEqual(access.navigation, { workbench, system: sections.length > 0, bot_chats: true });
     assert.deepEqual(access.admin, Object.fromEntries(systemSections.map(section => [
       section.replace('-', '_'), sections.includes(section)
     ])));
@@ -81,7 +81,8 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('#mobile-nav').waitFor();
     assert.deepEqual(await page.locator('#mobile-nav option:not([hidden])').evaluateAll(nodes => nodes.map(n => n.value)),
-      [...(workbench ? ['workbench'] : []), ...sections.map(section => 'system/' + section)]);
+      [...(workbench ? ['workbench', 'projects'] : []), 'feishu/bot-chats', 'feishu/drive',
+        ...sections.map(section => 'system/' + section)]);
     if (sections.includes('roles')) {
       await page.locator('#mobile-nav').selectOption('system/roles');
       await page.waitForURL('**/#/system/roles');
