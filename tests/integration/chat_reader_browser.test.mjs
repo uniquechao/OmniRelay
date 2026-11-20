@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { extname } from 'node:path';
@@ -983,11 +984,84 @@ test('文件预览分页、工作表、目录、转换重试与撤权', {skip:!p
   await oldResult;
   await dialog.getByRole('button',{name:'返回目录'}).click();
   await dialog.getByText(/加密文件/).waitFor();
+  await dialog.getByRole('button',{name:'返回并刷新列表'}).waitFor();
   releaseOldPage();
   assert.equal(await dialog.getByText('工作表1页2').count(),0);
   access = false;
-  await dialog.getByRole('button',{name:'下一页'}).click();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await dialog.getByText('已无权查看此文件').waitFor();
   assert.equal(await page.getByText('归档.zip').count(),0);
   assert.equal(await dialog.locator('[data-preview-body]').innerText(),'');
+  assert.equal(await dialog.locator('[data-metadata] *, [data-preview-controls] *, a[download]').count(),0);
+  access = true;
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await page.clock.install();
+  await page.locator('.drive-file-name').click();
+  await dialog.getByRole('button',{name:'账单.xlsx'}).waitFor();
+  access = false;
+  await page.clock.fastForward(31000);
+  await dialog.getByText('已无权查看此文件').waitFor();
+  assert.equal(await dialog.locator('[data-preview-body]').innerText(),'');
+});
+
+test('文件预览格式失败后刷新列表并打开新版本', {skip:!packageName}, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const sampleDir = new URL('../../internal/drive/testdata/preview/', import.meta.url);
+  const convert = (kind, input) => JSON.parse(execFileSync('python3',
+    ['-B','internal/drive/preview/convert.py',kind,'1','0','0'],{input}));
+  const pdf = await readFile(new URL('scan.pdf',sampleDir));
+  const repaired = convert('pdf',pdf);
+  assert.equal(repaired.stage,'ready');
+  const failures = [
+    [convert('pdf',await readFile(new URL('encrypted.pdf',sampleDir))),'未加密的副本'],
+    [convert('csv',Buffer.from('姓名,项目\n张宁,验收')),'支持预览的格式'],
+    [convert('pdf',Buffer.concat([pdf,Buffer.alloc(16 * 1024 * 1024)])),'拆分文件']
+  ];
+  for (const [width, theme] of [[1366,'light'],[1366,'dark'],[390,'light'],[390,'dark']]) {
+    const page = await browser.newPage({viewport:{width,height:844},colorScheme:theme});
+    page.setDefaultTimeout(6000);
+    await mountFixture(page);
+    let version = 11, result;
+    const file = {id:7,category:'files',format:'PDF',format_key:'pdf',name:'验收签字单.pdf',
+      project_ids:[],sources:[],sync_state:'complete'};
+    await page.route(origin + '/api/v1/feishu/files**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (!path.includes('/previews')) {
+        const row = result.stage === 'unsupported' ? {...file,name:'验收名单.csv',format:'其他文件',format_key:'generic'} : file;
+        return route.fulfill({json:{items:[{...row,version_id:version}],total:1,projects:{}}});
+      }
+      const root = '/api/v1/feishu/files/7/versions/' + version + '/previews';
+      if (path === root) return route.fulfill({json:{task_id:'sample',version_id:version,stage:result.stage,meta:result.meta}});
+      if (result.stage === 'ready' && path === root + '/sample/result') {
+        return route.fulfill({contentType:result.mime,body:Buffer.from(result.body,'base64')});
+      }
+      return route.fulfill({status:404,json:{error:'version_unavailable'}});
+    });
+    const trigger = page.locator('.drive-file-name');
+    const dialog = page.getByRole('dialog');
+    for (const [failure, recovery] of failures) {
+      result = failure;
+      const address = origin + '/?theme=' + theme + '#/feishu/drive';
+      if (page.url() === address) await page.reload();
+      else await page.goto(address);
+      assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
+      await trigger.click();
+      await dialog.getByRole('status').filter({hasText:recovery}).waitFor();
+      assert.equal(await dialog.locator('[data-preview-body]').innerText(),'');
+      version++;
+      result = repaired;
+      await dialog.getByRole('button',{name:'返回并刷新列表'}).press('Enter');
+      await trigger.and(page.locator(':focus')).waitFor();
+      await trigger.click();
+      await dialog.getByText('PDF · 版本 ' + version).waitFor();
+      const image = dialog.getByRole('img',{name:'PDF 第 1 页'});
+      await image.waitFor();
+      const pixel = await image.evaluate(c => [...c.getContext('2d').getImageData(20,20,1,1).data]);
+      assert.ok(pixel[0] > 245 && pixel[2] < 16);
+      await page.keyboard.press('Escape');
+    }
+    await page.close();
+  }
 });

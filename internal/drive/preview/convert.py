@@ -135,6 +135,13 @@ def convert(kind, data, page, sheet, entry, budget):
             doc.close()
     if kind not in ("zip", "docx", "xlsx", "pptx"):
         raise State("unsupported")
+    if kind != "zip" and data.startswith(bytes.fromhex("d0 cf 11 e0 a1 b1 1a e1")):
+        import olefile
+        with olefile.OleFileIO(stream) as container:
+            if all(container.get_type(name) == olefile.STGTY_STREAM
+                   for name in ("EncryptionInfo", "EncryptedPackage")):
+                raise State("encrypted")
+        raise State("failed")
     with ZipFile(stream) as archive:
         items = inspect_archive(archive, budget)
         if kind == "zip":
