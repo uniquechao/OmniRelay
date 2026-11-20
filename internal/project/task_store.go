@@ -60,6 +60,7 @@ type storedTask struct {
 	Change        string `json:"change_reason"`
 	PriorityLabel string `json:"priority_label"`
 	DueLabel      string `json:"due_label"`
+	DueAlertLabel string `json:"due_alert_label,omitempty"`
 	DueAlert      bool   `json:"due_alert"`
 }
 
@@ -87,6 +88,7 @@ func (t *storedTask) present(now time.Time, version int64) error {
 			t.PriorityLabel = *t.Priority
 		}
 	}
+	t.DueLabel, t.DueAlertLabel, t.DueAlert = "", "", false
 	if t.Due == nil {
 		return nil
 	}
@@ -101,6 +103,16 @@ func (t *storedTask) present(now time.Time, version int64) error {
 		t.DueLabel = due.Format("2006/1/2")
 	}
 	t.DueAlert = t.Status != "done" && t.Status != "cancelled" && !due.After(today.AddDate(0, 0, 3))
+	if t.DueAlert {
+		switch {
+		case due.Before(today):
+			t.DueAlertLabel = "已逾期"
+		case due.Equal(today):
+			t.DueAlertLabel = "今日到期"
+		default:
+			t.DueAlertLabel = "临期"
+		}
+	}
 	return nil
 }
 func taskError(err error) error {

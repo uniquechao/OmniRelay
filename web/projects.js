@@ -184,7 +184,9 @@ const priorityTones = { P0: 'danger', P1: 'important' };
 
 function taskDeadline(row) {
   if (!row?.due_at) return '<span class="pr-deadline">无截止日期</span>';
-  return `<time class="pr-deadline" datetime="${esc(row.due_at)}"${row.due_alert ? ' data-deadline-alert' : ''}>${row.due_alert ? '<span aria-hidden="true"><svg class="icon"><use href="#status-warning"/></svg></span><span class="sr-only">临期告警</span>' : ''}${esc(row.due_label || row.due_at)}</time>`;
+  const warning = row.due_alert ? (row.due_alert_label || '临期告警') : '';
+  const title = [warning, row.due_at].filter(Boolean).join(' · ');
+  return `<time title="${esc(title)}" class="pr-deadline" datetime="${esc(row.due_at)}"${row.due_alert ? ' data-deadline-alert' : ''}>${row.due_alert ? '<span aria-hidden="true"><svg class="icon"><use href="#status-warning"/></svg></span><span class="sr-only">' + esc(warning) + ' · </span>' : ''}${esc(row.due_label || row.due_at)}</time>`;
 }
 
 function taskFilters(route, board, nodes, people) {
