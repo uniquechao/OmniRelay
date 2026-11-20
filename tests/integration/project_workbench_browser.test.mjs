@@ -295,10 +295,17 @@ test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async 
     const rows = stages.map((column_id, i) => ({
       id: 'task-' + i, title: '交付验收'.repeat(28), column_id, status: column_id, version: 1,
       owner_member_id: 'reader', priority: 'P' + i, priority_label: ['紧急', '重要', '普通', '低'][i],
-      milestone_id: 'm1', due_at: '2026-11-19', due_label: '11/19', due_alert: i < 3,
+      milestone_id: 'm1', due_at: ['2026-11-18','2026-11-19','2026-11-22','2026-11-19'][i],
+      due_label: ['11/18','11/19','11/22','11/19'][i], due_alert: i < 3,
+      due_alert_label: ['已逾期','今日到期','临期',''][i],
       blocked_reason: i === 2 ? '等待评审' : '', tag_ids: ['评审', '交付'],
     }));
     let version = 1, canMove = true, failureStatus;
+    await page.route(origin + root + '/overview', route => route.fulfill({ json: { data: {
+      workspace: { project },
+      milestones: { items: rows.map(row => ({ kind: 'milestone', id: 'm-' + row.id,
+        task_id: row.id, title: '节点' + row.id, task: row })) },
+    } } }));
     await page.route(origin + root + '/members', route => route.fulfill({
       json: { data: { members: [{ member_id: 'reader', display_name: '李明' }] } },
     }));
@@ -330,6 +337,7 @@ test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async 
     })));
     await page.locator('.pr-task').first().waitFor();
     const expectedColors = await colors(page.locator('.pr-task'));
+    const warningColor = await page.locator('.pr-task [data-deadline-alert]').first().evaluate(el => getComputedStyle(el).color);
     await page.goto(origin + '/?theme=' + theme + '#/projects/p-21/tasks');
     const card = page.locator('[data-task-id="task-0"] a');
     await card.waitFor();
@@ -342,8 +350,27 @@ test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async 
     assert.equal(await card.locator('.pr-task-person[title="李明"] .person-avatar').count(), 1);
     assert.equal(await page.locator('[data-column="done"] [data-deadline-alert]').count(), 0);
     assert.equal(await page.locator('.pr-task [data-deadline-alert]').count(), 3);
+    for (const row of rows) {
+      const date = page.locator('[data-task-id="' + row.id + '"] time');
+      assert.equal(await date.textContent(), (row.due_alert ? row.due_alert_label + ' · ' : '') + row.due_label);
+      assert.equal(await date.locator('use[href="#status-warning"]').count(), Number(row.due_alert));
+      if (row.due_alert) assert.equal(await date.evaluate(el => getComputedStyle(el).color), warningColor);
+      assert.equal(await date.getAttribute('title'), [row.due_alert_label, row.due_at].filter(Boolean).join(' · '));
+    }
     const href = await card.getAttribute('href');
-    await card.press('Alt+ArrowRight');
+    const dates = page.locator('[data-deadline-alert]');
+    const boardWarnings = await dates.allTextContents();
+    await page.getByRole('tab', { name: '项目概览' }).click();
+    await page.getByRole('link', { name: '节点task-0' }).waitFor();
+    assert.deepEqual(await dates.allTextContents(), boardWarnings);
+    await page.getByRole('tab', { name: '任务', exact: true }).click();
+    await page.getByRole('link', { name: '列表', exact: true }).click();
+    await page.getByRole('table').waitFor();
+    assert.deepEqual(await dates.allTextContents(), boardWarnings);
+    await page.getByRole('link', { name: '看板', exact: true }).click();
+    await card.waitFor();
+    if (width === 1366) await card.dragTo(page.locator('[data-column="in_progress"] h3'));
+    else await card.press('Alt+ArrowRight');
     await page.locator('[data-column="in_progress"] [data-task-id="task-0"]').waitFor();
     if (width === 1366) await card.dragTo(page.locator('[data-column="blocked"] h3'));
     else await card.press('Alt+ArrowRight');
@@ -368,6 +395,11 @@ test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async 
       canMove = status === 409;
       await retry.click();
       await page.getByRole('table').waitFor();
+      const restored = page.locator('tbody tr').filter({ has: page.locator('a[href="' + href + '"]') });
+      assert.equal(await restored.count(), 1);
+      assert.equal(await page.locator('tbody tr').count(), 4);
+      assert.equal(canMove ? await restored.locator('select').inputValue() : await restored.locator('td').nth(1).innerText(),
+        canMove ? 'blocked' : '受阻');
     }
     assert.equal(await page.locator('[data-move-task]').count(), 0);
     await page.close();
@@ -468,4 +500,57 @@ test('任务字段、条件校验、草稿、冲突及活动', {skip: !moduleNam
   readonly=true;await page.goto(origin+'/'+detail);await save.waitFor();
   assert.ok(await byName('title').isDisabled());assert.ok(await save.isDisabled());
   assert.deepEqual(errors,[]);
+});
+
+test('两项目分别保留搜索、负责人、里程碑和任务视图', { skip: !moduleName }, async t => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  await fixture(page);
+  const samples = [
+    { id: project.id, q: '甲', owner: 'u1', milestone: 'm1', view: '列表' },
+    { id: 'p-22', q: '乙', owner: 'u2', milestone: '@none', view: '看板' },
+  ];
+  for (const sample of samples) {
+    const api = origin + '/api/v1/projects/' + sample.id;
+    await page.route(api + '/overview', r => r.fulfill({ json: { data: {
+      workspace: { project: { id: sample.id, name: sample.q } },
+      milestones: { items: [{ id: 'm1', kind: 'milestone', title: '交付节点' }] },
+    } } }));
+    await page.route(api + '/members', r => r.fulfill({ json: { data: { members: [] } } }));
+    await page.route(api + '/tasks*', r => {
+      const params = new URL(r.request().url()).searchParams;
+      const matches = params.get('owner_member_id') === sample.owner && params.get('q') === sample.q &&
+        (sample.milestone === '@none' ? params.get('milestone_unassigned') === 'true' : params.get('milestone_id') === sample.milestone);
+      const items = matches ? [{ id: 't1', title: sample.q + '验收', column_id: 'todo' }] : [];
+      return r.fulfill({ json: { data: { owner_member_ids: [sample.owner],
+        columns: [{ id: 'todo', name: '待开始', items, total: items.length }] } } });
+    });
+  }
+  async function enter(sample) {
+    await page.evaluate(id => { location.hash = '#/projects/' + id + '/overview'; }, sample.id);
+    await page.getByRole('heading', { name: sample.q, exact: true }).waitFor();
+    await page.getByRole('tab', { name: '任务', exact: true }).click();
+    await page.getByLabel('筛选里程碑').waitFor();
+  }
+  await page.goto(origin + '/#/projects');
+  for (const sample of samples) {
+    await enter(sample);
+    assert.equal(await page.getByRole('searchbox').inputValue(), '');
+    await page.getByRole('searchbox').fill(sample.q);
+    await page.getByLabel('筛选负责人').selectOption(sample.owner);
+    await page.getByLabel('筛选里程碑').selectOption(sample.milestone);
+    await page.getByRole('button', { name: '查询' }).click();
+    await page.getByRole('link', { name: sample.q + '验收' }).waitFor();
+    await page.getByRole('link', { name: sample.view, exact: true }).click();
+  }
+  for (const sample of samples) {
+    await enter(sample);
+    await page.getByRole('link', { name: sample.q + '验收' }).waitFor();
+    assert.equal(await page.getByRole('searchbox').inputValue(), sample.q);
+    assert.equal(await page.getByLabel('筛选负责人').inputValue(), sample.owner);
+    assert.equal(await page.getByLabel('筛选里程碑').inputValue(), sample.milestone);
+    assert.equal(await page.getByRole('link', { name: sample.view, exact: true }).getAttribute('aria-current'), 'page');
+  }
 });

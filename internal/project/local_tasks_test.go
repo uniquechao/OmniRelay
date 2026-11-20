@@ -89,14 +89,19 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	second := create(base, fmt.Sprintf(`{"title":"合同复核","owner_member_id":"u","milestone_id":%q}`, m))
 	create(base, fmt.Sprintf(`{"title":"合同复核","owner_member_id":"v","milestone_id":%q}`, m))
 	create(base, fmt.Sprintf(`{"title":"评审","owner_member_id":"u","milestone_id":%q}`, m))
-	board := func(filter string) taskBoard {
-		raw := request("GET", base+"?q=合同&owner_member_id=u"+filter, "", 200)["data"]
+	other := create("b/tasks", fmt.Sprintf(`{"title":"合同复核","owner_member_id":"u","milestone_id":%q}`, foreign))
+	projectBoard := func(path, filter string) taskBoard {
+		raw := request("GET", path+"?q=合同&owner_member_id=u"+filter, "", 200)["data"]
 		b, _ := json.Marshal(raw)
 		var got taskBoard
 		if err := json.Unmarshal(b, &got); err != nil {
 			t.Fatal(err)
 		}
 		return got
+	}
+	board := func(filter string) taskBoard { return projectBoard(base, filter) }
+	if b := projectBoard("b/tasks", "&milestone_id="+foreign); b.Total != 1 || b.Columns[0].Items[0].ID != other {
+		t.Fatal("另一项目联合筛选结果不符")
 	}
 	if board("").Total != 2 {
 		t.Fatal("全部筛选不符")
@@ -143,6 +148,24 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	stale.ExpectedBoardVersion--
 	if got := send(stale, 409)["error"]; got != "board_version_conflict" {
 		t.Fatalf("冲突原因错误 %v", got)
+	}
+	afterConflict := board("&milestone_id=" + m)
+	if !reflect.DeepEqual(got, afterConflict) {
+		t.Fatal("移动失败改变了看板")
+	}
+	count := 0
+	for _, column := range afterConflict.Columns {
+		for _, item := range column.Items {
+			if item.ID == first {
+				count++
+				if item.Milestone == nil || *item.Milestone != m || item.Status != "todo" {
+					t.Fatal("修改归属后卡片内容错误")
+				}
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("移动失败后找到 %d 张同一任务的卡片", count)
 	}
 	var codes [2]int
 	var results [2]string
@@ -322,16 +345,16 @@ func TestTaskBusinessClock(t *testing.T) {
 	cases := []struct {
 		instant, due, status, label string
 		zone                        *time.Location
-		alert                       bool
+		warning                     string
 	}{
-		{"2026-12-30T15:59:59Z", "2027-01-03", "todo", "2027/1/3", sh, false},
-		{"2026-12-30T16:00:00Z", "2027-01-03", "todo", "2027/1/3", sh, true},
-		{"2026-12-31T16:00:00Z", "2026-12-31T16:30:00Z", "todo", "1/1", sh, true},
-		{"2026-12-31T16:00:00Z", "2026-12-30", "todo", "2026/12/30", sh, true},
-		{"2026-12-31T16:00:00Z", "2027-01-01", "done", "1/1", sh, false},
-		{"2026-12-31T16:00:00Z", "2027-01-01", "cancelled", "1/1", sh, false},
-		{"2026-12-31T16:00:00Z", "", "todo", "", sh, false},
-		{"2026-10-30T05:00:00Z", "2026-11-02", "todo", "11/2", ny, true},
+		{"2026-12-30T15:59:59Z", "2027-01-03", "todo", "2027/1/3", sh, ""},
+		{"2026-12-30T16:00:00Z", "2027-01-03", "todo", "2027/1/3", sh, "临期"},
+		{"2026-12-31T16:00:00Z", "2026-12-31T16:30:00Z", "todo", "1/1", sh, "今日到期"},
+		{"2026-12-31T16:00:00Z", "2026-12-30", "todo", "2026/12/30", sh, "已逾期"},
+		{"2026-12-31T16:00:00Z", "2027-01-01", "done", "1/1", sh, ""},
+		{"2026-12-31T16:00:00Z", "2027-01-01", "cancelled", "1/1", sh, ""},
+		{"2026-12-31T16:00:00Z", "", "todo", "", sh, ""},
+		{"2026-10-30T05:00:00Z", "2026-11-02", "todo", "11/2", ny, "临期"},
 	}
 	for _, c := range cases {
 		instant, _ := time.Parse(time.RFC3339, c.instant)
@@ -339,7 +362,7 @@ func TestTaskBusinessClock(t *testing.T) {
 		if c.due != "" {
 			task.Due = &c.due
 		}
-		if err := task.present(instant.In(c.zone), 1); err != nil || task.DueLabel != c.label || task.DueAlert != c.alert {
+		if err := task.present(instant.In(c.zone), 1); err != nil || task.DueLabel != c.label || task.DueAlertLabel != c.warning || task.DueAlert != (c.warning != "") {
 			t.Errorf("业务日边界 %v 得到 %v", c, task)
 		}
 	}
