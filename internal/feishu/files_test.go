@@ -21,6 +21,9 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 		"/open-apis/minutes/v1/minutes/Minute":                                        `{"code":0,"data":{"minute":{"title":"评审"}}}`,
 		"/open-apis/minutes/v1/minutes/Minute/transcript?file_format=txt":             "会议记录",
 		"/open-apis/drive/v1/files/Cloud/download":                                    "PDF",
+		"/open-apis/wiki/v2/spaces/get_node?token=Node":                               `{"code":0,"data":{"node":{"obj_type":"docx","obj_token":"Doc"}}}`,
+		"/open-apis/im/v1/messages/om_share/resources/Img?type=image":                 "图片字节",
+		"/open-apis/im/v1/messages/om_share/resources/Video?type=file":                "视频字节",
 		"/open-apis/im/v1/messages/om_share/resources/Key?type=file":                  "",
 		"/open-apis/bitable/v1/apps/Base":                                             `{"code":0,"data":{"app":{"name":"登记表"}}}`,
 		"/open-apis/bitable/v1/apps/Base/tables?page_size=100&page_token=":            `{"code":0,"data":{"items":[{"table_id":"t1","name":"登记"}],"has_more":false}}`,
@@ -58,7 +61,7 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 	if err := src.CheckShare(ctx, doc, "oc_old"); !errors.Is(err, drive.ErrRevoked) {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ kind, token, want string }{{"docx", "Doc", "正文"}, {"minutes", "Minute", "会议记录"}, {"file", "Cloud", "PDF"}, {"attachment", "Key", ""}, {"base", "Base", `"编号":2`}} {
+	for _, tc := range []struct{ kind, token, want string }{{"docx", "Doc", "正文"}, {"minutes", "Minute", "会议记录"}, {"file", "Cloud", "PDF"}, {"attachment", "Key", ""}, {"image", "Img", "图片字节"}, {"video", "Video", "视频字节"}, {"base", "Base", `"编号":2`}} {
 		f, err := src.ReadFile(ctx, drive.Ref{Kind: tc.kind, Token: tc.token, MessageID: "om_share"}, false)
 		if err == nil && f.Stream != nil {
 			f.Content, err = io.ReadAll(f.Stream)
@@ -67,6 +70,15 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 		if err != nil || !strings.Contains(string(f.Content), tc.want) || f.Content == nil {
 			t.Fatal(tc, f, err)
 		}
+	}
+	wikiMessage := "/open-apis/im/v1/messages/om_share"
+	replies[wikiMessage] = strings.ReplaceAll(replies[wikiMessage], "/docx/Doc", "/wiki/Node")
+	if err := src.CheckShare(ctx, doc, "oc_group"); err != nil {
+		t.Fatal(err)
+	}
+	replies["/open-apis/wiki/v2/spaces/get_node?token=Node"] = "denied"
+	if err := src.CheckShare(ctx, doc, "oc_group"); !errors.Is(err, drive.ErrRevoked) {
+		t.Fatal(err)
 	}
 	base := drive.Ref{Kind: "base", Token: "Base"}
 	lastPage := replies[last]

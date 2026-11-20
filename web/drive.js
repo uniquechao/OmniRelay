@@ -4,7 +4,7 @@ import { assignmentAPI } from './chat-assignment.js';
 import { fileSources, fileProjects, editFileProjects, mountFileMetadata } from './drive-metadata.js';
 
 const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', files:'文件' };
-const coverage = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败', expired:'同步版本已过期', revoked:'访问受限' };
+const coverage = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败', expired:'同步版本已过期', revoked:'访问受限', over_limit:'超过同步大小上限' };
 const decimal = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:1});
 
 function sizeText(bytes) {
@@ -54,10 +54,11 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
     for (const button of bar.children) button.setAttribute('aria-pressed', String(button.dataset.driveCategory === category));
     const view = mountList(root, {
       key:'feishu-drive-' + category, states, label:'飞书文件', itemLabel:'文件', selection:false, signal:lifetime,
-      filters:[{key:'project_id',label:'所属项目',options:{}}],
+      filters:[{key:'project_id',label:'所属项目',options:{}}, ...(category === 'files' ? [{key:'format',label:'格式',options:{image:'图片',video:'视频',pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'}}] : [])],
       async loadPage(state, pageSignal) {
         const params = new URLSearchParams({category, offset:state.page * state.pageSize, limit:state.pageSize});
         if (state.query.trim()) params.set('q', state.query.trim());
+        if (state.filters.format) params.set('format',state.filters.format);
         if (state.filters.project_id) params.set('project_id', state.filters.project_id);
         if (state.sort) {
           params.set('sort',state.sort.key);
@@ -92,7 +93,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
           return escape(coverage[row.sync_state] || '同步状态未知') + (updated ? '<br><time datetime="' +
             escape(row.updated_at) + '">' + escape(updated.toLocaleString('zh-CN')) + '</time>' : '');
         }},
-        {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>'}
+        {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>' + (row.version_id ? ' <a class="row-action" download href="/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/content?download=1">下载</a>' : '')}
       ]
     });
     root.addEventListener('click', event => {

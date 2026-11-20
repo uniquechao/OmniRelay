@@ -98,6 +98,8 @@ spec:
               cpu: "1"
               memory: 512Mi
           volumeMounts:
+            - name: file-staging
+              mountPath: /tmp
             - name: pg-ca
               mountPath: /run/pg-ca
               readOnly: true
@@ -105,6 +107,9 @@ spec:
               mountPath: /run/s3-ca
               readOnly: true
       volumes:
+        - name: file-staging
+          emptyDir:
+            sizeLimit: 160Mi
         - name: pg-ca
           configMap:
             name: postgres-ca

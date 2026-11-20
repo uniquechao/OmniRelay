@@ -39,7 +39,7 @@ func TestPreviewSamples(t *testing.T) {
 	src := &previewSampleSource{snapshots: map[string]Snapshot{}, testSource: testSource{denied: map[string]bool{}}}
 	roles := access.New(pool, "t", "a")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
-	s := New(pool, "t", "a", 1, src, roles)
+	s := New(pool, "t", "a", 1, src, roles, testBucket(t), testGroupAccess)
 	mux := http.NewServeMux()
 	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
 		return identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}, true

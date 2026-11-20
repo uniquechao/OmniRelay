@@ -37,14 +37,16 @@ function renderResult(kind, data, meta) {
 }
 export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus}) {
   const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', restoreFocus,
-    description:row.format + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
+    description:row.format + (row.category === 'docs' && row.version_id ? ' · 已同步纯文本正文' : '') + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
     body:'<div data-metadata></div><section class="drive-preview-content"><p role="status" tabindex="-1"></p>' +
       '<div data-preview-controls></div><div data-preview-body></div></section>'});
   mountMetadata(dialog, dialog.querySelector('[data-metadata]'));
   const status = dialog.querySelector('[role="status"]');
   const controls = dialog.querySelector('[data-preview-controls]');
   const body = dialog.querySelector('[data-preview-body]');
-  const root = '/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/previews';
+  const versions = '/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions';
+  const versionPath = versions + '/' + encodeURIComponent(row.version_id);
+  const root = versionPath + '/previews';
   let page = 1, sheet = 0, entry = 0, directoryPage = 1;
   let pending, displayedTask;
   async function recheck() {
@@ -54,6 +56,10 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
     try {
       const current = await request(task.path, {signal:task.signal});
       if (task !== displayedTask || task.signal.aborted) return;
+      if (task.media) {
+        if (!current.items.some(v => String(v.id) === String(row.version_id))) showFailure('forbidden');
+        return;
+      }
       if (current.stage !== 'ready') showFailure(current.stage);
       else if (String(current.version_id) !== String(row.version_id)) showFailure('version_unavailable');
     } catch (error) {
@@ -63,7 +69,7 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
         void load();
       } else {
         const code = error.data?.error;
-        showFailure(error.status === 403 ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
+        showFailure([403,404].includes(error.status) ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
       }
     } finally { task.checking = false; }
   }
@@ -109,6 +115,24 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
     controls.innerHTML = entry ? action('directory','返回目录') : '';
     status.textContent = messages.queued;
     try {
+      if (row.format_key === 'image' || row.format_key === 'video') {
+        const media = document.createElement(row.format_key === 'image' ? 'img' : 'video');
+        const available = await request(versions, {signal});
+        signal.throwIfAborted();
+        if (!available.items.some(v => String(v.id) === String(row.version_id))) { showFailure('forbidden'); return; }
+        media.addEventListener('error', () => {
+          if (signal.aborted || !dialog.open) return;
+          status.textContent = '暂时无法预览此格式，可返回文件列表下载原件。';
+          void recheck();
+        });
+        if (row.format_key === 'image') media.alt = row.name;
+        else { media.controls = true; media.preload = 'metadata'; media.setAttribute('aria-label', row.name); }
+        displayedTask = {path:versions, signal, media:true};
+        media.src = versionPath + '/content';
+        body.replaceChildren(media);
+        status.textContent = '';
+        return;
+      }
       let task = await request(root + '?' + params, {method:'POST', signal});
       signal.throwIfAborted();
       const path = root + '/' + encodeURIComponent(task.task_id);
@@ -158,7 +182,7 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
     } catch (error) {
       if (signal.aborted || !dialog.open) return;
       const code = error.data?.error;
-      showFailure(error.status === 403 ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
+      showFailure([403,404].includes(error.status) ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
     }
   }
   dialog.addEventListener('click', async event => {

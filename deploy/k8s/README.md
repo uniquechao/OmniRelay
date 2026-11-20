@@ -50,7 +50,7 @@ deploy/k8s/scripts/configure-object-storage-access.sh "$context"
 
 验证脚本通过目标主机回环地址临时转发，校验证书链和服务名，创建或复用私有 bucket `omnirelay-files`，写入和读回临时对象，再验证匿名访问被拒绝并删除测试对象。首次部署可传 `--restart` 验证 Pod 重建后仍能读回同一对象。已有业务流量时安排重建窗口。
 
-应用授权脚本使用目标主机上的 `mcli`，可用 `MINIO_ADMIN_CLIENT` 指定可执行文件。它创建或复用 `omnirelay-files` 和该 bucket 专用的读写身份，验证写入、读回和禁止管理操作，并生成 `Secret/omnirelay-s3` 给 Go。管理凭据只用于初始化。应用权限包含对象读写和分段上传，普通应用请求没有删除权限。
+应用授权脚本使用目标主机上的 `mcli`，可用 `MINIO_ADMIN_CLIENT` 指定可执行文件。它创建或复用 `omnirelay-files` 和该 bucket 专用的读写身份，验证写入、读回和禁止管理操作，并生成 `Secret/omnirelay-s3` 给 Go。管理凭据只用于初始化。应用权限包含对象读写和分段上传，后台回收任务仅能删除 `sync-objects/` 前缀内的对象。同步服务只回收超过 24 小时且从未发布的对象，文件读取接口没有删除操作。
 
 Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文按 `.dockerignore` 清单提供 Go 源码、前端源码、原型共用资源、依赖锁和构建测试夹具。`private/` 留在目标主机。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
 

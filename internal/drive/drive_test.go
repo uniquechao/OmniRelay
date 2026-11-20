@@ -122,7 +122,7 @@ func TestFileArchiveAccess(t *testing.T) {
 	src := &testSource{denied: map[string]bool{}, text: "第一版"}
 	roles := access.New(pool, "t", "a")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
-	s := New(pool, "t", "a", 1, src, roles)
+	s := New(pool, "t", "a", 1, src, roles, testBucket(t), testGroupAccess)
 	if worked, err := s.index(ctx); err != nil || !worked {
 		t.Fatal(worked, err)
 	}
@@ -335,7 +335,7 @@ func TestFileArchiveAccess(t *testing.T) {
 		slices.ContainsFunc(sources, func(src ProjectSource) bool { return src.ChatID != "g1" }) {
 		t.Fatal(sources, err)
 	}
-	if sources, err := s.ProjectSources(ctx, alice, "q"); err != nil || len(sources) != 0 {
+	if sources, err := s.ProjectSources(ctx, alice, "unrelated"); err != nil || len(sources) != 0 {
 		t.Fatal(sources, err)
 	}
 	exec("UPDATE project_members SET role='revoked'")
@@ -459,7 +459,7 @@ func TestFileArchiveAccess(t *testing.T) {
 			t.Fatal("云内容的列表字段或归档内容不符", f)
 		}
 	}
-	exec("DELETE FROM feishu_file_projects")
+	exec("DELETE FROM project_chat_links")
 	if got := s.CloudFormats(ctx, actor, []string{"Sheet"}); len(got) != 0 {
 		t.Fatal("撤权后仍可见格式", got)
 	}

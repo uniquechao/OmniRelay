@@ -159,7 +159,7 @@ td a:hover { text-decoration: underline; }
 
 .drive-preview-content { min-width: 0; overflow-wrap: anywhere; }
 .drive-preview-text { white-space: pre-wrap; }
-.drive-preview-content canvas { display: block; max-width: 100%; height: auto; margin: 12px auto; }
+.drive-preview-content :is(canvas,img,video) { display: block; max-width: 100%; height: auto; margin: 12px auto; }
 .drive-preview-content [data-preview-controls] { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .drive-preview-content select { max-width: 100%; }
 .drive-preview-content .drive-preview-table { overflow: auto; max-width: 100%; }

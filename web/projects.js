@@ -521,7 +521,9 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
     const kind = row.ref?.kind || row.resource_type || row.kind,
       id = row.ref?.source_id || row.resource_token;
     return [
-      esc(row.title || '未命名'),
+      esc(row.title || '未命名') + (row.file_id && row.version_id ? ' <a download href="/api/v1/feishu/files/' +
+        encodeURIComponent(row.file_id) + '/versions/' + encodeURIComponent(row.version_id) + '/content?download=1&amp;source_project=' +
+        encodeURIComponent(route.id) + '">下载</a>' : ''),
       identifier.test(row.chat_id || '') && identifier.test(row.message_id || '')
         ? link('#/feishu/bot-chats/' + row.chat_id + '/' + row.message_id, '查看分享消息')
         : esc(row.editor || row.created_at || '—'),

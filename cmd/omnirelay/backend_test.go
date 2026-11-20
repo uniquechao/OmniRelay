@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -156,13 +157,17 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 
 	home := do("GET", "/", "", nil, "")
 	wantStatus(home, http.StatusOK)
-	if !strings.Contains(home.Body.String(), `id="password-login"`) ||
+	if !strings.Contains(home.Body.String(), `id="root"`) ||
 		!strings.Contains(home.Header().Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
-	for _, asset := range []string{"/chat-reader.js", "/chat-reader.css", "/omni-relay-bot-chat.css", "/omni-relay-split-pane.js"} {
-		wantStatus(do("GET", asset, "", nil, ""), http.StatusOK)
+	for _, pattern := range []string{`src="(/assets/[^"]+\.js)"`, `href="(/assets/[^"]+\.css)"`} {
+		asset := regexp.MustCompile(pattern).FindStringSubmatch(home.Body.String())
+		if len(asset) != 2 {
+			t.Fatalf("工作台首页缺少资源引用：%s", pattern)
+		}
+		wantStatus(do("GET", asset[1], "", nil, ""), http.StatusOK)
 	}
 	for _, path := range []string{"https://offsite.test/", "/%2Foffsite.test", "/#/workbench?next=//offsite.test"} {
 		wantStatus(do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(path), "", nil, ""), http.StatusBadRequest)
