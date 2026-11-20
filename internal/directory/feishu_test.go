@@ -164,26 +164,30 @@ func TestCollectRejectsMissingOrNullPageItems(t *testing.T) {
 	}
 }
 
-func TestMissingContactActivationIsUnknown(t *testing.T) {
+func TestContactActivationStatus(t *testing.T) {
 	for _, tc := range []struct {
-		payload string
-		want    string
+		payload     string
+		want        string
+		unactivated bool
 	}{
-		{`{}`, "unknown"},
-		{`{"status":null}`, "unknown"},
-		{`{"status":{}}`, "unknown"},
-		{`{"status":{"is_resigned":false}}`, "unknown"},
-		{`{"status":{"is_activated":true}}`, "active"},
-		{`{"status":{"is_activated":false}}`, "inactive"},
-		{`{"status":{"is_activated":true,"is_exited":true}}`, "inactive"},
-		{`{"status":{"is_resigned":true,"is_exited":true}}`, "resigned"},
+		{`{}`, "unknown", false},
+		{`{"status":null}`, "unknown", false},
+		{`{"status":{}}`, "unknown", false},
+		{`{"status":{"is_resigned":false}}`, "unknown", false},
+		{`{"status":{"is_activated":true}}`, "active", false},
+		{`{"status":{"is_activated":false}}`, "inactive", true},
+		{`{"status":{"is_activated":true,"is_exited":true}}`, "inactive", false},
+		{`{"status":{"is_activated":false,"is_exited":true}}`, "inactive", false},
+		{`{"status":{"is_activated":false,"is_frozen":true}}`, "inactive", false},
+		{`{"status":{"is_activated":false,"is_unjoin":true}}`, "inactive", false},
+		{`{"status":{"is_activated":false,"is_resigned":true}}`, "resigned", false},
 	} {
 		var person contactPerson
 		if err := json.Unmarshal([]byte(tc.payload), &person); err != nil {
 			t.Fatal(err)
 		}
-		if got := person.status(); got != tc.want {
-			t.Errorf("status from %s = %s, want %s", tc.payload, got, tc.want)
+		if got, unactivated := person.status(); got != tc.want || unactivated != tc.unactivated {
+			t.Errorf("status from %s = %s, unactivated=%t; want %s, unactivated=%t", tc.payload, got, unactivated, tc.want, tc.unactivated)
 		}
 	}
 }

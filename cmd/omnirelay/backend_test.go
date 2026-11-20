@@ -49,7 +49,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		publicOrigin: fixtureOrigin, appID: "cli_fixture", appSecret: "fixture-only",
 		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour, credentialsGeneration: 1, botHeartbeatTTL: 30 * time.Second,
 	}
-	fixture := &feishuFixture{}
+	fixture := &feishuFixture{unactivated: true}
 	handler, workers, err := newBackend(ctx, pool, cfg, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		}
 		wantStatus(finish, http.StatusSeeOther)
 		if finish.Header().Get("Location") != destination || finish.Header().Get("Referrer-Policy") != "no-referrer" {
-			t.Fatal("unexpected redirect or referrer policy")
+			t.Fatalf("unexpected redirect or referrer policy: destination=%q, expected=%q", finish.Header().Get("Location"), destination)
 		}
 		session := findCookie(finish, "__Host-omnirelay_session")
 		sensitive = append(sensitive, session.Value)
@@ -156,14 +156,11 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 
 	home := do("GET", "/", "", nil, "")
 	wantStatus(home, http.StatusOK)
-	if !strings.Contains(home.Body.String(), `id="password-login"`) ||
+	if !strings.Contains(home.Body.String(), `id="root"`) || !strings.Contains(home.Body.String(), "/assets/") ||
 		!strings.Contains(home.Header().Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
-	for _, asset := range []string{"/chat-reader.js", "/chat-reader.css", "/omni-relay-bot-chat.css", "/omni-relay-split-pane.js"} {
-		wantStatus(do("GET", asset, "", nil, ""), http.StatusOK)
-	}
 	for _, path := range []string{"https://offsite.test/", "/%2Foffsite.test", "/#/workbench?next=//offsite.test"} {
 		wantStatus(do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(path), "", nil, ""), http.StatusBadRequest)
 	}
@@ -206,8 +203,10 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		if people.Code == http.StatusOK && strings.Contains(people.Body.String(), "ou_member") {
 			var list struct {
 				Items []struct {
-					OpenID    string `json:"open_id"`
-					PersonKey string `json:"person_key"`
+					OpenID          string `json:"open_id"`
+					PersonKey       string `json:"person_key"`
+					DirectoryStatus string `json:"directory_status"`
+					AccountStatus   string `json:"account_status"`
 				}
 			}
 			if err := json.Unmarshal(people.Body.Bytes(), &list); err != nil {
@@ -215,6 +214,9 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 			}
 			for _, person := range list.Items {
 				if person.OpenID == "ou_member" {
+					if person.DirectoryStatus != "inactive" || person.AccountStatus != "unprovisioned" {
+						t.Fatalf("unexpected directory or account status before provisioning: %+v", person)
+					}
 					memberPersonKey = person.PersonKey
 				}
 			}
@@ -236,13 +238,17 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 	created := do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf)
 	wantStatus(created, http.StatusCreated)
 	var account struct {
-		PersonKey string `json:"personKey"`
+		PersonKey   string   `json:"personKey"`
+		SystemRoles []string `json:"systemRoles"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &account); err != nil || account.PersonKey != memberPersonKey {
 		t.Fatalf("provisioning changed the presentation key: %s %v", created.Body.String(), err)
 	}
+	if len(account.SystemRoles) != 1 || account.SystemRoles[0] != "system_user" {
+		t.Fatalf("provisioning did not grant only the default role: %v", account.SystemRoles)
+	}
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", "/#/feishu/bot-chats/oc_project/om_receipt", "/#/bot-chats/oc_project/om_receipt")
+	member, target, memberCSRF := login("ou_member", "/#/workbench", "/#/bot-chats/oc_project/om_receipt")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)
@@ -352,6 +358,7 @@ func backendTestPool(t *testing.T, ctx context.Context, dsn string) *pgxpool.Poo
 }
 
 type feishuFixture struct {
+	unactivated    bool
 	resigned       atomic.Bool
 	callbackOrigin string
 }
@@ -479,7 +486,7 @@ func (f *feishuFixture) RoundTrip(r *http.Request) (*http.Response, error) {
 	case "/open-apis/contact/v3/departments/team/children":
 		body = `{"code":0,"data":{"items":[],"has_more":false}}`
 	case "/open-apis/contact/v3/users/find_by_department":
-		body = fmt.Sprintf(`{"code":0,"data":{"items":[{"open_id":"ou_member","name":"Example member","status":{"is_activated":true,"is_resigned":%t},"department_ids":["team"]}],"has_more":false}}`, f.resigned.Load())
+		body = fmt.Sprintf(`{"code":0,"data":{"items":[{"open_id":"ou_member","name":"Example member","status":{"is_activated":%t,"is_resigned":%t},"department_ids":["team"]}],"has_more":false}}`, !f.unactivated, f.resigned.Load())
 	default:
 		return nil, fmt.Errorf("unexpected fixture route")
 	}

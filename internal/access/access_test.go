@@ -364,7 +364,10 @@ func TestAccountPreauthorizationRequiresAdminAndPreservesDisabledAccount(t *test
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO directory_people
 		(tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status)
-		VALUES ('tenant','app',$1,'ou_candidate','Candidate','','active')`, run); err != nil {
+		VALUES ('tenant','app',$1,'ou_candidate','Candidate','','active'),
+		       ('tenant','app',$1,'ou_inactive','Inactive','','inactive'),
+		       ('tenant','app',$1,'ou_unknown','Unknown','','unknown'),
+		       ('tenant','app',$1,'ou_resigned','Resigned','','resigned')`, run); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE directory_sources SET visible=true,active_version=$1
@@ -373,6 +376,9 @@ func TestAccountPreauthorizationRequiresAdminAndPreservesDisabledAccount(t *test
 	}
 	assertStatus(t, request(mux, http.MethodPost, path, user, body), 403)
 	assertStatus(t, request(mux, http.MethodPost, path, foreign, body), 403)
+	for _, openID := range []string{"ou_inactive", "ou_unknown", "ou_resigned"} {
+		assertStatus(t, request(mux, http.MethodPost, path, admin, fmt.Sprintf(`{"openId":%q}`, openID)), 404)
+	}
 	created := request(mux, http.MethodPost, path, admin, body)
 	assertStatus(t, created, 201)
 	var account Account
