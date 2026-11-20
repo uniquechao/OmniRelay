@@ -113,6 +113,7 @@ async function mountFixture(page, {
   return {
     queries,
     revoke: () => { groupAccess = false; },
+    restore: () => { groupAccess = true; },
     abortRequests: (predicate = () => false) => { aborted = predicate; },
     holdDirectory() {
       let release;
@@ -782,4 +783,110 @@ test('项目群主群替换、改绑、失败重试和清除在两个入口即�
   await Promise.all([scoped.reload(), global.reload()]);
   await scoped.getByText('暂无项目关联群。').waitFor();
   await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
+});
+
+test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const width of [1366,390]) for (const theme of ['light','dark']) {
+    const mobile = width === 390;
+    const page = await browser.newPage({ viewport:{width,height:844}, isMobile:mobile, hasTouch:mobile });
+    page.setDefaultTimeout(6000);
+    const act = target => mobile ? target.tap() : target.click();
+    const fixture = await mountFixture(page);
+    let second = '启明';
+    const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
+      project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
+        ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name}))};
+    const patches = [];
+    await page.route(origin + '/api/v1/projects?**', route =>
+      route.fulfill({json:{items:[{id:'a',name:'北辰'},{id:'b',name:second}],total:2}}));
+    await page.route(origin + '/api/v1/feishu/files**', route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/projects')) {
+        const change = request.postDataJSON();
+        patches.push(change);
+        if (change.project_version !== row.project_version) return route.fulfill({status:409,json:{}});
+        row.project_ids = row.project_ids.filter(id => !change.remove_project_ids.includes(id)).concat(change.add_project_ids);
+        return route.fulfill({json:{project_version:++row.project_version}});
+      }
+      if (url.pathname.endsWith('/17')) return route.fulfill({json:row});
+      const filter = url.searchParams.get('project_id');
+      const items = !filter || row.project_ids.includes(filter) ? [row] : [];
+      return route.fulfill({json:{items,total:items.length,projects:Object.fromEntries(row.project_ids.map(id => [id,id]))}});
+    });
+    await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
+    await act(page.locator('[data-drive-category=files]'));
+    const edit = page.locator('tbody [data-drive-projects]');
+    await act(edit);
+    const input = page.getByRole('combobox', {name:'所属项目'});
+    await input.fill('启');
+    await act(page.getByRole('option',{name:'启明'}));
+    assert.equal(await input.getAttribute('aria-expanded'),'true');
+    const save = page.getByRole('button',{name:'保存',exact:true});
+    await act(save);
+    await edit.getByText('启明').waitFor();
+    assert.deepEqual(patches,[{project_version:3,add_project_ids:['b'],remove_project_ids:[]}]);
+    second = '启明新名称';
+    await page.reload();
+    await act(page.locator('[data-more]'));
+    assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
+    await page.locator('[data-filter]').selectOption({label:second});
+    await page.keyboard.press('Escape');
+    await edit.getByText(second).waitFor();
+    const links = page.locator('tbody .drive-source');
+    assert.equal(await links.count(),2);
+    await act(links.first());
+    await page.locator('[data-source-message]:focus').getByText('会议纪要').waitFor();
+    await page.goBack();
+    await links.first().and(page.locator(':focus')).waitFor();
+    await act(edit);
+    await act(page.getByRole('button',{name:'移除 ' + second}));
+    await act(page.getByRole('button',{name:'取消',exact:true}));
+    await act(page.getByRole('button',{name:'不保存'}));
+    assert.equal(patches.length,1);
+    // 用受控的预览宿主验证 K2 接口，保留正式编辑器和列表请求。
+    await page.evaluate(async () => {
+      const {mountDrive} = await import('/drive.js');
+      const request = async (path, options = {}) => {
+        const response = await fetch(path,{...options,body:JSON.stringify(options.body)});
+        if (!response.ok) throw Object.assign(new Error(),{status:response.status});
+        return response.json();
+      };
+      mountDrive(document.querySelector('#page'),request,new AbortController().signal,{
+        preview(row, trigger, refresh, signal, {mountMetadata}) {
+          const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', body:'<section data-metadata></section>'});
+          mountMetadata(dialog, dialog.querySelector('[data-metadata]'));
+        }
+      });
+    });
+    await act(page.locator('.drive-file-name'));
+    const drawer = page.locator('[data-metadata]');
+    assert.equal(await drawer.locator('.drive-source').first().getAttribute('href'),await links.first().getAttribute('href'));
+    await act(drawer.locator('[data-drive-projects]'));
+    await act(page.getByRole('button',{name:'移除 ' + second}));
+    await act(save);
+    await drawer.locator('[data-drive-projects]:focus').waitFor();
+    assert.deepEqual(await drawer.locator('.kind').allTextContents(), ['北辰']);
+    assert.deepEqual(await edit.locator('.kind').allTextContents(),['北辰']);
+    assert.deepEqual(patches[1],{project_version:4,add_project_ids:[],remove_project_ids:['b']});
+    await act(drawer.locator('[data-drive-projects]'));
+    await act(page.getByRole('option',{name:second}));
+    row.project_version++;
+    await act(save);
+    await page.getByText('归属已变化，请重新打开编辑并确认。',{exact:true}).waitFor();
+    await act(edit);
+    assert.equal(await page.locator('[data-remove=b]').count(),0);
+    await act(page.getByRole('button',{name:'取消',exact:true}));
+    await act(page.locator('.drive-file-name'));
+    fixture.revoke();
+    await act(drawer.locator('.drive-source').first());
+    await page.getByText('当前账号已无法访问此会话。').waitFor();
+    assert.equal(await page.getByText('会议纪要',{exact:true}).count(),0);
+    fixture.restore();
+    await act(page.locator('[data-action=retry-selection]'));
+    await page.locator('[data-source-message]:focus').waitFor();
+    await page.close();
+  }
 });

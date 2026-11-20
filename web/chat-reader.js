@@ -433,7 +433,7 @@ export function mountChatReader(host, api, {
     count.textContent = '';
     count.removeAttribute('aria-label');
     clearDetails();
-    finish(timeline, status(errorText(error)));
+    fail(timeline, error, desiredId ? 'retry-selection' : undefined);
     fail(directory, error, 'retry-directory');
   }
 
@@ -443,7 +443,7 @@ export function mountChatReader(host, api, {
       return;
     }
     clearDetails();
-    finish(timeline, status(errorText(error)));
+    fail(timeline, error, desiredId ? 'retry-selection' : undefined);
     const remaining = conversations.filter(item => item.id !== desiredId);
     directoryTotal -= conversations.length - remaining.length;
     conversations = remaining;
