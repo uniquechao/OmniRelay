@@ -13,7 +13,7 @@ const person = { name: '林晓', person_key: 'person_alice', source: 'feishu', o
 const group = { id: 'oc_group', kind: 'group', name: '北辰项目群', last_message_at: sent_at };
 const direct = { id: 'oc_direct', kind: 'p2p', name: person.name, person, last_message_at: sent_at };
 const oldMessage = { id: 'om_old', chat_id: group.id, sender: person, type: 'text', body: '{"text":"会议纪要"}', sent_at, state: 'available' };
-const recentMessage = { ...oldMessage, id: 'om_recent', body: '会议安排' };
+const recentMessage = { ...oldMessage, id: 'om_recent', sender: { name: '黄利利', source: 'feishu', resigned: true }, body: '会议安排' };
 const task = { id: 'om_task', chat_id: group.id, sender: { name: '飞书 Bot' }, sender_kind: 'app', type: 'interactive',
   body: '{"header":{"title":{"content":"任务已分派"}}}',
   business_receipt: { id: 'rc_1', project_id: 'beichen', target_kind: 'task', target_id: 'task_1' }, sent_at };
@@ -80,7 +80,7 @@ async function mountFixture(page, {
       if (relative === '/oc_group') return route.fulfill(items([group]));
       if (relative === '/oc_direct') return route.fulfill(items([direct]));
       if (relative === '/oc_group/messages') {
-        return route.fulfill(query.has('cursor') ? items([oldMessage]) : items([briefing, task], { next_cursor: 'older' }));
+        return route.fulfill(query.has('cursor') ? items([oldMessage]) : items([briefing, task, recentMessage], { next_cursor: 'older' }));
       }
       if (relative === '/oc_direct/messages' || relative === '/oc_direct/search') return route.fulfill(items([p2pMessage]));
       if (relative === '/oc_direct/messages/om_direct/context') return route.fulfill(items([p2pMessage]));
@@ -125,6 +125,15 @@ test('机器人记录切换、搜索、成员、回执及分隔栏', { skip: !pa
   await page.goto(origin + '/#/bot-chats');
   await page.getByRole('heading', { name: group.name }).waitFor();
   assert.equal(new URL(page.url()).hash, '#/feishu/bot-chats');
+  const departed = page.locator('[data-message="om_recent"]');
+  await departed.locator('.person-name').getByText('离职', { exact: true }).waitFor();
+  for (const trigger of ['.chat-person-button', '.person-name']) {
+    await departed.locator(trigger).click();
+    const detail = page.getByRole('dialog', { name: '黄利利的基本信息' });
+    await detail.getByText('离职', { exact: true }).waitFor();
+    assert.equal(await detail.locator('.person-resigned svg').count(), 1);
+    await page.keyboard.press('Escape');
+  }
   await page.getByRole('link', { name: '查看关联任务' }).waitFor();
   assert.equal(await page.getByRole('link', { name: '查看关联任务' }).getAttribute('href'), '#/projects/beichen/tasks/task_1');
   assert.equal(await page.getByRole('link', { name: '查看项目简报' }).getAttribute('href'), '#/projects/beichen/reports/brief/brief_1');

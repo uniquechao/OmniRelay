@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -298,4 +299,36 @@ func TestRosterPartialScopeRequiresAuthoritativeAbsence(t *testing.T) {
 	provider.Store(&rosterReply{root: "team", members: `[]`, lookup: missingRosterUser})
 	runRosterTestSync(t, service, "succeeded")
 	assertRosterAccount(t, pool, "ou_member", false, true, 1, 0, 1)
+}
+
+func TestGroupSenderDeparture(t *testing.T) {
+	pool := directoryTestPool(t)
+	service, provider := setupRosterSync(t, pool, rosterReply{root: "team", members: "[]", lookup: missingRosterUser})
+	rosterExec(t, pool, `INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation) VALUES ('tenant','app',1);
+		INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES ('tenant','app','group','group');
+		INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,sender_id,sender_kind)
+		VALUES ('tenant','app','m','group',now(),now(),'ou_history','user')`)
+	actor := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "reader", OpenID: "ou_reader"}
+	reader := func(context.Context, identity.Principal, string) ([]ResourcePersonRef, bool, error) {
+		return []ResourcePersonRef{{OpenID: "ou_history", GroupMember: true}, {OpenID: "ou_history"}}, true, nil
+	}
+	check := func(expected bool) {
+		t.Helper()
+		runRosterTestSync(t, service, "succeeded")
+		people, err := service.ReadResourcePeople(t.Context(), actor, "group", reader, nil)
+		if err != nil || len(people) != 2 || people[0].Resigned != expected || people[1].Resigned {
+			t.Fatalf("群聊离职标记与预期不符 %v, %v", people, err)
+		}
+	}
+	denied := rosterReply{root: "team", members: "[]", lookup: func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"code":41050}`)
+	}}
+	provider.Store(&denied)
+	check(false)
+	provider.Store(&rosterReply{root: "team", members: "[]", lookup: missingRosterUser})
+	check(true)
+	provider.Store(&denied)
+	check(true)
+	provider.Store(&rosterReply{root: "team", members: `[{"open_id":"ou_history","name":"黄利利","status":{"is_activated":true}}]`})
+	check(false)
 }

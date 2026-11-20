@@ -325,7 +325,7 @@ export function mountChatReader(host, api, {
           <span class="chat-conversation-preview person-org" title="${detail}">${detail}</span></button></div></li>`;
     }).join('');
     const hits = matches.map(item => `<li><button type="button" class="chat-result" data-chat-id="${esc(item.chat_id)}" data-message-id="${esc(item.id)}">
-      <span class="chat-conversation-top"><strong>${esc(item.sender?.name || '未知人员')}</strong>${time(item.sent_at)}</span>
+      <span class="chat-conversation-top"><strong>${esc(item.sender?.name || '未知人员')}${item.sender?.resigned === true ? '<small class="person-resigned">离职</small>' : ''}</strong>${time(item.sent_at)}</span>
       <span class="chat-conversation-preview">${highlight(messageBody(item), query)}</span></button></li>`).join('');
     count.textContent = number.format(directoryTotal);
     count.setAttribute('aria-label', count.textContent + ' 个会话');

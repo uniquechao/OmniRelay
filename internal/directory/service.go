@@ -333,6 +333,9 @@ func (s *Service) publishSnapshot(ctx context.Context, tx pgx.Tx, job claim, res
 	if err := s.updateRoster(ctx, tx, job.id, result); err != nil {
 		return err
 	}
+	if err := s.publishChatSenderChecks(ctx, tx, job.id, result.ChatSenderChecks); err != nil {
+		return err
+	}
 	if err := s.access.ReclaimDepartedAccounts(ctx, tx, job.id); err != nil {
 		return err
 	}

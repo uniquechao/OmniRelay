@@ -37,10 +37,13 @@ window.OmniRelayUI = (() => {
 
   function personButton(person, content, className = '') {
     const { name, key, org, source } = personDetails(person);
+    const resigned = person.resigned === true;
+    if (resigned && className === 'person-name') content += '<small class="person-resigned">离职</small>';
     return '<button type="button" class="person-button ' + escape(className) +
       '" data-person-name="' + escape(name) + '" data-person-key="' + escape(key ?? '') +
-      '" data-person-org="' + escape(org) + '" data-person-source="' + escape(source) +
-      '" aria-haspopup="dialog" aria-expanded="false" aria-label="查看' + escape(name) +
+      '" data-person-org="' + escape(org) + '" data-person-source="' + escape(source) + '"' +
+      (resigned ? ' data-person-resigned="true"' : '') +
+      ' aria-haspopup="dialog" aria-expanded="false" aria-label="查看' + escape(name) + (resigned ? '（离职）' : '') +
       '的基本信息" title="' + escape(name) + '">' + content + '</button>';
   }
 
@@ -79,7 +82,9 @@ window.OmniRelayUI = (() => {
       card.setAttribute('aria-label',name + '的基本信息');
       card.innerHTML = '<div class="person-view">' + personAvatar(name,key || name) +
         '<div class="person-copy"><strong class="person-name" title="' + escape(name) + '">' + escape(name) +
-        '</strong>' + personOrganization(org) + '</div></div>' +
+        '</strong>' + (trigger.dataset.personResigned === 'true' ?
+          '<small class="person-resigned">' + icon('status-danger') + '离职</small>' : '') +
+        personOrganization(org) + '</div></div>' +
         (source ? '<p class="aux">身份来源　' + escape(source) + '</p>' : '');
       const ownerDialog = trigger.closest('dialog');
       (ownerDialog ?? root).append(card);
