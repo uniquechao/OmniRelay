@@ -18,7 +18,7 @@ export function setSession(session) {
   csrfToken = typeof token === 'string' ? token : '';
 }
 
-export async function api(path, { method = 'GET', body, signal, ifMatch, idempotencyKey, includeETag = false } = {}) {
+export async function api(path, { method = 'GET', body, signal, ifMatch, idempotencyKey, includeETag = false, acceptPNG = false } = {}) {
   const url = new URL(path, location.origin);
   if (url.origin !== location.origin ||
       !(url.pathname.startsWith(apiBase) || url.pathname.startsWith(authBase))) {
@@ -29,7 +29,7 @@ export async function api(path, { method = 'GET', body, signal, ifMatch, idempot
   if (method === 'POST' && ['/auth/login', '/auth/password'].includes(url.pathname) && !hasHTTPS()) {
     throw new ApiError(403, { error: 'https_required' });
   }
-  const headers = new Headers({ Accept: 'application/json' });
+  const headers = new Headers({ Accept: acceptPNG ? 'application/json, image/png' : 'application/json' });
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
     headers.set('X-CSRF-Token', csrfToken);
   }
@@ -49,6 +49,7 @@ export async function api(path, { method = 'GET', body, signal, ifMatch, idempot
 
   const result = data => includeETag ? { data, etag: response.headers.get('ETag') } : data;
   if (response.status === 204) return result(null);
+  if (acceptPNG && response.ok && response.headers.get('Content-Type') === 'image/png') return response.blob();
   const isJson = response.headers.get('Content-Type')?.includes('application/json');
   const data = isJson ? await response.json() : null;
   if (!response.ok || !isJson) throw new ApiError(response.status, data);

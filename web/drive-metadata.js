@@ -105,13 +105,13 @@ export async function editFileProjects({ row, trigger, request, signal, refresh,
   input.focus();
 }
 
-export function mountFileMetadata(dialog, host, row, projects, edit, signal) {
+export function mountFileMetadata(dialog, host, row, projects, edit, signal, category, size) {
   let current = row;
   function paint(record) {
-    if (!record) { dialog.close(); return; }
+    if (!record || record.version_id !== row.version_id) { dialog.close(); return; }
     current = record;
-    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>来源</dt><dd>' + fileSources(record) +
-      '</dd></div><div><dt>所属项目</dt><dd>' + projects(record) + '</dd></div></dl>';
+    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>分类</dt><dd>' + category + '</dd></div><div><dt>来源</dt><dd>' + fileSources(record) +
+      '</dd></div><div><dt>所属项目</dt><dd>' + projects(record) + '</dd></div><div><dt>大小</dt><dd>' + size + '</dd></div></dl>';
   }
   paint(current);
   host.addEventListener('click', event => {

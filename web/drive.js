@@ -1,3 +1,4 @@
+import { openFilePreview } from './drive-preview.js';
 import { fileIcon } from './file-format.js';
 import { assignmentAPI } from './chat-assignment.js';
 import { fileSources, fileProjects, editFileProjects, mountFileMetadata } from './drive-metadata.js';
@@ -39,7 +40,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
   }, {signal, capture:true});
 
   function previewAttrs(row) {
-    const ready = preview && row.version_id && row.sync_state === 'complete';
+    const ready = row.sync_state === 'partial' || (row.version_id && row.sync_state === 'complete');
     return 'data-drive-preview="' + escape(row.id) + '"' + (ready ? '' : ' disabled title="' +
       (row.sync_state === 'complete' ? '预览暂不可用' : '当前同步状态无法预览') + '"');
   }
@@ -108,9 +109,11 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
       if (button.hasAttribute('data-drive-projects')) {
         if (editProjects) editProjects(row, button, view.refresh, lifetime);
         else void edit(row, button);
-      } else preview(row, button, view.refresh, lifetime, {
+      } else (preview ?? openFilePreview)(row, button, view.refresh, lifetime, {
+        request, restoreFocus:() => button.isConnected ? button :
+          root.querySelector('[data-drive-preview="' + CSS.escape(String(row.id)) + '"]') || root.querySelector('[data-search]'),
         mountMetadata:(dialog, host) => mountFileMetadata(dialog, host, row,
-          record => fileProjects(record, names), edit, lifetime)
+          record => fileProjects(record, names), edit, lifetime, categories[row.category] || '文件', sizeText(row.size_bytes))
       });
     });
   }
