@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,20 @@ func (authority acceptanceProjectAuthority) HasProjectAccess(ctx context.Context
 }
 
 func TestSystemRolesBrowser(t *testing.T) {
+	runSystemBrowser(t, "system_roles_browser.test.mjs")
+}
+
+func TestReactAuditBrowser(t *testing.T) {
+	dir, err := filepath.Abs("../../web/dist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OMNIRELAY_PREVIEW_DIR", dir)
+	runSystemBrowser(t, "react_audit_browser.test.mjs")
+}
+
+func runSystemBrowser(t *testing.T, suite string) {
+	t.Helper()
 	if os.Getenv("OMNIRELAY_PLAYWRIGHT_MODULE") == "" {
 		t.Skip("未配置浏览器联调依赖")
 	}
@@ -49,7 +64,7 @@ func TestSystemRolesBrowser(t *testing.T) {
 	if dsn == "" {
 		t.Skip("浏览器联调需要隔离 PostgreSQL")
 	}
-	ctx, stop := context.WithTimeout(t.Context(), 100*time.Second)
+	ctx, stop := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer stop()
 	pool := backendTestPool(t, ctx, dsn)
 	server := httptest.NewUnstartedServer(nil)
@@ -91,6 +106,17 @@ func TestSystemRolesBrowser(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if suite == "react_audit_browser.test.mjs" {
+		// 登录本身还会生成一条审计记录。
+		_, err := pool.Exec(ctx, `INSERT INTO audit_events
+            (tenant_key,app_id,actor_account_id,action,resource_type,resource_id,result,change_version,created_at)
+            SELECT tenant_key,app_id,id,'account.enable','account','样例-'||i,'success',1,
+                '2025-01-01'::timestamptz FROM accounts CROSS JOIN
+                generate_series(1,10000-(SELECT count(*) FROM audit_events)) i WHERE open_id=$1`, cfg.bootstrap)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	fixture := &feishuFixture{}
 	var botInfoCalls atomic.Int32
 	transport := botTransport(func(r *http.Request) (*http.Response, error) {
@@ -119,7 +145,7 @@ func TestSystemRolesBrowser(t *testing.T) {
 		<-done
 	}()
 
-	command := exec.CommandContext(ctx, "node", "--test", "tests/integration/system_roles_browser.test.mjs")
+	command := exec.CommandContext(ctx, "node", "--test", "tests/integration/"+suite)
 	command.Dir = "../.."
 	command.Env = append(os.Environ(), "OMNIRELAY_BROWSER_ORIGIN="+origin)
 	output, err := command.CombinedOutput()

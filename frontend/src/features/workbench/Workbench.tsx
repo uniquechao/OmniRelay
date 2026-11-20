@@ -1,3 +1,4 @@
+import {AuditPage} from '../audit/AuditPage';
 import {useLayoutEffect,useRef,useState} from 'react';
 import {client} from '../../api/session';
 import {routes,destination,permitted,remember,returnPath,type Route} from '../../routes/targets';
@@ -82,7 +83,7 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
   });
   const layout=target?.route.id==='bot-chats'?'bot-chat':target?.route.id==='projects' && target.section==='项目列表'?'project':
     ['users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
-  return <div hidden={locked}><WorkbenchLayout page={target && target.route.id!=='workbench' ? <BusinessPage key={visit} target={target} user={user} guard={view} layout={layout}/> : undefined} navigation={nav} layout={layout}
+  return <div hidden={locked}><WorkbenchLayout page={target?.route.id==='audit' ? <AuditPage key={visit}/> : target && target.route.id!=='workbench' ? <BusinessPage key={visit} target={target} user={user} guard={view} layout={layout}/> : undefined} navigation={nav} layout={layout}
     brand={<a className="brand" aria-label="工作台" href={destination('',access)?.path.slice(1)}><img className="wide-logo" src={logo} alt="OmniRelay"/><img className="compact-logo" src={avatar} alt="OmniRelay"/></a>}
     mobileNavigation={<><img width="29" height="29" src={avatar} alt="OmniRelay"/><select className="select" id="mobile-nav" aria-label="工作台主导航" value={target?.route.path.slice(3) ?? ''} onChange={e=>{location.hash='#/'+e.target.value;}}>
     {!target && <option value=""/>}{groups.map(group=><optgroup key={group} label={group} hidden={!visible.some(r=>r.group===group)}>{routes.filter(r=>r.group===group).map(r=><option key={r.id} value={r.path.slice(3)} hidden={!permitted(r,access)} disabled={!permitted(r,access)}>{r.title}</option>)}</optgroup>)}</select></>}

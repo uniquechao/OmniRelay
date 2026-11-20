@@ -80,14 +80,17 @@ export function OrganizationPicker({nodes,value,onChange,label='所属组织',na
 
 export type Column<Row>={key:string;label:string;text?:(row:Row)=>string;render?:(row:Row)=>ReactNode;sort?:(row:Row)=>string;secondary?:boolean};
 export type RowAction<Row>={label:string;run:(row:Row,trigger:HTMLButtonElement)=>void;visible?:(row:Row)=>boolean};
-export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,rowLabel,search,filters,actions,onSelection}: {
+export type PageState = {page:number;pageSize:number;query:string;filters:Record<string,string>;sort:{key:string;direction:'asc'|'desc'}};
+export type RemotePage<Row> = (state:PageState,signal:AbortSignal)=>Promise<{items:Row[];total:number;options?:Record<string,Record<string,string>>}>;
+export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,rowLabel,search,filters,actions,onSelection,loadPage,defaultSort,selection,actionLabel="操作"}: {
   label:string;itemLabel:string;rows:Row[];columns:Column<Row>[];rowLabel:(row:Row)=>string;search:(row:Row)=>string;
   filters?:{key:string;label:string;options:Record<string,string>;matches?:(row:Row,value:string)=>boolean}[];
+  selection?:boolean;actionLabel?:string;
   actions?:RowAction<Row>[];onSelection?:(ids:string[])=>void;
-}) {
+} & ({loadPage:RemotePage<Row>;defaultSort:PageState['sort']} | {loadPage?:undefined;defaultSort?:PageState['sort']})) {
   const id=useId().replace(/[^a-zA-Z0-9_-]/g,'_');
   const states=useRef(new Map());
-  const latest=useLatest({rows,actions,rowLabel,search,onSelection});
+  const latest=useLatest({actions,rowLabel,onSelection});
   const lastSelection=useRef<string[]>([]);
   const [slots,setSlots]=useState<{host:Element;row:Row;column:number}[]>([]);
   const ref=useWidget((host,signal)=>{
@@ -95,15 +98,17 @@ export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,
       key:ui.escape(col.key),label:ui.escape(col.label),sort:col.sort,secondary:col.secondary,
       render:row=>col.render ? '<span data-react-column="'+i+'"></span>' : ui.escape(col.text?.(row) ?? '')
     }));
-    if(actions?.length) cells.push({key:'actions',label:'操作',render:row=>'<div class="dev-actions">'+
+    if(actions?.length) cells.push({key:'actions',label:ui.escape(actionLabel),render:row=>'<div class="dev-actions">'+
       (latest.current.actions ?? []).map((action,i)=>action.visible && !action.visible(row)?'':`<button type="button" class="row-action" data-row-action="${i}" aria-label="${ui.escape(action.label+' '+latest.current.rowLabel(row))}">${ui.escape(action.label)}</button>`).join('')+'</div>'});
-    ui.mountList(host,{signal,key:id,label:ui.escape(label),itemLabel:ui.escape(itemLabel),rows,states:states.current,columns:cells,rowLabel,search,
+    let visibleRows=rows;
+    ui.mountList(host,{signal,loadPage,defaultSort,selection,key:id,label:ui.escape(label),itemLabel:ui.escape(itemLabel),rows,states:states.current,columns:cells,rowLabel,search,
       onSelection(ids:string[]) {
         if(ids.length===lastSelection.current.length && ids.every((v,i)=>v===lastSelection.current[i])) return;
         lastSelection.current=ids;
         latest.current.onSelection?.(ids);
       },
       onPaint(body:HTMLTableSectionElement,visible:Row[]) {
+        visibleRows=visible;
         if(!columns.some(col=>col.render)) {setSlots(previous=>previous.length?[]:previous);return;}
         setSlots(Array.from(body.rows).flatMap((tr,i)=>Array.from(tr.querySelectorAll<HTMLElement>('[data-react-column]'),
           host=>({host,row:visible[i],column:Number(host.dataset.reactColumn)}))));
@@ -112,10 +117,10 @@ export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,
     host.addEventListener('click',event=>{
       const button=event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-row-action]') : null;
       if(!button) return;
-      const row=latest.current.rows.find(r=>r.id===button.closest('tr')?.dataset.row);
+      const row=visibleRows.find(r=>r.id===button.closest('tr')?.dataset.row);
       if(row) latest.current.actions?.[Number(button.dataset.rowAction)]?.run(row,button);
     });
-  },[id,label,itemLabel,rows,columns,filters,actions,rowLabel,search]);
+  },[id,label,itemLabel,rows,columns,filters,actions,rowLabel,search,loadPage,defaultSort,selection,actionLabel]);
   return <><div className="react-list-host" ref={ref}/>{slots.map(slot=>
     createPortal(columns[slot.column]?.render?.(slot.row),slot.host,slot.row.id+'-'+slot.column))}</>;
 }

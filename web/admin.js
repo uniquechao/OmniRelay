@@ -1,3 +1,4 @@
+import {eventKinds,eventResults,showTime} from './audit-display.js';
 import { isDirectoryConflict } from './system-api.js';
 
 const system = '/api/v1/system';
@@ -19,14 +20,7 @@ function syncFailure(reason, scopeHidden) {
 }
 const activeRun = run => ['queued','running'].includes(run?.status);
 const scopes = { system:'系统级', project:'项目级' };
-const eventKinds = { login:'身份认证', account:'用户管理', role:'角色授权', config:'系统配置', directory:'组织同步' };
-const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并', protected:'最后一位管理员保护' };
 const statusTone = status => status === 'active' ? 'success' : 'pending';
-const dateFormat = new Intl.DateTimeFormat('sv-SE', {
-  timeZone:'Asia/Singapore', year:'numeric', month:'2-digit', day:'2-digit',
-  hour:'2-digit', minute:'2-digit', second:'2-digit'
-});
-const showTime = value => value && Number.isFinite(Date.parse(value)) ? dateFormat.format(new Date(value)) : '—';
 const messageOf = (error, fallback) => error instanceof Error && error.message ? error.message : fallback;
 
 export async function mountAdmin(page, section, api, { user, signal } = {}) {

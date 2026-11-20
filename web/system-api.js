@@ -115,7 +115,7 @@ async function listRoles(api, options) {
   }));
 }
 
-async function listAudit(api, query, signal) {
+export async function listAudit(api, query, signal) {
   const params = new URLSearchParams({ sort: 'time', direction: 'desc', ...query });
   const page = await api(system + '/audit-events?' + params, { signal });
   if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) || page.total < 0) {
