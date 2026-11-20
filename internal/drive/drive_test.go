@@ -19,10 +19,11 @@ import (
 )
 
 type testSource struct {
-	denied     map[string]bool
-	err        error
-	attachment func() io.Reader
-	text       string
+	denied       map[string]bool
+	revokedToken string
+	err          error
+	attachment   func() io.Reader
+	text         string
 }
 
 func (s *testSource) CheckShare(_ context.Context, r Ref, _ string) error {
@@ -32,6 +33,9 @@ func (s *testSource) CheckShare(_ context.Context, r Ref, _ string) error {
 	return nil
 }
 func (s *testSource) ReadFile(_ context.Context, r Ref, probe bool) (Snapshot, error) {
+	if r.Token == s.revokedToken {
+		return Snapshot{}, ErrRevoked
+	}
 	if !probe && s.err != nil {
 		return Snapshot{}, s.err
 	}
@@ -40,6 +44,12 @@ func (s *testSource) ReadFile(_ context.Context, r Ref, probe bool) (Snapshot, e
 			return Snapshot{Name: r.Name, Stream: io.NopCloser(s.attachment())}, nil
 		}
 		return Snapshot{Name: r.Name, Content: []byte{}}, nil
+	}
+	if r.Kind == "minutes" {
+		return Snapshot{Name: "评审纪要", Content: []byte("会议正文")}, nil
+	}
+	if r.Kind == "base" {
+		return Snapshot{Name: "任务登记", Content: []byte(`[{"编号":1}]`)}, nil
 	}
 	if r.Kind == "file" {
 		return Snapshot{Name: "会议附件.xlsx", Content: []byte("表格")}, nil
@@ -217,6 +227,52 @@ func TestFileArchiveAccess(t *testing.T) {
 	if get(object, 200) != payload {
 		t.Fatal("分块原件未完整恢复")
 	}
+	original := "/" + strconv.FormatInt(items[0].ID, 10)
+	oldObject := original + "/versions/" + strconv.FormatInt(*items[0].Version, 10) + "/content"
+	if get(oldObject, 200) != "" {
+		t.Fatal("更新后应保留零字节历史原件")
+	}
+
+	// 同名附件首次采集失败，再经部分覆盖恢复。按文件标识独立记录状态与版本。
+	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+ VALUES('t','a','m5','g1',now(),now(),'{"file_key":"file2","file_name":"空.pdf"}','file')`)
+	if worked, err := s.index(ctx); err != nil || !worked {
+		t.Fatal(worked, err)
+	}
+	query := "?category=files&format=pdf&project_id=p&q=空.pdf&sort=size&order=desc"
+	src.attachment = func() io.Reader { return strings.NewReader("另一份原件") }
+	for _, step := range []struct {
+		failure error
+		state   string
+	}{{ErrUnavailable, "failed"}, {ErrPartial, "partial"}, {nil, "complete"}} {
+		src.err = step.failure
+		exec("UPDATE feishu_file_shares SET next_at=now() WHERE message_id='m5'")
+		refresh(1)
+		count, rows := page(query)
+		if count != 2 || len(rows) != 2 || rows[0].ID != items[0].ID || rows[0].State != "complete" || rows[0].Size == nil || *rows[0].Size != int64(len(payload)) {
+			t.Fatal("同名文件应独立计数并按大小排序", count, rows)
+		}
+		f := rows[1]
+		if f.ID == rows[0].ID || f.Name != "空.pdf" || f.Format != "PDF" || f.State != step.state || len(f.Sources) != 1 || f.Sources[0].MessageID != "m5" || len(f.Projects) != 1 || f.Projects[0] != "p" {
+			t.Fatal("同名文件的元数据或重试状态不符", f)
+		}
+		filePath := "/" + strconv.FormatInt(f.ID, 10) + "/object"
+		if step.failure != nil {
+			if f.Version != nil || f.Size != nil || f.SizeSource != "unknown" {
+				t.Fatal("未完成的原件不应发布版本或大小", f)
+			}
+			get(filePath, 404)
+		} else if f.Version == nil || f.Size == nil || *f.Size != int64(len("另一份原件")) || f.SizeSource != "original" || get(filePath, 200) != "另一份原件" {
+			t.Fatal("重试后原件或字节数不符", f)
+		}
+	}
+	src.revokedToken = "file1"
+	if total, rows := page(query); total != 1 || len(rows) != 1 || rows[0].Sources[0].MessageID != "m5" {
+		t.Fatal("资源撤权后应只剩另一份同名文件", total, rows)
+	}
+	for _, endpoint := range []string{original, original + "/versions", oldObject, object} {
+		get(endpoint, 404)
+	}
 	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
  VALUES('t','a','m4','g1',now(),now(),'{"text":"https://example.feishu.cn/file/Sheet"}','text')`)
 	if worked, err := s.index(ctx); err != nil || !worked {
@@ -226,6 +282,25 @@ func TestFileArchiveAccess(t *testing.T) {
 	actor := identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}
 	if got := s.CloudFormats(ctx, actor, []string{"Sheet"})["Sheet"].Key; got != "excel" {
 		t.Fatal("云附件格式", got)
+	}
+	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+ VALUES('t','a','m6','g1',now(),now(),'{"text":"https://example.feishu.cn/minutes/Minute https://example.feishu.cn/base/Base"}','text')`)
+	if worked, err := s.index(ctx); err != nil || !worked {
+		t.Fatal(worked, err)
+	}
+	refresh(2)
+	for _, sample := range []struct{ category, format, name, body string }{
+		{"minutes", "飞书妙记", "评审纪要", "会议正文"},
+		{"tasks", "多维表格", "任务登记", `[{"编号":1}]`},
+	} {
+		total, rows := page("?project_id=p&category=" + sample.category)
+		if total != 1 || len(rows) != 1 {
+			t.Fatal(sample.category, total, rows)
+		}
+		f := rows[0]
+		if f.Name != sample.name || f.Format != sample.format || f.State != "complete" || f.Version == nil || f.Size != nil || f.SizeSource != "unknown" || get("/"+strconv.FormatInt(f.ID, 10)+"/object", 200) != sample.body {
+			t.Fatal("云内容的列表字段或归档内容不符", f)
+		}
 	}
 	exec("DELETE FROM feishu_file_projects")
 	if got := s.CloudFormats(ctx, actor, []string{"Sheet"}); len(got) != 0 {

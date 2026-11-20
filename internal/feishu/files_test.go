@@ -40,6 +40,10 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 			if !ok {
 				t.Fatal(r.URL.RequestURI())
 			}
+			if body == "限流" {
+				status = http.StatusTooManyRequests
+				body = `{"code":99991400}`
+			}
 			if body == "denied" {
 				status = 403
 			}
@@ -65,6 +69,20 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 		}
 	}
 	base := drive.Ref{Kind: "base", Token: "Base"}
+	lastPage := replies[last]
+	replies[last] = "限流"
+	if f, err := src.ReadFile(ctx, base, false); !errors.Is(err, drive.ErrPartial) || f.Content != nil {
+		t.Fatal("后续页限流时不能发布不完整的版本", f, err)
+	}
+	replies[last] = lastPage
+	if f, err := src.ReadFile(ctx, base, false); err != nil || f.Name != "登记表" || !strings.Contains(string(f.Content), `"编号":1`) || !strings.Contains(string(f.Content), `"编号":2`) {
+		t.Fatal("补采后应有两页记录", f, err)
+	}
+	download := "/open-apis/drive/v1/files/Cloud/download"
+	replies[download] = "限流"
+	if f, err := src.ReadFile(ctx, drive.Ref{Kind: "file", Token: "Cloud"}, false); !errors.Is(err, drive.ErrUnavailable) || f.Stream != nil {
+		t.Fatal("原件下载限流应可重试", err)
+	}
 	replies[last] = `{"code":0,"data":{"items":[],"page_token":"p2","has_more":true}}`
 	if f, err := src.ReadFile(ctx, base, false); !errors.Is(err, drive.ErrPartial) || len(f.Content) != 0 {
 		t.Fatal(f, err)
