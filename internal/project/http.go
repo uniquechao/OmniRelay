@@ -42,7 +42,13 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return nil, errInput
 			}
 		}
-		result, err := s.grid.directory(r.Context(), actor, filter)
+		var result ProjectPage
+		var err error
+		if s.localAuthority() {
+			result, err = s.localDirectory(r.Context(), actor, filter)
+		} else {
+			result, err = s.grid.directory(r.Context(), actor, filter)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +73,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			r = r.WithContext(ctx)
 			id := r.PathValue("projectID")
 			section, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"+id+"/"), "/")
-			if s.grid == nil && (id == "" || section != "tasks" && section != "milestones" && section != "overview") {
+			localSection := section == "tasks" || section == "milestones" || section == "overview" || section == "task-update-suggestions"
+			localDirectory := s.localAuthority() && (r.Pattern == "GET /api/v1/projects" || section == "members" || section == "sources" || section == "task-tags")
+			if s.grid == nil && !localSection && !localDirectory {
 				failure(w, errUnavailable)
 				return
 			}
@@ -76,9 +84,11 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 					failure(w, errDenied)
 					return
 				}
-				if err := s.require(ctx, actor, action, id); err != nil {
-					failure(w, err)
-					return
+				if action != "" {
+					if err := s.require(ctx, actor, action, id); err != nil {
+						failure(w, err)
+						return
+					}
 				}
 			}
 			value, err := next(w, r, actor)
@@ -98,6 +108,12 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	const base = "/api/v1/projects"
 	const project = base + "/{projectID}"
 	handle("GET "+base, "", list)
+	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
+	handle("GET "+project+"/task-tags", "project.read", s.tags)
+	handle("PUT "+project+"/sources/{kind}/{sourceID}/readers", "project.delegate", s.setSourceReaders)
+	handle("PUT "+project+"/task-tags/{tagID}", "project.assign", s.setTag)
+	handle("PUT "+project+"/sources/{kind}/{sourceID}", "project.delegate", s.setSource)
+	handle("PUT "+project+"/tasks/{taskID}/evidence/{kind}/{sourceID}", "project.assign", s.linkEvidence)
 	for panel := range endpoints {
 		handle("GET "+project+"/"+panel, "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 			query, err := viewQuery(panel, r.URL.Query())
@@ -105,6 +121,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return nil, err
 			}
 			id := r.PathValue("projectID")
+			if panel == "members" && s.localAuthority() {
+				return s.localMembers(r.Context(), scope(actor, id))
+			}
 			if panel != "overview" {
 				return s.grid.view(r.Context(), actor, id, panel, query)
 			}
@@ -112,7 +131,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			if err != nil {
 				return nil, err
 			}
-			if s.grid == nil {
+			if s.grid == nil || s.localAuthority() {
 				return map[string]any{"project_id": id, "panel": panel, "data": map[string]any{"workspace": map[string]any{"project": map[string]string{"id": id}}, "milestones": map[string]any{"items": local}, "coverage": map[string]string{"state": "partial"}}}, nil
 			}
 			view, err := s.grid.view(r.Context(), actor, id, panel, query)
@@ -132,17 +151,50 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		if err != nil {
 			return nil, err
 		}
-		board.CanMove, err = s.roles.Check(r.Context(), actor, "project.assign", board.Project)
+		grant, err := s.roles.ProjectGrant(r.Context(), s.pool, actor, board.Project)
 		if err != nil {
 			return nil, err
+		}
+		if !grant.Member {
+			return nil, errDenied
+		}
+		board.CanMove = grant.CanAssign
+		for _, column := range board.Columns {
+			for i, task := range column.Items {
+				movable := canUpdateProgress(task, grant) && task.Status != "cancelled"
+				column.Items[i].CanMove = &movable
+				board.CanMove = board.CanMove || movable
+			}
 		}
 		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
 	})
 	handle("POST "+project+"/tasks", "project.assign", s.saveTask)
-	handle("PUT "+project+"/tasks/{taskID}", "project.assign", s.saveTask)
+	handle("PUT "+project+"/tasks/{taskID}", "project.read", s.saveTask)
+	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", func(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
+		k := scope(a, r.PathValue("projectID"))
+		t, err := k.task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
+		if err != nil {
+			return nil, err
+		}
+		g, err := s.roles.ProjectGrant(r.Context(), s.pool, a, k.project)
+		if err != nil {
+			return nil, err
+		}
+		if !g.Member {
+			return nil, errDenied
+		}
+		own := ownTask(t, g.MemberID)
+		return map[string]bool{"edit_fields": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
+	})
+	handle("GET "+project+"/tasks/{taskID}/activity", "project.read", s.activity)
+	handle("POST "+project+"/tasks/{taskID}/comments", "project.comment", s.comment)
+	handle("GET "+project+"/tasks/{taskID}/evidence", "project.read", s.evidence)
+	handle("GET "+project+"/tasks/{taskID}/update-suggestions", "project.read", s.suggestions)
+	handle("POST "+project+"/tasks/{taskID}/update-suggestions", "project.comment", s.suggest)
+	handle("POST "+project+"/task-update-suggestions/{suggestionID}/review", "project.assign", s.review)
 	handle("PATCH "+project+"/tasks/{taskID}/milestone", "project.assign", s.setTaskMilestone)
 	handle("PUT "+project+"/tasks/board/timezone", "project.settings", s.setBoardTimezone)
-	handle("POST "+project+"/tasks/{taskID}/move", "project.assign", s.moveTask)
+	handle("POST "+project+"/tasks/{taskID}/move", "project.read", s.moveTask)
 	handle("GET "+project+"/milestones", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		items, err := s.milestones(r.Context(), scope(actor, r.PathValue("projectID")), time.Now())
 		return map[string]any{"items": items}, err
@@ -153,6 +205,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	})
 	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		id, kind, chatID := r.PathValue("projectID"), r.PathValue("kind"), r.URL.Query().Get("chat_id")
+		if s.localAuthority() {
+			return s.localSourceTasks(r, actor)
+		}
 		if kind == "task" {
 			return nil, errInput
 		}
@@ -350,6 +405,8 @@ func failure(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "task_version_conflict"
 	case errors.Is(err, errBoardVersion):
 		status, code = http.StatusConflict, "board_version_conflict"
+	case errors.Is(err, errRequestKey):
+		status, code = http.StatusConflict, "task_request_key_conflict"
 	case errors.Is(err, errMoveKey):
 		status, code = http.StatusConflict, "move_request_key_conflict"
 	case errors.Is(err, errConflict):

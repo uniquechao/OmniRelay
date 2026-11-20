@@ -238,7 +238,7 @@ func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r gra
 		}
 		var generation, supersededID string
 		if r.ProjectID != "" {
-			access, err := s.projectScope(ctx, target, r.ProjectID)
+			access, err := s.ProjectGrant(ctx, tx, target, r.ProjectID)
 			if err != nil {
 				return err
 			}

@@ -28,20 +28,31 @@ func (k taskScope) args(extra ...any) []any {
 const projectWhere = "tenant_key=$1 AND app_id=$2 AND project_id=$3"
 
 type taskFields struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Owner       *string  `json:"owner_member_id"`
-	Milestone   *string  `json:"milestone_id"`
-	Priority    *string  `json:"priority"`
-	Due         *string  `json:"due_at"`
-	Tags        []string `json:"tag_ids"`
+	Participants []string `json:"participant_ids"`
+	Acceptance   string   `json:"acceptance"`
+	Start        *string  `json:"start_at"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Owner        *string  `json:"owner_member_id"`
+	Milestone    *string  `json:"milestone_id"`
+	Priority     *string  `json:"priority"`
+	Due          *string  `json:"due_at"`
+	Tags         []string `json:"tag_ids"`
 }
 type storedTask struct {
+	CreatedBy     *string    `json:"created_by"`
+	CreatedByName *string    `json:"created_by_name"`
+	CreatedAt     *time.Time `json:"created_at"`
+	UpdatedBy     *string    `json:"updated_by"`
+	UpdatedByName *string    `json:"updated_by_name"`
+	UpdatedAt     *time.Time `json:"updated_at"`
+	CanMove       *bool      `json:"can_move,omitempty"`
 	taskFields
 	ID            string `json:"id"`
 	Project       string `json:"project_id"`
 	Version       int64  `json:"version"`
 	BoardVersion  int64  `json:"board_version"`
+	Position      int64  `json:"position"`
 	Column        string `json:"column_id"`
 	Status        string `json:"status"`
 	Blocked       string `json:"blocked_reason"`
@@ -97,7 +108,7 @@ func taskError(err error) error {
 		return errDenied
 	}
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && (pgErr.Code == "23503" || pgErr.Code == "23514" || pgErr.Code == "22007" || pgErr.Code == "22008") {
+	if errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "23503" || pgErr.Code == "23514" || pgErr.Code == "22007" || pgErr.Code == "22008") {
 		return errInput
 	}
 	return err
@@ -118,6 +129,9 @@ func (k taskScope) write(ctx context.Context, s *Service, actor identity.Princip
 		}
 		var version int64
 		if err := tx.QueryRow(ctx, "SELECT version FROM project_task_boards WHERE "+projectWhere+" FOR UPDATE", k.args()...).Scan(&version); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('omnirelay.task_actor',$1,true)", actor.AccountID); err != nil {
 			return err
 		}
 		return fn(tx, version)
