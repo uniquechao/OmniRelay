@@ -18,21 +18,24 @@ import (
 )
 
 type Config struct {
-	AppID      string
-	AppSecret  string
-	TenantKey  string
-	Interval   time.Duration
-	PageBudget int
-	HTTPClient *http.Client
-	BaseURL    string
+	CandidateRead func(context.Context, string) (SampleSnapshot, error)
+	sample        *SampleSelection
+	AppID         string
+	AppSecret     string
+	TenantKey     string
+	Interval      time.Duration
+	PageBudget    int
+	HTTPClient    *http.Client
+	BaseURL       string
 }
 
 type Service struct {
-	db     *pgxpool.Pool
-	access *access.Service
-	cfg    Config
-	client *http.Client
-	wake   chan struct{}
+	sampleScopeOnly bool
+	db              *pgxpool.Pool
+	access          *access.Service
+	cfg             Config
+	client          *http.Client
+	wake            chan struct{}
 }
 
 func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {

@@ -86,7 +86,7 @@ class Cluster:
         return images[0]
 
     def object(self, kind, name, **body):
-        api = {"Deployment":"apps/v1", "Job":"batch/v1", "NetworkPolicy":"networking.k8s.io/v1"}.get(kind,"v1")
+        api = {"Deployment":"apps/v1", "Job":"batch/v1", "NetworkPolicy":"networking.k8s.io/v1","Ingress":"networking.k8s.io/v1"}.get(kind,"v1")
         return {"apiVersion":api,"kind":kind,"metadata":{"name":name,"namespace":self.ns}, **body}
 
     def setup(self):
@@ -131,6 +131,11 @@ class Cluster:
                                   {"to":[dns],"ports":[tcp(53),{"protocol":"UDP","port":53}]}]
             else:
                 policy["ingress"]=[{"from":[{"podSelector":selector("app")}],"ports":[tcp(5432)]}]
+            if name=="app" and self.cfg.get("web"):
+                web=self.cfg["web"]
+                peer={"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":web["ingressNamespace"]}},
+                      "podSelector":{"matchLabels":web["ingressLabels"]}}
+                policy["ingress"]=[{"from":[peer],"ports":[tcp(8080)]}]
             resources.append(self.object("NetworkPolicy",name,spec=policy))
         pg = {"name":"db","image":"postgres:17.12-alpine","args":["-c","ssl=on","-c","ssl_cert_file=/tls/db.crt","-c","ssl_key_file=/tls/db.key"],
               "envFrom":[{"secretRef":{"name":"pg-admin"}}],"volumeMounts":[{"name":k,"mountPath":v} for k,v in (("data","/data"),("tls","/tls"),("init","/docker-entrypoint-initdb.d"))],
@@ -179,6 +184,27 @@ class Cluster:
         container.update(args=["serve"],envFrom=[{"secretRef":{"name":"runtime"}}],readinessProbe={"httpGet":{"path":"/readyz","port":8080}})
         pod["volumes"].append({"name":"files","persistentVolumeClaim":{"claimName":"app"}})
         container["volumeMounts"].append({"name":"files","mountPath":"/data"})
+        web=self.cfg.get("web")
+        if web:
+            bridge=PRIVATE/"web"
+            bridge.mkdir(exist_ok=True,mode=0o700)
+            command("setfacl","-m","u:10000:--x",str(bridge))
+            pod["nodeSelector"]={"kubernetes.io/hostname":web["managerNode"]}
+            pod["volumes"].append({"name":"bridge","hostPath":{"path":str(bridge),"type":"Directory"}})
+            container["volumeMounts"].append({"name":"bridge","mountPath":"/run/omnirelay-candidate","readOnly":True})
+            container["env"]=[{"name":name,"value":web[field]} for name,field in (
+                ("OMNIRELAY_CANDIDATE_ORIGIN","origin"),("OMNIRELAY_FEISHU_APP_ID","appID"),
+                ("OMNIRELAY_FEISHU_TENANT_KEY","tenantKey"),("OMNIRELAY_BOOTSTRAP_OPEN_ID","bootstrap"))]
+            container["env"].append({"name":"OMNIRELAY_CANDIDATE_POD","valueFrom":{"fieldRef":{"fieldPath":"metadata.uid"}}})
+            host=web["origin"].removeprefix("https://")
+            ingress=self.object("Ingress","candidate",spec={"ingressClassName":web["ingressClass"],
+                "tls":[{"hosts":[host],"secretName":web["tlsSecret"]}],
+                "rules":[{"host":host,"http":{"paths":[{"path":"/","pathType":"Prefix",
+                    "backend":{"service":{"name":"app","port":{"number":8080}}}}]}}]})
+            ingress["metadata"]["annotations"]={"nginx.ingress.kubernetes.io/enable-access-log":"false",
+                "nginx.ingress.kubernetes.io/ssl-redirect":"true"}
+            save("ingress.json",ingress)
+            self.apply(ingress)
         obj=self.deployment("app",pod)
         # Job 和常驻 Pod 共用网络策略，但 Service 仅选择常驻 Pod。
         obj["spec"]["template"]["metadata"]["labels"]["role"]="server"
@@ -200,7 +226,14 @@ class Cluster:
         services=self.get("service")["items"]
         require({s["metadata"]["name"] for s in services}=={"app","db"} and all(
             s["spec"]["type"]=="ClusterIP" and not s["spec"].get("externalIPs") for s in services),"候选服务存在外部入口")
-        require(not self.get("ingress")["items"],"候选存在外部路由")
+        routes=self.get("ingress")["items"]
+        if self.cfg.get("web"):
+            expected=json.loads((PRIVATE/"ingress.json").read_text())
+            require(len(routes)==1 and routes[0]["metadata"]["name"]=="candidate" and routes[0]["spec"]==expected["spec"]
+                    and all(routes[0]["metadata"].get("annotations",{}).get(k)==v for k,v in expected["metadata"]["annotations"].items()),
+                    "候选固定 HTTPS 路由不匹配")
+        else:
+            require(not routes,"候选存在外部路由")
         policies=self.get("networkpolicy")["items"]
         expected={p["metadata"]["name"]:p["spec"] for p in json.loads((PRIVATE/"resources.json").read_text()) if p["kind"]=="NetworkPolicy"}
         actual={p["metadata"]["name"]:p["spec"] for p in policies}

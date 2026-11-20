@@ -189,3 +189,5 @@ func httpsAvatar(raw string) string {
 	}
 	return u.String()
 }
+
+func (s *SetupOAuth) CallbackURL() string { return s.provider.CallbackURL() }

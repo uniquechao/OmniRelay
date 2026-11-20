@@ -58,6 +58,27 @@ class RunTests(unittest.TestCase):
                 manage.dispatch(second)
             self.open()
 
+    def test_web_run_scopes_and_revocation(self):
+        web={"origin":"https://candidate.example.test","appID":"app","tenantKey":"tenant"}
+        manage.save("target.json",{"web":web})
+        (manage.PRIVATE/"web").mkdir()
+        self.registry["resources"]["callback"]={"验收":web["origin"]+"/auth/feishu/callback"}
+        self.request["resources"]["callback"]="验收"
+        self.registry["capabilities"]["OAuth"]={"socket":"test"}
+        self.registry["operations"]["oauth.identity"]="OAuth"
+        self.request["operations"]=["oauth.identity",self.op]
+        with self.assertRaises(ValueError):
+            self.open()
+        self.request["operations"]=["oauth.identity"]
+        with patch("manage.command"):
+            opened=self.open()
+        published=manage.read("web/web.json")
+        self.assertEqual(published["pod"],self.lock["pod"])
+        self.assertEqual(published["credential"],opened["credential"])
+        self.assertEqual(manage.read("run.json")["resources"]["appID"],"app")
+        manage.revoke()
+        self.assertIsNone(manage.read("web/web.json"))
+
     def test_uncertain_call(self):
         req=self.open()
         self.adapter.side_effect=OSError()

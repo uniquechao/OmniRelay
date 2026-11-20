@@ -223,7 +223,7 @@ func (s *Service) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) rotatePasswordSession(w http.ResponseWriter, r *http.Request, p Principal, verified, salt, nextHash []byte, username string) {
-	token, previous := newSecret(), cookieSecret(r, sessionCookie)
+	token, previous := newSecret(), cookieSecret(r, s.cookieName(sessionCookie))
 	change := nextHash != nil
 	err := pgx.BeginFunc(r.Context(), s.pool, func(tx pgx.Tx) error {
 		var id string
@@ -245,7 +245,7 @@ func (s *Service) rotatePasswordSession(w http.ResponseWriter, r *http.Request, 
 		if change {
 			var activeSession bool
 			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM web_sessions WHERE token_digest=$1 AND account_id=$2 AND idle_expires_at>clock_timestamp())`,
-				digest(previous), id).Scan(&activeSession)
+				s.sessionDigest(previous), id).Scan(&activeSession)
 			if err != nil {
 				return err
 			}
@@ -260,13 +260,13 @@ func (s *Service) rotatePasswordSession(w http.ResponseWriter, r *http.Request, 
 			}
 			action = "identity.password_change"
 		} else if previous != "" {
-			if _, err := tx.Exec(ctx, `DELETE FROM web_sessions WHERE token_digest=$1`, digest(previous)); err != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM web_sessions WHERE token_digest=$1`, s.sessionDigest(previous)); err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO web_sessions (token_digest, account_id, expires_at, idle_expires_at, auth_method)
 			VALUES ($1,$2,CURRENT_TIMESTAMP+make_interval(secs=>$3),CURRENT_TIMESTAMP+make_interval(secs=>$4),'password')`,
-			digest(token), id, s.cfg.SessionTTL.Seconds(), s.cfg.IdleTTL.Seconds()); err != nil {
+			s.sessionDigest(token), id, s.cfg.SessionTTL.Seconds(), s.cfg.IdleTTL.Seconds()); err != nil {
 			return err
 		}
 		if s.cfg.Audit != nil {
@@ -282,6 +282,6 @@ func (s *Service) rotatePasswordSession(w http.ResponseWriter, r *http.Request, 
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
-	setCookie(w, sessionCookie, token, int(s.cfg.SessionTTL.Seconds()))
+	setCookie(w, s.cookieName(sessionCookie), token, int(s.cfg.SessionTTL.Seconds()))
 	w.WriteHeader(http.StatusNoContent)
 }

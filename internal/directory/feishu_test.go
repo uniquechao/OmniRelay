@@ -83,6 +83,12 @@ func TestCollectRetainsOnlyVerifiedHierarchyAndDeduplicatesPeople(t *testing.T) 
 	if len(result.Members["ou_shared"]) != 2 || len(result.Members["ou_second"]) != 1 || len(result.Members["ou_direct"]) != 0 {
 		t.Fatalf("unexpected memberships %+v", result.Members)
 	}
+	service.cfg.sample = &SampleSelection{Department: "a", Person: "ou_direct"}
+	sample, err := service.collect(t.Context(), func(scope, int, int) error { return nil }, nil)
+	if err != nil || len(sample.People) != 3 || len(sample.Departments) != 3 || len(sample.Members["ou_shared"]) != 2 || sample.MemberContinuations != 1 || sample.MultiPage < 2 || len(sample.People["ou_direct"].Departments) != 0 {
+		t.Fatal("已知三人三部门样本的分页、去重或字段裁剪失败")
+	}
+
 }
 
 func TestCollectRejectsRepeatedScopePage(t *testing.T) {
@@ -298,6 +304,17 @@ func TestReadScopeExpandsUserGroups(t *testing.T) {
 	if strings.Join(got.Departments, ",") != "a,b" || strings.Join(got.People, ",") != "ou_direct,ou_group" {
 		t.Fatalf("group scope was not expanded and deduplicated: %+v", got)
 	}
+	service.cfg.sample = &SampleSelection{Group: "g_one"}
+	got, err = f.readScope(t.Context())
+	if err != nil || strings.Join(got.People, ",") != "ou_direct,ou_group" || strings.Join(got.Departments, ",") != "a,b" {
+		t.Fatal("指定用户组的成员或分页不匹配")
+	}
+	service.cfg.sample = &SampleSelection{Group: "unbound", Person: "ou_direct"}
+	got, err = f.readScope(t.Context())
+	if err != nil || len(got.Departments) != 0 || strings.Join(got.People, ",") != "ou_direct" {
+		t.Fatal("返回了未登记用户组的成员")
+	}
+
 }
 
 func TestDirectoryRetainsPermissionCodeWithStructuredError(t *testing.T) {

@@ -63,6 +63,13 @@ FOR NO KEY UPDATE
 	return id, err
 }
 
+func (s *Service) sessionDigest(token string) []byte {
+	if c := s.cfg.Candidate; c != nil {
+		return digest(c.Run + "\x00" + token)
+	}
+	return digest(token)
+}
+
 func (s *Service) createSession(ctx context.Context, p *Principal, token, previousToken string) error {
 	// Clear expired rows before taking the account lock shared with deactivation.
 	if _, err := s.pool.Exec(ctx, `
@@ -90,14 +97,14 @@ UPDATE accounts SET name = $2, avatar_url = $3, updated_at = CURRENT_TIMESTAMP W
 		return err
 	}
 	if previousToken != "" {
-		if _, err := tx.Exec(ctx, "DELETE FROM web_sessions WHERE token_digest = $1", digest(previousToken)); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM web_sessions WHERE token_digest = $1", s.sessionDigest(previousToken)); err != nil {
 			return err
 		}
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO web_sessions (token_digest, account_id, expires_at, idle_expires_at)
 VALUES ($1, $2, CURRENT_TIMESTAMP + make_interval(secs => $3), CURRENT_TIMESTAMP + make_interval(secs => $4))
-`, digest(token), p.AccountID, s.cfg.SessionTTL.Seconds(), s.cfg.IdleTTL.Seconds()); err != nil {
+`, s.sessionDigest(token), p.AccountID, s.cfg.SessionTTL.Seconds(), s.cfg.IdleTTL.Seconds()); err != nil {
 		return err
 	}
 	if s.cfg.Audit != nil {
@@ -114,7 +121,7 @@ func (s *Service) loadSession(ctx context.Context, token string, policy SessionP
 	const conditions = `session.token_digest=$1 AND account.id=session.account_id AND account.active
 		AND account.tenant_key=$2 AND account.app_id=$3
 		AND session.expires_at>clock_timestamp() AND session.idle_expires_at>clock_timestamp()`
-	args := []any{digest(token), s.cfg.TenantKey, s.cfg.AppID}
+	args := []any{s.sessionDigest(token), s.cfg.TenantKey, s.cfg.AppID}
 	query := `SELECT ` + fields + ` FROM web_sessions AS session, accounts AS account WHERE ` + conditions
 	if policy == RefreshSession || policy == RefreshSessionWithCSRF {
 		query = `UPDATE web_sessions AS session
@@ -134,7 +141,7 @@ func (s *Service) revokeSession(ctx context.Context, p Principal, token string) 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	res, err := tx.Exec(ctx, "DELETE FROM web_sessions WHERE token_digest = $1 AND account_id = $2", digest(token), p.AccountID)
+	res, err := tx.Exec(ctx, "DELETE FROM web_sessions WHERE token_digest = $1 AND account_id = $2", s.sessionDigest(token), p.AccountID)
 	if err != nil {
 		return err
 	}

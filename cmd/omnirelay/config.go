@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/uniquechao/OmniRelay/internal/directory"
+	"github.com/uniquechao/OmniRelay/internal/identity"
 	"net/url"
 	"strconv"
 	"strings"
@@ -10,6 +13,8 @@ import (
 )
 
 type configuration struct {
+	candidateOAuth                         *identity.CandidateOAuth
+	candidateRead                          func(context.Context, string) (directory.SampleSnapshot, error)
 	databaseURL, listenAddr, publicOrigin  string
 	tlsCertFile, tlsKeyFile                string
 	appID, appSecret, tenantKey, bootstrap string

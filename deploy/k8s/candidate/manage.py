@@ -48,7 +48,19 @@ def verify(lock):
     require(command("git","rev-parse","HEAD")==lock["sha"],"目标工程版本已改变")
 
 
+WEB_OPERATIONS={"oauth.identity":"OAuth","directory.scope":"目录","directory.sample":"目录"}
+
+
+def validate_web(web):
+    require(re.fullmatch(r"https://[a-z0-9]+(?:[.-][a-z0-9]+)+",web["origin"]), "需要独立 HTTPS 主机名")
+    require(all(isinstance(web.get(k),str) and web[k] for k in (
+        "appID","tenantKey","bootstrap","managerNode","ingressClass","ingressNamespace","tlsSecret")), "网页验收配置缺项")
+    require(web.get("productionOrigin","").startswith("https://") and web["origin"]!=web["productionOrigin"].lower().rstrip("/"),"验收入口须独立于生产入口")
+    require(isinstance(web.get("ingressLabels"),dict) and web["ingressLabels"], "需要固定入口控制器标签")
+
+
 def revoke():
+    (PRIVATE/"web"/"web.json").unlink(missing_ok=True)
     run=read("run.json")
     if run:
         run["revoked"]=True
@@ -57,12 +69,12 @@ def revoke():
 
 def exchange(address, request):
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as conn:
-        conn.settimeout(15)
+        conn.settimeout(45)
         conn.connect(str(address))
         conn.sendall(json.dumps(request).encode()+b"\n")
         with conn.makefile("rb") as stream:
-            line=stream.readline(65537)
-        require(line.endswith(b"\n") and len(line)<=65536,"服务响应无效")
+            line=stream.readline(1048577)
+        require(line.endswith(b"\n") and len(line)<=1048576,"服务响应无效")
         return json.loads(line)
 
 
@@ -94,6 +106,13 @@ def preflight(reg, lock, selection):
             absent.append("受控服务绑定")
         elif not absent:
             try:
+                for field in ("callback","department","person","group"):
+                    options=reg.get("resources",{}).get(field,{})
+                    alias=selection.get(field) or next(iter(options),None)
+                    if alias in options: selected[field]=options[alias]
+                web=read("target.json",{}).get("web")
+                if web and scene in ("OAuth","目录"):
+                    selected.update(appID=web["appID"],tenantKey=web["tenantKey"])
                 reply=exchange(spec["socket"],{"version":1,"method":"readiness","scene":scene,"resources":selected})
                 require(reply.get("ready") is True,"服务能力未就绪")
             except (ValueError,OSError,KeyError):
@@ -115,6 +134,15 @@ def new_run(req, lock, reg):
     require(isinstance(selected,dict) and {"identity","session","project"}<=selected.keys(),"缺少身份、会话或项目")
     resolved={k:reg["resources"][k][alias] for k,alias in selected.items()}
     require(all(isinstance(x,str) and x for x in resolved.values()),"资源未绑定")
+    web=read("target.json",{}).get("web")
+    publish_web=bool(set(req["operations"]).intersection(WEB_OPERATIONS))
+    require(not publish_web or web,"缺少候选网页固定入口")
+    if publish_web:
+        resolved.update(appID=web["appID"],tenantKey=web["tenantKey"])
+        require(resolved.get("callback")==web["origin"]+"/auth/feishu/callback" and
+                all(op in WEB_OPERATIONS and reg["operations"][op]==WEB_OPERATIONS[op] for op in req["operations"]), "网页运行绑定不匹配")
+    expected_people=req.get("expectedPeople")
+    require(expected_people is None or type(expected_people) is int and expected_people>=0 and "directory.sample" in req["operations"],"样本预期人数无效")
     operations={}
     for op in req["operations"]:
         scene=reg["operations"][op]
@@ -127,9 +155,18 @@ def new_run(req, lock, reg):
     run={"id":secrets.token_hex(16),"issue":req["issue"],"candidate":lock,"aliases":selected,"resources":resolved,
          "operations":operations,"remaining":req["count"],"expires":int(time.time())+req["ttl"],
          "tokenHash":hashlib.sha256(token.encode()).hexdigest(),"revoked":False}
+    run["expectedPeople"]=expected_people
     save("run.json",run)
     event("创建运行",run=run["id"],issue=run["issue"],candidate=lock,resources=selected,operations=list(operations),count=req["count"],expires=run["expires"])
-    return {"run":run["id"],"credential":token,"expires":run["expires"]}
+    result={"run":run["id"],"credential":token,"expires":run["expires"]}
+    if publish_web:
+        try:
+            save("web/web.json",{**result,"pod":lock["pod"]})
+            command("setfacl","-m","u:10000:r--",str(PRIVATE/"web/web.json"))
+        except (ValueError,OSError):
+            revoke()
+            raise
+    return result
 
 
 def dispatch(req):
@@ -153,6 +190,18 @@ def dispatch(req):
                    "attempt":attempt,"expires":run["expires"],"resources":run["resources"],
                    "candidate":lock,"payload":req.get("payload",{})})
     require(reply.get("attempt")==attempt and reply.get("finished") is True,"服务结果待核对")
+    if op in WEB_OPERATIONS:
+        component=reply.get("component","")
+        require(re.fullmatch(r"omnirelay@sha256:[a-f0-9]{64}",component),"缺少受控组件版本")
+        sample=reply.get("sample") or {}
+        people=list((sample.get("People") or {}).values())
+        event("受控调用完成",run=run["id"],operation=op,component=component,
+              succeeded=not bool(reply.get("error")),people=len(people),
+              missingActivation=sum(p.get("status",{}).get("is_activated") is None for p in people),
+              missingAvatar=sum(not p.get("avatar",{}).get("avatar_72") for p in people),
+              departments=len(sample.get("Departments",{})),pages=sample.get("Pages",0),
+              memberPages=sample.get("MemberPages",0),memberContinuations=sample.get("MemberContinuations",0),
+              expectedPeople=run.get("expectedPeople"),multipage=sample.get("MultiPage",0))
     run.pop("pending")
     run["revoked"]=False
     save("run.json",run)
@@ -160,12 +209,18 @@ def dispatch(req):
 
 
 def serve():
-    path=PRIVATE/"service.sock"
+    web=read("target.json",{}).get("web")
+    path=(PRIVATE/"web" if web else PRIVATE)/"service.sock"
     with (PRIVATE/"service.lock").open("a") as guard:
         fcntl.flock(guard,fcntl.LOCK_EX|fcntl.LOCK_NB)
         path.unlink(missing_ok=True)
         with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as server:
             server.bind(str(path.relative_to(ROOT)))
+            if web:
+                command("setfacl","-m","u:10000:rw-",str(path))
+                manager_path=PRIVATE/"service.sock"
+                manager_path.unlink(missing_ok=True)
+                manager_path.symlink_to("web/service.sock")
             server.listen(8)
             while True:
                 conn,_=server.accept()
@@ -187,7 +242,7 @@ def serve():
 
 def main():
     parser=argparse.ArgumentParser(description="候选验收管理")
-    parser.add_argument("action",choices=["init","register","start","stop","rollback","lock","preflight","open","revoke","service","samples","evidence","demo"])
+    parser.add_argument("action",choices=["init","web","register","start","stop","rollback","lock","preflight","open","revoke","service","samples","evidence","demo"])
     parser.add_argument("value",nargs="?")
     args=parser.parse_args()
     os.umask(0o077)
@@ -210,6 +265,14 @@ def main():
             for key in ("productionDatabase","productionObjects"):
                 require(cfg[key]["service"] and type(cfg[key]["port"]) is int and 0<cfg[key]["port"]<65536,"生产对照端点无效")
             cfg["id"]=secrets.token_hex(12)
+            save("target.json",cfg)
+        elif action=="web":
+            require(cfg and not (lock and lock["active"]), "请先登记目标并停止候选")
+            web=json.load(sys.stdin)
+            validate_web(web)
+            require(cfg.get("delivery")!="node" or cfg["buildNode"]==web["managerNode"],"管理机与构建节点不一致")
+            revoke()
+            cfg["web"]=web
             save("target.json",cfg)
         elif action=="register":
             data=json.load(sys.stdin)

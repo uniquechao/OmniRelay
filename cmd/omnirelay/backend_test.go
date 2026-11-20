@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -156,14 +157,16 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 
 	home := do("GET", "/", "", nil, "")
 	wantStatus(home, http.StatusOK)
-	if !strings.Contains(home.Body.String(), `id="password-login"`) ||
+	if !strings.Contains(home.Body.String(), `id="root"`) ||
 		!strings.Contains(home.Header().Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
-	for _, asset := range []string{"/chat-reader.js", "/chat-reader.css", "/omni-relay-bot-chat.css", "/omni-relay-split-pane.js"} {
-		wantStatus(do("GET", asset, "", nil, ""), http.StatusOK)
+	module := regexp.MustCompile(`<script type="module"[^>]+src="(/assets/[^"]+\.js)"`).FindStringSubmatch(home.Body.String())
+	if len(module) != 2 {
+		t.Fatal("缺少 React 默认入口")
 	}
+	wantStatus(do("GET", module[1], "", nil, ""), http.StatusOK)
 	for _, path := range []string{"https://offsite.test/", "/%2Foffsite.test", "/#/workbench?next=//offsite.test"} {
 		wantStatus(do("GET", "/auth/feishu/start?return_to="+url.QueryEscape(path), "", nil, ""), http.StatusBadRequest)
 	}
@@ -242,7 +245,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatalf("provisioning changed the presentation key: %s %v", created.Body.String(), err)
 	}
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", "/#/feishu/bot-chats/oc_project/om_receipt", "/#/bot-chats/oc_project/om_receipt")
+	member, target, memberCSRF := login("ou_member", "/#/workbench", "/#/bot-chats/oc_project/om_receipt")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)

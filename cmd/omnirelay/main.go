@@ -63,10 +63,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	valid := (command == "serve" || command == "migrate") && len(args) <= 1 ||
 		command == "password" && len(args) == 3
-	if !valid {
+	if !valid && !(command == "candidate-operation" && len(args) == 1) {
 		return errors.New("usage: omnirelay [serve|migrate|setup-token|password <account-id> <username>]")
 	}
-	cfg, err := readConfig(os.Getenv, command == "serve" && candidate == "")
+	cfg, err := readConfig(os.Getenv, (command == "serve" || command == "candidate-operation") && candidate == "")
 	if err != nil {
 		return err
 	}
@@ -95,6 +95,12 @@ func run(ctx context.Context, args []string) error {
 	if err := pool.Ping(startup); err != nil {
 		return errors.New("PostgreSQL is unavailable or failed TLS verification")
 	}
+	if command == "candidate-operation" {
+		if len(cfg.setupKey) == 0 {
+			return errors.New("需要网页配置的应用身份")
+		}
+		return candidateOperation(startup, pool, cfg.setupKey, cfg.publicOrigin, os.Stdin, os.Stdout, nil)
+	}
 	if candidate != "" {
 		if err := checkCandidateDatabase(startup, pool, command); err != nil {
 			return err
@@ -121,6 +127,9 @@ func run(ctx context.Context, args []string) error {
 			cfg.listenAddr = addr
 		}
 		handler = candidateHandler(pool)
+		if os.Getenv("OMNIRELAY_CANDIDATE_ORIGIN") != "" {
+			handler = candidateWeb(ctx, pool, handler, candidateBridge)
+		}
 	} else if cfg.appID == "" {
 		store := newWebSetupStore(pool, cfg.setupKey)
 		credentials, configured, err := store.load(startup)

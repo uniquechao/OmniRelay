@@ -126,7 +126,11 @@ func (s *Service) newOAuthState(now time.Time, browser string) string {
 }
 
 func (s *Service) oauthStateMAC(issued []byte, browser string) []byte {
-	mac := hmac.New(sha256.New, []byte(s.cfg.AppSecret))
+	key := s.cfg.AppSecret
+	if c := s.cfg.Candidate; c != nil {
+		key = c.StateKey
+	}
+	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write([]byte("OmniRelay OAuth state v1\x00" + s.cfg.TenantKey + "\x00" + s.cfg.AppID + "\x00" + s.callback + "\x00"))
 	mac.Write(issued)
 	mac.Write([]byte(browser))
@@ -138,7 +142,10 @@ func (s *Service) admitCallback(ctx context.Context, now time.Time, state, brows
 		return "", "", s.oauth.rejectUnverified(now)
 	}
 	raw, _ := base64.RawURLEncoding.DecodeString(state)
-	if s.cfg.AppSecret == "" || !hmac.Equal(raw[8:], s.oauthStateMAC(raw[:8], browser)) {
+	if (s.cfg.AppSecret == "" && s.cfg.Candidate == nil) || !hmac.Equal(raw[8:], s.oauthStateMAC(raw[:8], browser)) {
+		if s.cfg.Candidate != nil {
+			return "", "", s.oauth.rejectUnverified(now)
+		}
 		// A pre-upgrade or pre-rotation transaction can still be proved by PostgreSQL.
 		if err := s.oauth.countUnverified(now); err != nil {
 			return "", "", err

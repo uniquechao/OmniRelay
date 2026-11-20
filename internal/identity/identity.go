@@ -50,7 +50,14 @@ type WorkbenchAccess struct {
 	PermissionVersion string          `json:"permission_version"`
 }
 
+type CandidateOAuth struct {
+	Run      string
+	StateKey string
+	Resolve  func(context.Context, string, string) (Principal, error)
+}
+
 type Config struct {
+	Candidate    *CandidateOAuth
 	AppID        string
 	AppSecret    string
 	TenantKey    string
@@ -86,6 +93,9 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 }
 
 func newIdentityService(pool *pgxpool.Pool, cfg Config) (*Service, error) {
+	if c := cfg.Candidate; c != nil && (cfg.AppSecret != "" || len(c.StateKey) < 32 || !regexp.MustCompile("^[a-f0-9]{32}$").MatchString(c.Run) || c.Resolve == nil) {
+		return nil, errors.New("候选登录运行绑定无效")
+	}
 	origin, err := url.Parse(cfg.PublicOrigin)
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil ||
 		(origin.Path != "" && origin.Path != "/") || origin.RawPath != "" ||
@@ -126,6 +136,13 @@ func newIdentityService(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	}, nil
 }
 
+func (s *Service) cookieName(name string) string {
+	if c := s.cfg.Candidate; c != nil {
+		return name + "_candidate_" + c.Run
+	}
+	return name
+}
+
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/feishu/start", s.start)
 	mux.HandleFunc("GET "+callbackPath, s.complete)
@@ -156,7 +173,7 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusBadRequest, "invalid_return_path")
 		return
 	}
-	if s.cfg.AppSecret == "" {
+	if s.cfg.AppSecret == "" && s.cfg.Candidate == nil {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
@@ -166,7 +183,7 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
-	setCookie(w, browserCookie, browser, int(loginTTL.Seconds()))
+	setCookie(w, s.cookieName(browserCookie), browser, int(loginTTL.Seconds()))
 	redirect(w, s.authorizationURL(state, verifier), http.StatusFound)
 }
 
@@ -179,7 +196,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	state := query.Get("state")
-	browser := cookieSecret(r, browserCookie)
+	browser := cookieSecret(r, s.cookieName(browserCookie))
 	now := time.Now()
 	var verifier, returnPath string
 	if err == nil && len(query["state"]) == 1 && browser != "" {
@@ -202,17 +219,27 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
-	setCookie(w, browserCookie, "", -1)
+	setCookie(w, s.cookieName(browserCookie), "", -1)
 	if len(query["error"]) == 1 && query.Get("error") == "access_denied" && len(query["code"]) == 0 {
+		if c := s.cfg.Candidate; c != nil {
+			slog.Info("候选 OAuth 回跳", "run", c.Run, "结果", "取消")
+		}
 		redirectLoginError(w, r, "cancelled")
 		return
 	}
 	code := query.Get("code")
-	if len(query["error"]) != 0 || len(query["code"]) != 1 || code == "" || len(code) > 1024 || s.cfg.AppSecret == "" {
+	if len(query["error"]) != 0 || len(query["code"]) != 1 || code == "" || len(code) > 1024 || (s.cfg.AppSecret == "" && s.cfg.Candidate == nil) {
 		redirectLoginError(w, r, "unavailable")
 		return
 	}
-	principal, err := s.feishuIdentity(r.Context(), code, verifier)
+	resolve := s.feishuIdentity
+	if c := s.cfg.Candidate; c != nil {
+		resolve = c.Resolve
+	}
+	principal, err := resolve(r.Context(), code, verifier)
+	if err == nil && (principal.AppID != s.cfg.AppID || principal.TenantKey != s.cfg.TenantKey || principal.OpenID == "") {
+		err = ErrNotAdmitted
+	}
 	if errors.Is(err, ErrNotAdmitted) {
 		redirectLoginError(w, r, "denied")
 		return
@@ -222,7 +249,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := newSecret()
-	err = s.createSession(r.Context(), &principal, token, cookieSecret(r, sessionCookie))
+	err = s.createSession(r.Context(), &principal, token, cookieSecret(r, s.cookieName(sessionCookie)))
 	if errors.Is(err, ErrNotAdmitted) {
 		redirectLoginError(w, r, "denied")
 		return
@@ -247,7 +274,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 			target = s.returnForAccess(r.Context(), principal, allowed, returnPath)
 		}
 	}
-	setCookie(w, sessionCookie, token, int(s.cfg.SessionTTL.Seconds()))
+	setCookie(w, s.cookieName(sessionCookie), token, int(s.cfg.SessionTTL.Seconds()))
+	if c := s.cfg.Candidate; c != nil {
+		slog.Info("候选 OAuth 回跳", "run", c.Run, "结果", "会话已建立")
+	}
 	redirect(w, target, http.StatusSeeOther)
 }
 
@@ -271,6 +301,20 @@ const (
 func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
 	p, _, ok := s.authenticate(w, r, policy)
 	return p, ok
+}
+
+// AuthenticateWorkbench 同步约束业务页面的直达 API。
+func (s *Service) AuthenticateWorkbench(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
+	p, ok := s.Authenticate(w, r, policy)
+	if !ok {
+		return Principal{}, false
+	}
+	access, err := s.cfg.Access(r.Context(), p)
+	if err != nil || !access.Navigation["workbench"] {
+		writeFailure(w, http.StatusForbidden, "forbidden")
+		return Principal{}, false
+	}
+	return p, true
 }
 
 // AuthenticateManagement uses the management API's common authorization errors.
@@ -300,7 +344,7 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, policy Se
 }
 
 func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Principal, string, int, string) {
-	token := cookieSecret(r, sessionCookie)
+	token := cookieSecret(r, s.cookieName(sessionCookie))
 	if token == "" {
 		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
 	}
@@ -432,7 +476,7 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "logout_unavailable")
 		return
 	}
-	setCookie(w, sessionCookie, "", -1)
+	setCookie(w, s.cookieName(sessionCookie), "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
 
