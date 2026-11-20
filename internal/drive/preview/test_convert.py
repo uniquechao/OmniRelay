@@ -66,10 +66,12 @@ class FormatSamples(unittest.TestCase):
         with ZipFile(archive, "w", ZIP_DEFLATED) as z:
             z.writestr("大.txt", bytes(8 * 1024**2 + 1))
         self.assertEqual(render("zip", archive.getvalue(), entry=1)[0]["stage"], "over_limit")
-        encrypted = bytearray(archive.getvalue())
-        encrypted[6] |= 1
-        encrypted[encrypted.index(b"PK\x01\x02") + 8] |= 1
-        self.assertEqual(render("zip", encrypted, entry=1)[0]["stage"], "encrypted")
+        encrypted = (SAMPLES / "encrypted.zip").read_bytes()
+        self.assertEqual(render("zip", encrypted)[1][0]["state"], "encrypted")
+        self.assertEqual(render("zip", encrypted, entry=1)[0], {"stage": "encrypted"})
+        for kind in ("pdf", "docx"):
+            encrypted = (SAMPLES / ("encrypted." + kind)).read_bytes()
+            self.assertEqual(render(kind, encrypted)[0], {"stage": "encrypted"})
 
 
 if __name__ == "__main__":

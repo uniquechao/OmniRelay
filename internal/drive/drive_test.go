@@ -58,7 +58,8 @@ func (s *testSource) ReadFile(_ context.Context, r Ref, probe bool) (Snapshot, e
 	}
 	return Snapshot{Name: "已同步文档", Content: []byte(s.text)}, nil
 }
-func TestFileArchiveAccess(t *testing.T) {
+func archiveTestDB(t *testing.T) (context.Context, *pgxpool.Pool) {
+	t.Helper()
 	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("需要隔离的 PostgreSQL")
@@ -102,8 +103,19 @@ func TestFileArchiveAccess(t *testing.T) {
  INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES('t','a','p','alice','m','reader');
  INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES('t','a','g1','group'),('t','a','g2','group');
  INSERT INTO feishu_chat_sync(tenant_key,app_id,chat_id) VALUES('t','a','g1'),('t','a','g2');
- INSERT INTO project_chat_links VALUES('t','a','p','g1'),('t','a','p','g2');
- INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+ INSERT INTO project_chat_links VALUES('t','a','p','g1'),('t','a','p','g2')`)
+	return ctx, pool
+}
+
+func TestFileArchiveAccess(t *testing.T) {
+	ctx, pool := archiveTestDB(t)
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
  VALUES('t','a','m1','g1',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
  ('t','a','m2','g2',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
  ('t','a','m3','g1',now(),now(),'{"file_key":"file1","file_name":"空.pdf"}','file')`)

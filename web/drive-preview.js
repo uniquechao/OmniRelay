@@ -6,6 +6,11 @@ const messages = {
   invalid_page:'此页已不可用', invalid_sheet:'工作表已不可用', invalid_entry:'目录条目已不可用',
   network:'读取预览失败，请检查连接后重试'
 };
+const recovery = {
+  encrypted:'请在来源处提供未加密的副本，再查看同步后的版本。',
+  unsupported:'请在来源处提供支持预览的格式，再查看同步后的版本。',
+  over_limit:'请在来源处拆分文件，再查看同步后的版本。'
+};
 const retryable = new Set(['failed','source_unavailable','conversion_busy','preview_unavailable','network']);
 const esc = value => window.OmniRelayUI.escape(value);
 const cell = value => esc(typeof value === 'object' && value !== null ? JSON.stringify(value) : value ?? '');
@@ -41,11 +46,47 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
   const body = dialog.querySelector('[data-preview-body]');
   const root = '/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/previews';
   let page = 1, sheet = 0, entry = 0, directoryPage = 1;
-  let pending;
-  dialog.addEventListener('close', () => pending?.abort(), {once:true});
+  let pending, displayedTask;
+  async function recheck() {
+    const task = displayedTask;
+    if (!task || task.checking || !dialog.open || document.hidden) return;
+    task.checking = true;
+    try {
+      const current = await request(task.path, {signal:task.signal});
+      if (task !== displayedTask || task.signal.aborted) return;
+      if (current.stage !== 'ready') showFailure(current.stage);
+      else if (String(current.version_id) !== String(row.version_id)) showFailure('version_unavailable');
+    } catch (error) {
+      if (task !== displayedTask || task.signal.aborted) return;
+      if (error.data?.error === 'preview_unavailable') {
+        // 短期缓存到期，按当前页和版本重新鉴权并读取。
+        void load();
+      } else {
+        const code = error.data?.error;
+        showFailure(error.status === 403 ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
+      }
+    } finally { task.checking = false; }
+  }
+  const recheckTimer = setInterval(recheck, 30000);
+  window.addEventListener('focus', recheck);
+  document.addEventListener('visibilitychange', recheck);
+  dialog.addEventListener('close', () => {
+    clearInterval(recheckTimer);
+    window.removeEventListener('focus', recheck);
+    document.removeEventListener('visibilitychange', recheck);
+    pending?.abort();
+  }, {once:true});
 
   function showFailure(code) {
+    displayedTask = null;
+    if (controls.contains(document.activeElement) || body.contains(document.activeElement)) status.focus();
+    body.replaceChildren();
+    controls.innerHTML = entry ? action('directory','返回目录') : '';
     status.textContent = messages[code] || messages.failed;
+    if (Object.hasOwn(recovery, code)) {
+      status.textContent += '。' + recovery[code];
+      controls.insertAdjacentHTML('beforeend', action('refresh-list','返回并刷新列表'));
+    }
     if (retryable.has(code)) controls.insertAdjacentHTML('beforeend', action('retry','重试'));
     if (code === 'forbidden') {
       dialog.querySelector('[data-metadata]').replaceChildren();
@@ -56,6 +97,7 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
     }
   }
   async function load() {
+    displayedTask = null;
     pending?.abort();
     pending = new AbortController();
     const signal = AbortSignal.any([pending.signal, lifetime]);
@@ -100,12 +142,16 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
       } else {
         body.innerHTML = renderResult(kind, data, meta);
       }
+      displayedTask = {path, signal, checking:false};
       const summary = [];
       if (row.sync_state === 'partial') summary.push(messages.partial);
       if (entry) summary.push(meta.name);
       summary.push('第 ' + meta.page + ' / ' + meta.pages + ' 页');
       if (meta.total > 0) summary.push('显示 ' + meta.first + '–' + meta.last + '，共 ' + meta.total);
       status.textContent = summary.join(' · ');
+      if (kind === 'zip' && data.some(item => !item.directory && Object.hasOwn(recovery, item.state))) {
+        controls.insertAdjacentHTML('beforeend', action('refresh-list','返回并刷新列表'));
+      }
       if (meta.sheets?.length) controls.insertAdjacentHTML('beforeend','<label>工作表 <select data-sheet>' +
         meta.sheets.map((name,i) => '<option value="' + i + '"' + (i === meta.sheet ? ' selected' : '') + '>' + esc(name) + '</option>').join('') + '</select></label>');
       if (meta.pages > 1) controls.insertAdjacentHTML('beforeend',action('prev','上一页',page === 1) + action('next','下一页',page === meta.pages));
@@ -115,9 +161,14 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
       showFailure(error.status === 403 ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
     }
   }
-  dialog.addEventListener('click', event => {
+  dialog.addEventListener('click', async event => {
     const name = event.target.closest('[data-preview-action]')?.dataset.previewAction;
     if (!name) return;
+    if (name === 'refresh-list') {
+      event.target.closest('button').disabled = true;
+      try { await refresh(); } finally { if (dialog.open) dialog.close(); }
+      return;
+    }
     if (name === 'prev') page--;
     if (name === 'next') page++;
     if (name.startsWith('entry-')) {
