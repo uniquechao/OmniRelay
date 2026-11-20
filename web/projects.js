@@ -374,7 +374,7 @@ function columnNext(route, column) {
   params.set('cursor', column.next_cursor);
   return link(withQuery(route.hash.split('?')[0], params), '查看「' + column.name + '」下一页');
 }
-function contents(route, data, milestones = [], people = new Map(), taskReturn) {
+function contents(route, data, milestones = [], people = new Map()) {
   const { base, tab, parts } = route;
   if (tab === 'overview') {
     const { workspace, milestones } = data;
@@ -496,15 +496,6 @@ function contents(route, data, milestones = [], people = new Map(), taskReturn) 
   }
   if (tab === 'tasks') {
     if (parts.length === 3) return panel('关联任务', taskRows(base, data.items));
-    if (parts.length && parts[0] !== 'list')
-      return panel(
-        data.title,
-        facts([
-          ['状态', label(data.status)],
-          ['期限', data.due_at],
-          ['任务说明', data.description],
-        ]) + link(taskReturn || base + '/tasks', taskReturn?.split('?')[0].endsWith('/list') ? '返回任务列表' : '返回任务看板'),
-      );
     const list = parts[0] === 'list';
     const criteria = new URLSearchParams(route.params);
     criteria.delete('cursor');
@@ -600,7 +591,7 @@ function failure(error) {
   if (error.status === 409) return '数据或权限已变化，请重新加载。';
   return '暂时无法加载，请重试。';
 }
-export async function mountProjects(host, route, request, { signal, memory, userId }) {
+export async function mountProjects(host, route, request, { signal, memory, userId, navigation }) {
   const { id, base, tab, parts } = route;
   const loading = (element) => window.OmniRelayLoading.mount(element, { size: 'page', label: '正在加载…' });
   const current = () => !signal.aborted && location.hash === route.hash;
@@ -744,12 +735,19 @@ export async function mountProjects(host, route, request, { signal, memory, user
       return;
     }
     const data = result.value.data ?? result.value;
+    if (tab === 'tasks' && parts.length === 1 && parts[0] !== 'list') {
+      const { mountTaskDetail } = await import('./task-detail.js');
+      if (!current()) return;
+      await mountTaskDetail(body, { task: data, project: project?.name || id, route, request, signal,
+        back: taskViews.get(id) || base + '/tasks', navigation });
+      return;
+    }
     body.innerHTML =
       (header.status === 'rejected' || directory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
       contents(route, data, header.value?.data.milestones?.items || [],
-        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])), taskViews.get(id));
+        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])));
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
-      mountProjects(host, route, request, { signal, memory, userId }));
+      mountProjects(host, route, request, { signal, memory, userId, navigation }));
     wireFilters(body, route);
     const check = body.querySelector('[data-check]');
     if (check)
@@ -799,7 +797,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
     body.innerHTML = empty(failure(error)) + '<button class="button" type="button">重新加载</button>';
     body.querySelector('button').onclick = () => {
       if (tab === 'tasks' && route.params.has('column_id')) location.hash = firstTaskPage(route);
-      else mountProjects(host, route, request, { signal, memory, userId });
+      else mountProjects(host, route, request, { signal, memory, userId, navigation });
     };
   } finally {
     body.removeAttribute('aria-busy');
