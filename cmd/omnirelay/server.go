@@ -13,6 +13,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/directory"
+	"github.com/uniquechao/OmniRelay/internal/drive"
 	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
@@ -80,6 +81,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
 	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
 	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
+	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	projectService := project.New(grid, pool, roles, botStore.Status, chatSource, chatService,
 		cfg.botSendEnabled && cfg.appSecret != "")
@@ -90,6 +92,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	workers.bot.ConfigureOmniGrid(grid != nil)
 	if cfg.appSecret != "" {
 		workers.chat = chatService
+		workers.files = fileService
 	}
 	if cfg.botLeaseNamespace != "" && cfg.appSecret != "" {
 		lease, err := feishu.NewLease(cfg.botLeaseNamespace, cfg.botPodUID)
@@ -112,6 +115,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	}
 	mux := http.NewServeMux()
 	workers.bot.Register(mux, identityService.AuthenticateManagement, roles)
+	fileService.Register(mux, identityService.Authenticate)
 	chatService.Register(mux, identityService.Authenticate)
 	projectService.Register(mux, identityService.Authenticate)
 	identityService.Register(mux)
@@ -145,6 +149,7 @@ type backendWorkers struct {
 	bot        *system.Service
 	connection func(context.Context)
 	chat       *chat.Service
+	files      *drive.Service
 }
 
 func (w *backendWorkers) Run(ctx context.Context) {
@@ -153,6 +158,9 @@ func (w *backendWorkers) Run(ctx context.Context) {
 	running.Go(func() { w.bot.Run(ctx) })
 	if w.chat != nil {
 		running.Go(func() { w.chat.Run(ctx) })
+	}
+	if w.files != nil {
+		running.Go(func() { w.files.Run(ctx) })
 	}
 	if w.connection != nil {
 		running.Go(func() { w.connection(ctx) })
