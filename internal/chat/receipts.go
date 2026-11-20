@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uniquechao/OmniRelay/internal/identity"
@@ -126,7 +128,7 @@ func (s ReceiptSources) project(ctx context.Context, actor identity.Principal, i
 	for _, message := range messages {
 		evidence := claims[message.MessageID]
 		if conflicts[message.MessageID] || evidence.State != DeliveryConfirmed ||
-			!validIdentifier(evidence.DeliveryID) || !evidence.Receipt.valid() {
+			!evidence.validDeliveryID() || !evidence.Receipt.valid() {
 			continue
 		}
 		candidates[index[message.MessageID]] = evidence.Receipt
@@ -157,9 +159,26 @@ func (s ReceiptSources) project(ctx context.Context, actor identity.Principal, i
 	}
 }
 
+func (e DeliveryEvidence) validDeliveryID() bool {
+	if validIdentifier(e.DeliveryID) {
+		return true
+	}
+	position, ok := strings.CutPrefix(e.DeliveryID, e.Receipt.OperationID+"_")
+	if !ok || !e.Receipt.hasBriefingOperation() {
+		return false
+	}
+	index, err := strconv.ParseUint(position, 10, 31)
+	return err == nil && strconv.FormatUint(index, 10) == position
+}
+
+// 项目简报的操作键由服务端根据正式记录生成，供投递和对账共用。
+func (key BusinessReceiptKey) hasBriefingOperation() bool {
+	return key.Target.TargetKind == "briefing" && key.OperationID == "briefing:"+key.Target.TargetID && validIdentifier(key.Target.TargetID)
+}
+
 func (key BusinessReceiptKey) valid() bool {
 	target := key.Target
-	return validIdentifier(key.OperationID) && validIdentifier(target.ReceiptID) &&
-		validIdentifier(target.ProjectID) && validIdentifier(target.TargetID) &&
+	return (validIdentifier(key.OperationID) || key.hasBriefingOperation()) && validIdentifier(target.ReceiptID) &&
+		identity.ValidProjectID(target.ProjectID) && validIdentifier(target.TargetID) &&
 		(target.TargetKind == "task" || target.TargetKind == "briefing")
 }

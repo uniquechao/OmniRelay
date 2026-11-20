@@ -589,6 +589,7 @@ function partial(data) {
   );
 }
 function failure(error) {
+  if (error.data?.error === 'project_source_not_connected') return '当前栏目尚未接通数据源。';
   if ([403, 404].includes(error.status)) return '当前项目或来源已不可访问。';
   if (error.status === 409) return '数据或权限已变化，请重新加载。';
   return '暂时无法加载，请重试。';

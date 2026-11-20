@@ -75,12 +75,8 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			section, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"+id+"/"), "/")
 			localSection := section == "tasks" || section == "milestones" || section == "overview" || section == "task-update-suggestions"
 			localDirectory := s.localAuthority() && (r.Pattern == "GET /api/v1/projects" || section == "members" || section == "sources" || section == "task-tags")
-			if s.grid == nil && !localSection && !localDirectory {
-				failure(w, errUnavailable)
-				return
-			}
 			if id != "" {
-				if !identifier.MatchString(id) {
+				if !identity.ValidProjectID(id) {
 					failure(w, errDenied)
 					return
 				}
@@ -90,6 +86,10 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 						return
 					}
 				}
+			}
+			if s.grid == nil && !localSection && !localDirectory {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "project_source_not_connected"})
+				return
 			}
 			value, err := next(w, r, actor)
 			if err != nil {
@@ -397,6 +397,8 @@ func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) b
 func failure(w http.ResponseWriter, err error) {
 	status, code := http.StatusServiceUnavailable, "project_unavailable"
 	switch {
+	case errors.Is(err, errBriefingSource):
+		code = "briefing_generation_unavailable"
 	case errors.Is(err, errDenied), errors.Is(err, errUnmapped), errors.Is(err, chat.ErrAccessLost):
 		status, code = http.StatusNotFound, "project_access_denied"
 	case errors.Is(err, errInput):

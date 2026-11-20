@@ -27,6 +27,7 @@ var testActor = identity.Principal{TenantKey: "tenant", AppID: "app", AccountID:
 type gridFixture struct {
 	identityLost     atomic.Bool
 	reportChanged    atomic.Bool
+	reportOffline    atomic.Bool
 	projectLost      atomic.Bool
 	secondDenied     atomic.Bool
 	readOnlyProject  atomic.Pointer[string]
@@ -90,6 +91,10 @@ func (f *gridFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.changed.Store(true)
 		}
 	case "/api/v1/projects/allowed/daily-reports/unified":
+		if f.reportOffline.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		if r.URL.Query().Get("source") != "member" {
 			w.WriteHeader(http.StatusForbidden)
 			return

@@ -554,3 +554,106 @@ test('两项目分别保留搜索、负责人、里程碑和任务视图', { ski
     assert.equal(await page.getByRole('link', { name: sample.view, exact: true }).getAttribute('aria-current'), 'page');
   }
 });
+
+test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  // 模拟取消时已在途的响应，让旧项目数据确实晚于新项目到达。
+  await page.addInitScript((membersPath) => {
+    const fetchOriginal = window.fetch;
+    window.fetch = async (input, options) => {
+      if (!window.delayFirstMembers || new URL(input, location.origin).pathname !== membersPath)
+        return fetchOriginal(input, options);
+      const response = await fetchOriginal(input, { ...options, signal: undefined });
+      const read = response.json.bind(response);
+      response.json = async () => {
+        const data = await read();
+        setTimeout(() => { window.lateMembers = data; }, 0);
+        return data;
+      };
+      return response;
+    };
+  }, root + '/members');
+  const first = await fixture(page);
+  const other = { id: 'p-22', name: '启明项目' };
+  const base = '#/projects/' + other.id;
+  const api = '/api/v1/projects/' + other.id + '/';
+  const run = {
+    id: 'r-22', business_date: '2026-11-18', generated_at: '2026-11-18T09:00:00Z',
+    delivery_state: 'failed',
+  };
+  const writes = [];
+  page.on('request', (r) => {
+    if (r.method() !== 'GET' && new URL(r.url()).pathname.startsWith(api)) writes.push(r.url());
+  });
+  await page.route(origin + '/api/v1/projects?**', (r) =>
+    r.fulfill({ json: { ...list([project, other]), page: 1, page_size: 25 } }));
+  await page.route(origin + api + '**', async (route) => {
+    const section = new URL(route.request().url()).pathname.slice(api.length);
+    const send = (json, status = 200) => route.fulfill({ status, json });
+    switch (section) {
+      case 'overview':
+        return send({ project_id: other.id, data: { workspace: { project: other }, milestones: { items: [] } } });
+      case 'members':
+        return send({ project_id: other.id, data: { members: [{ display_name: '启明成员' }] } });
+      case 'feishu':
+        return send({ project_id: other.id, state: 'available', can_check: false, target_name: '启明群',
+          plan: { plan_enabled: false }, briefings: list([run]) });
+      case 'reports/briefings/r-22':
+        return send(list([run]));
+      case 'reports/briefings/r-1':
+        return send({ error: 'project_access_denied' }, 404);
+      case 'docs':
+        return send({ error: 'project_source_not_connected' }, 503);
+      default:
+        throw Error('意外的项目请求 ' + section);
+    }
+  });
+
+  const visible = (name) => page.getByText(name, { exact: true }).first().waitFor();
+  const go = (hash) => page.evaluate((target) => { location.hash = target; }, hash);
+  await page.goto(origin + '/#/projects');
+  await page.getByRole('link', { name: project.name }).click();
+  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await visible('联调群');
+  await visible('已送达');
+  await page.getByRole('button', { name: '接入验证' }).waitFor();
+  await page.evaluate(() => { window.delayFirstMembers = true; });
+  const delayed = first.holdMembers();
+  await page.getByRole('tab', { name: '成员' }).click();
+  await delayed.started;
+  try {
+    await page.getByRole('link', { name: '返回项目列表' }).click();
+    await page.getByRole('link', { name: other.name }).click();
+    await page.getByRole('tab', { name: '成员' }).click();
+    await visible('启明成员');
+  } finally {
+    delayed.finish();
+  }
+  await page.waitForFunction(() => window.lateMembers?.data.members[0].display_name === '项目成员甲');
+  await visible('启明成员');
+  assert.equal(await page.getByText('项目成员甲', { exact: true }).count(), 0);
+  assert.equal(await page.locator('#page-heading').innerText(), other.name);
+
+  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await visible('启明群');
+  await visible('已生成');
+  await visible('投递失败');
+  assert.equal(await page.getByRole('button', { name: '接入验证' }).count(), 0);
+  assert.doesNotMatch(await page.locator('#page').innerText(), /联调群|项目成员甲|已送达/);
+  await go(base + '/brief/r-22');
+  await visible('投递失败');
+  assert.equal(new URL(page.url()).hash, base + '/reports/brief/r-22');
+  run.delivery_state = 'success';
+  await page.reload();
+  await visible('送达待确认');
+  await go(base + '/brief/r-1');
+  await visible('当前项目或来源已不可访问。');
+  await page.getByRole('tab', { name: '文档' }).click();
+  await visible('当前栏目尚未接通数据源。');
+  assert.doesNotMatch(await page.locator('#page').innerText(), /暂无记录|交付文档|启明群|已送达/);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(first.errors, []);
+});

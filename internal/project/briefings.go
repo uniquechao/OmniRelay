@@ -13,6 +13,8 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
+var errBriefingSource = errors.New("简报生成所需的日报来源暂不可用")
+
 type briefing struct {
 	ID           string     `json:"id"`
 	Date         string     `json:"business_date"`
@@ -49,6 +51,9 @@ func (s *Service) generate(ctx context.Context, actor identity.Principal, id, da
 		return briefing{}, err
 	}
 	count, revision, err := s.submissionCount(ctx, actor, id, date)
+	if errors.Is(err, errUnavailable) {
+		return briefing{}, errBriefingSource
+	}
 	if err != nil {
 		return briefing{}, err
 	}
