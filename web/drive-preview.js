@@ -1,0 +1,140 @@
+const messages = {
+  queued:'预览已排队', running:'正在转换预览', partial:'本次同步仅取得部分结果，当前显示已保存的版本',
+  failed:'文件转换失败', source_unavailable:'暂时无法读取来源', conversion_busy:'转换服务繁忙',
+  forbidden:'已无权查看此文件', preview_unavailable:'预览已失效', version_unavailable:'此版本已不可用',
+  unsupported:'此格式暂不支持预览', encrypted:'文件已加密，无法预览', over_limit:'文件超出预览处理限制',
+  invalid_page:'此页已不可用', invalid_sheet:'工作表已不可用', invalid_entry:'目录条目已不可用',
+  network:'读取预览失败，请检查连接后重试'
+};
+const retryable = new Set(['failed','source_unavailable','conversion_busy','preview_unavailable','network']);
+const esc = value => window.OmniRelayUI.escape(value);
+const cell = value => esc(typeof value === 'object' && value !== null ? JSON.stringify(value) : value ?? '');
+function action(name, label, disabled = false) {
+  return '<button type="button" class="button" data-preview-action="' + name + '"' +
+    (disabled ? ' disabled' : '') + '>' + label + '</button>';
+}
+function table(rows, fields) {
+  const header = fields ? '<thead><tr>' + fields.map(f => '<th scope="col">' + cell(f) + '</th>').join('') + '</tr></thead>' : '';
+  return '<div class="table-box drive-preview-table" tabindex="0" role="region" aria-label="表格预览"><table>' +
+    header + '<tbody>' + rows.map(row => '<tr>' + row.map(v => '<td>' + cell(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+}
+function renderResult(kind, data, meta) {
+  const paragraph = value => '<p class="drive-preview-text">' + esc(value) + '</p>';
+  if (typeof data?.text === 'string') return paragraph(data.text || '本页没有正文');
+  if (!Array.isArray(data)) throw new Error();
+  if (!data.length) return paragraph(kind === 'zip' ? '目录为空' : '本页没有内容');
+  if (kind === 'zip') return '<ul class="drive-archive">' + data.map(item => '<li>' +
+    (item.state === 'ready' ? action('entry-' + Number(item.entry), esc(item.name)) :
+      esc(item.name) + ' · ' + (item.directory ? '目录' : messages[item.state] || '无法预览')) + '</li>').join('') + '</ul>';
+  if (kind === 'base') return table(data.map(row => meta.fields.map(f => row.fields[f])), meta.fields);
+  if (kind === 'xlsx') return table(data);
+  return data.map(block => block.table ? table(block.table) : paragraph(block.text)).join('');
+}
+export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus}) {
+  const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', restoreFocus,
+    description:row.format + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
+    body:'<div data-metadata></div><section class="drive-preview-content"><p role="status" tabindex="-1"></p>' +
+      '<div data-preview-controls></div><div data-preview-body></div></section>'});
+  mountMetadata(dialog, dialog.querySelector('[data-metadata]'));
+  const status = dialog.querySelector('[role="status"]');
+  const controls = dialog.querySelector('[data-preview-controls]');
+  const body = dialog.querySelector('[data-preview-body]');
+  const root = '/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/previews';
+  let page = 1, sheet = 0, entry = 0, directoryPage = 1;
+  let pending;
+  dialog.addEventListener('close', () => pending?.abort(), {once:true});
+
+  function showFailure(code) {
+    status.textContent = messages[code] || messages.failed;
+    if (retryable.has(code)) controls.insertAdjacentHTML('beforeend', action('retry','重试'));
+    if (code === 'forbidden') {
+      dialog.querySelector('[data-metadata]').replaceChildren();
+      dialog.querySelector('.dialog-heading h2').textContent = '文件预览';
+      dialog.querySelector('.dialog-heading p').textContent = '';
+      controls.replaceChildren();
+      void refresh();
+    }
+  }
+  async function load() {
+    pending?.abort();
+    pending = new AbortController();
+    const signal = AbortSignal.any([pending.signal, lifetime]);
+    const params = new URLSearchParams({page});
+    if (sheet) params.set('sheet', sheet);
+    if (entry) params.set('entry', entry);
+    if (controls.contains(document.activeElement) || body.contains(document.activeElement)) status.focus();
+    body.replaceChildren();
+    controls.innerHTML = entry ? action('directory','返回目录') : '';
+    status.textContent = messages.queued;
+    try {
+      let task = await request(root + '?' + params, {method:'POST', signal});
+      signal.throwIfAborted();
+      const path = root + '/' + encodeURIComponent(task.task_id);
+      while (task.stage === 'queued' || task.stage === 'running') {
+        status.textContent = messages[task.stage];
+        await new Promise(resolve => setTimeout(resolve, 700));
+        signal.throwIfAborted();
+        task = await request(path, {signal});
+        signal.throwIfAborted();
+      }
+      if (!dialog.open) return;
+      if (task.stage !== 'ready') { showFailure(task.stage); return; }
+      if (String(task.version_id) !== String(row.version_id)) { showFailure('version_unavailable'); return; }
+      const meta = task.meta;
+      const data = await request(path + '/result', {signal, acceptPNG:true});
+      signal.throwIfAborted();
+      const kind = entry ? meta.name.split('.').pop().toLowerCase() :
+        row.category === 'files' ? row.name.split('.').pop().toLowerCase() : row.format_key;
+      if (data instanceof Blob) {
+        const bitmap = await createImageBitmap(data);
+        try {
+          if (signal.aborted || !dialog.open) return;
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.setAttribute('role','img');
+          canvas.setAttribute('aria-label','PDF 第 ' + page + ' 页');
+          canvas.getContext('2d').drawImage(bitmap, 0, 0);
+          body.replaceChildren(canvas);
+        } finally { bitmap.close(); }
+      } else {
+        body.innerHTML = renderResult(kind, data, meta);
+      }
+      const summary = [];
+      if (row.sync_state === 'partial') summary.push(messages.partial);
+      if (entry) summary.push(meta.name);
+      summary.push('第 ' + meta.page + ' / ' + meta.pages + ' 页');
+      if (meta.total > 0) summary.push('显示 ' + meta.first + '–' + meta.last + '，共 ' + meta.total);
+      status.textContent = summary.join(' · ');
+      if (meta.sheets?.length) controls.insertAdjacentHTML('beforeend','<label>工作表 <select data-sheet>' +
+        meta.sheets.map((name,i) => '<option value="' + i + '"' + (i === meta.sheet ? ' selected' : '') + '>' + esc(name) + '</option>').join('') + '</select></label>');
+      if (meta.pages > 1) controls.insertAdjacentHTML('beforeend',action('prev','上一页',page === 1) + action('next','下一页',page === meta.pages));
+    } catch (error) {
+      if (signal.aborted || !dialog.open) return;
+      const code = error.data?.error;
+      showFailure(error.status === 403 ? 'forbidden' : Object.hasOwn(messages, code) ? code : 'network');
+    }
+  }
+  dialog.addEventListener('click', event => {
+    const name = event.target.closest('[data-preview-action]')?.dataset.previewAction;
+    if (!name) return;
+    if (name === 'prev') page--;
+    if (name === 'next') page++;
+    if (name.startsWith('entry-')) {
+      directoryPage = page;
+      entry = Number(name.slice(6));
+      page = 1;
+      sheet = 0;
+    }
+    if (name === 'directory') { entry = sheet = 0; page = directoryPage; }
+    void load();
+  });
+  controls.addEventListener('change', event => {
+    if (!event.target.matches('[data-sheet]')) return;
+    sheet = Number(event.target.value);
+    page = 1;
+    void load();
+  });
+  if (row.version_id) void load();
+  else status.textContent = '文件仅部分同步，尚无可读版本。';
+}

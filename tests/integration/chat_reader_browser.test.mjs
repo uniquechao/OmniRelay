@@ -846,21 +846,21 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await act(page.getByRole('button',{name:'取消',exact:true}));
     await act(page.getByRole('button',{name:'不保存'}));
     assert.equal(patches.length,1);
-    // 用受控的预览宿主验证 K2 接口，保留正式编辑器和列表请求。
-    await page.evaluate(async () => {
-      const {mountDrive} = await import('/drive.js');
-      const request = async (path, options = {}) => {
-        const response = await fetch(path,{...options,body:JSON.stringify(options.body)});
-        if (!response.ok) throw Object.assign(new Error(),{status:response.status});
-        return response.json();
-      };
-      mountDrive(document.querySelector('#page'),request,new AbortController().signal,{
-        preview(row, trigger, refresh, signal, {mountMetadata}) {
-          const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', body:'<section data-metadata></section>'});
-          mountMetadata(dialog, dialog.querySelector('[data-metadata]'));
-        }
+    await page.route(origin + '/api/v1/feishu/files/17/versions/1/previews**', route => {
+      if (route.request().url().endsWith('/result')) return route.fulfill({
+        path:'design/prototype/omni-relay-logo.png', contentType:'image/png'
       });
+      return route.fulfill({json:{version_id:1, task_id:'pdf', stage:'ready',
+        meta:{page:1,pages:1,total:1,first:1,last:1}}});
     });
+    await act(page.locator('.drive-file-name'));
+    const pdf = page.getByRole('img',{name:'PDF 第 1 页'});
+    await pdf.waitFor();
+    const bounds = await page.locator('dialog[open]').boundingBox();
+    assert.equal(Math.round(bounds.width), Math.min(720,width));
+    assert.equal(await pdf.evaluate(node => node.closest('.dialog-body').scrollWidth <= node.closest('.dialog-body').clientWidth),true);
+    await page.keyboard.press('Escape');
+    await page.locator('.drive-file-name:focus').waitFor();
     await act(page.locator('.drive-file-name'));
     const drawer = page.locator('[data-metadata]');
     assert.equal(await drawer.locator('.drive-source').first().getAttribute('href'),await links.first().getAttribute('href'));
@@ -869,13 +869,17 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await act(save);
     await drawer.locator('[data-drive-projects]:focus').waitFor();
     assert.deepEqual(await drawer.locator('.kind').allTextContents(), ['北辰']);
-    assert.deepEqual(await edit.locator('.kind').allTextContents(),['北辰']);
+    assert.equal(await edit.count(),0);
     assert.deepEqual(patches[1],{project_version:4,add_project_ids:[],remove_project_ids:['b']});
     await act(drawer.locator('[data-drive-projects]'));
     await act(page.getByRole('option',{name:second}));
     row.project_version++;
     await act(save);
     await page.getByText('归属已变化，请重新打开编辑并确认。',{exact:true}).waitFor();
+    await act(page.locator('[data-more]'));
+    await page.locator('[data-filter]').selectOption('');
+    await page.keyboard.press('Escape');
+    await edit.getByText('北辰').waitFor();
     await act(edit);
     assert.equal(await page.locator('[data-remove=b]').count(),0);
     await act(page.getByRole('button',{name:'取消',exact:true}));
@@ -889,4 +893,62 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.locator('[data-source-message]:focus').waitFor();
     await page.close();
   }
+});
+
+test('文件预览分页、工作表、目录、转换重试与撤权', {skip:!packageName}, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.setDefaultTimeout(6000);
+  await mountFixture(page);
+  let access = true, attempts = 0, releaseOldPage;
+  const file = {id:8,version_id:53,category:'files',format:'ZIP',format_key:'zip',name:'归档.zip',
+    project_ids:[],sources:[],sync_state:'partial'};
+  await page.route(origin + '/api/v1/feishu/files**', async route => {
+    const url = new URL(route.request().url());
+    const respond = json => route.fulfill({json});
+    if (!url.pathname.includes('/previews')) return respond({items:access ? [file] : [],total:access ? 1 : 0,projects:{}});
+    if (!access) return route.fulfill({status:403,json:{error:'forbidden'}});
+    const params = url.searchParams;
+    const creating = route.request().method() === 'POST';
+    const path = url.pathname.split('/');
+    const id = creating ? [params.get('entry') || 0,params.get('sheet') || 0,params.get('page')].join('-') :
+      path.at(-1) === 'result' ? path.at(-2) : path.at(-1);
+    const [entry,sheet,current] = id.split('-').map(Number);
+    if (creating) attempts++;
+    const meta = {page:current,pages:2,total:2,first:current,last:current};
+    if (entry) Object.assign(meta,{name:'账单.xlsx',sheet,sheets:['明细','汇总']});
+    if (path.at(-1) === 'result' && entry && sheet === 1 && current === 2) {
+      await new Promise(resolve => { releaseOldPage = resolve; });
+    }
+    if (path.at(-1) === 'result') return respond(entry ? [['工作表' + sheet + '页' + current]] :
+      [{name:'账单.xlsx',entry:1,state:'ready'},{name:'加密文件',entry:2,state:'encrypted'}]);
+    return respond({task_id:id,version_id:53,stage:creating ? 'queued' : attempts === 1 ? 'failed' : 'ready',meta});
+  });
+  await page.goto(origin + '/#/feishu/drive');
+  await page.locator('.drive-file-name').click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('预览已排队').waitFor();
+  await dialog.getByText('文件转换失败').waitFor();
+  await dialog.getByRole('button',{name:'重试'}).click();
+  await dialog.getByText(/部分结果/).waitFor();
+  await dialog.getByRole('button',{name:'账单.xlsx'}).click();
+  await dialog.getByText('工作表0页1').waitFor();
+  await dialog.getByRole('button',{name:'下一页'}).click();
+  assert.equal(await dialog.getByText('工作表0页1').count(),0);
+  await dialog.getByText('工作表0页2').waitFor();
+  await dialog.getByLabel('工作表').selectOption('1');
+  await dialog.getByText('工作表1页1').waitFor();
+  const oldResult = page.waitForRequest(request => request.url().endsWith('/1-1-2/result'));
+  await dialog.getByRole('button',{name:'下一页'}).click();
+  await oldResult;
+  await dialog.getByRole('button',{name:'返回目录'}).click();
+  await dialog.getByText(/加密文件/).waitFor();
+  releaseOldPage();
+  assert.equal(await dialog.getByText('工作表1页2').count(),0);
+  access = false;
+  await dialog.getByRole('button',{name:'下一页'}).click();
+  await dialog.getByText('已无权查看此文件').waitFor();
+  assert.equal(await page.getByText('归档.zip').count(),0);
+  assert.equal(await dialog.locator('[data-preview-body]').innerText(),'');
 });
