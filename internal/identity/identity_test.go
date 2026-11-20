@@ -36,7 +36,7 @@ func TestReturnPathStaysOnWorkbench(t *testing.T) {
 		if (WorkbenchAccess{Admin: map[string]bool{"audit": true}}).canReturnTo(path) {
 			t.Errorf("audit access authorized alias %q", alias)
 		}
-		if !(WorkbenchAccess{Admin: map[string]bool{"settings": true, "feishu_bot": true}}).canReturnTo(path) {
+		if !(WorkbenchAccess{Navigation: map[string]bool{"system": true}, Admin: map[string]bool{"settings": true, "feishu_bot": true}}).canReturnTo(path) {
 			t.Errorf("system access did not authorize alias %q", alias)
 		}
 	}
@@ -497,5 +497,88 @@ func requireCookieFlags(t *testing.T, c *http.Cookie) {
 	if !strings.HasPrefix(c.Name, "__Host-") || !c.HttpOnly || !c.Secure || c.Path != "/" ||
 		c.Domain != "" || c.SameSite != http.SameSiteLaxMode {
 		t.Error("cookie has unsafe security attributes")
+	}
+}
+
+func TestSharedWorkbenchTargets(t *testing.T) {
+	body, err := os.ReadFile("../../tests/fixtures/workbench-paths.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples struct {
+		Access   map[string]WorkbenchAccess
+		Cases    [][3]json.RawMessage
+		Patterns [][3]json.RawMessage
+	}
+	if err = json.Unmarshal(body, &samples); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(data json.RawMessage, v any) {
+		t.Helper()
+		if e := json.Unmarshal(data, v); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for _, row := range samples.Cases {
+		var path, want string
+		var roles []string
+		decode(row[0], &path)
+		decode(row[1], &want)
+		decode(row[2], &roles)
+		got, e := localReturnPath(path)
+		if got != want || (e == nil) != (want != "") {
+			t.Fatalf("路径 %q 返回 %q，预期 %q", path, got, want)
+		}
+		for name, access := range samples.Access {
+			granted := false
+			for _, role := range roles {
+				if name == role {
+					granted = true
+				}
+			}
+			if access.canReturnTo(got) != granted {
+				t.Fatalf("角色 %s 的路径 %q 权限不符", name, path)
+			}
+		}
+	}
+	for _, row := range samples.Patterns {
+		var pattern, path string
+		var valid bool
+		decode(row[0], &pattern)
+		decode(row[1], &path)
+		decode(row[2], &valid)
+		if matchPathPattern(pattern, path, ValidProjectID) != valid {
+			t.Fatal(path)
+		}
+		if _, err := localReturnPath(path); err == nil {
+			t.Fatalf("测试路径进入生产白名单 %q", path)
+		}
+	}
+}
+
+func TestReturnRechecksResourceAccess(t *testing.T) {
+	access := WorkbenchAccess{Navigation: map[string]bool{"workbench": true, "bot_chats": true}, DefaultRoute: "/#/workbench"}
+	for _, tc := range []struct{ path, project, chat string }{
+		{"/#/projects/p/overview", "p", ""}, {"/#/projects/p/chats/c/m", "p", "c"}, {"/#/bot-chats/c/m", "", "c"},
+	} {
+		s := &Service{}
+		for _, granted := range []bool{false, true} {
+			called := false
+			s.cfg.ResourceRead = func(_ context.Context, p Principal, project, chat string) (bool, error) {
+				called = true
+				if p.AccountID != "actor" || project != tc.project || chat != tc.chat {
+					t.Fatal("回跳校验使用了错误的资源或账号")
+				}
+				return granted, nil
+			}
+			result := s.returnForAccess(t.Context(), Principal{AccountID: "actor"}, access, tc.path)
+			want := access.DefaultRoute
+			if granted {
+				want, _ = localReturnPath(tc.path)
+			}
+			if !called || result != want {
+				t.Fatalf("回跳 %q 返回 %q，预期 %q", tc.path, result, want)
+			}
+		}
 	}
 }

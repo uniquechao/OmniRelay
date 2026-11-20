@@ -34,36 +34,68 @@ const departments = {
 async function mountFixture(page) {
   let state = visible;
   const writes = [];
+  const reads = [];
+  const extra = Array.from({length:1000},(_,i)=>({id:'directory:extra-'+i,name:'成员'+i,source:'飞书',
+    status:'unprovisioned',org:'',roleNames:[]}));
+  let monitorFailure = false;
+  let run;
+  let snapshot = 17;
+  let conflict = false;
+  let starts = 0;
   const { account_id } = registered;
   await page.route(origin + '/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (path.startsWith('/api/')) {
+      reads.push(url);
       if (route.request().method() !== 'GET') {
         writes.push([route.request().method(), path]);
+        if (path === directory+'sync-runs' && route.request().method()==='POST') {
+          run = {...visible.runs.latest_attempt,id:18 + starts,state:'queued',coalesced:starts++ === 0};
+          return route.fulfill({status:202,json:run});
+        }
         return route.fulfill({ status: 405 });
       }
       if (path === '/api/v1/me') return route.fulfill({ json: {
         principal: { account_id }, csrf_token: 'fixture',
         access: { navigation: { system: true, workbench: true }, admin: { users: true },
-          permissions: { 'directory.read': true }, default_route: '/#/system/users' }
+          permissions: { 'directory.read': true, 'directory.sync':true }, default_route: '/#/system/users' }
       } });
+      if (path === system + '/user-page') {
+        if (!state) return route.fulfill({status:403,json:{error:'forbidden'}});
+        if (conflict && url.searchParams.has('snapshot_version')) {
+          conflict = false;
+          snapshot++;
+          return route.fulfill({status:409,json:{error:'directory_snapshot_changed'}});
+        }
+        const dept = url.searchParams.get('department_id');
+        const people = state === visible ? roster.filter(person=>!dept || person.departments.some(d=>d.id===dept))
+          .map(person=>({id:person.account_id || 'directory:'+person.open_id,personKey:person.person_key,name:snapshot===17 ? person.name : '新快照成员',
+            status:person.account_id?'active':'unprovisioned',source:'飞书',roleNames:[],org:person.departments.map(d=>d.path.join(' / ')).join('；')}))
+          : [{id:account.id,name,personKey:account.personKey,status:'active',source:'飞书',roleNames:[],org:''}];
+        if (!dept && state === visible) people.push(...extra);
+        const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'));
+        return route.fulfill({json:{...state.people,snapshot_version:state.people.visible ? snapshot : null,total:people.length,items:people.slice(offset,offset+limit)}});
+      }
+      if (path === system + '/accounts/'+account.id) return route.fulfill({json:account});
       if (path === system + '/accounts') return route.fulfill({ json: { items: [account] } });
+      if (path === system + '/accounts/' + account.id + '/projects') return route.fulfill({json:{items:[],canDelegate:false}});
       if ([system + '/roles', system + '/role-grants'].includes(path)) return route.fulfill({ json: { items: [] } });
       if (state === null && path.startsWith(directory)) return route.fulfill({ status: 403, json: { error: 'forbidden' } });
-      if (path === directory + 'sync-runs') return route.fulfill({ json: state.runs });
+      if (path === directory + 'sync-runs') return monitorFailure ? route.fulfill({status:503,json:{}}) : route.fulfill({ json: {...state.runs,
+        snapshot_version:state.runs.visible ? snapshot : null,...(run && {latest_attempt:run,current:['queued','running'].includes(run.state) ? run : null})} });
       if (path === directory + 'departments' || path === directory + 'people') {
         const kind = path.slice(directory.length);
         const records = kind === 'people' ? roster : departments[url.searchParams.get('parent_id') ?? ''];
         const items = state === visible ? records : [];
-        return route.fulfill({ json: { ...state[kind], items, total: items.length } });
+        return route.fulfill({ json: { ...state[kind], snapshot_version:state[kind].visible ? snapshot : null,items, total: items.length } });
       }
       return route.fulfill({ status: 404 });
     }
 
     return route.fulfill(await browserAsset(path));
   });
-  return { writes, revoke: () => { state = hidden; }, deny: () => { state = null; } };
+  return { writes, reads, conflict:()=>{conflict=true;},phase: value=>{run.state=value;},failMonitor: value => {monitorFailure=value;}, revoke: () => { state = hidden; }, deny: () => { state = null; } };
 }
 
 const avatarTone = locator => locator.locator('.person-avatar').getAttribute('data-avatar-tone');
@@ -75,7 +107,7 @@ async function checkTree(page, tree, root, first, second, leaf, touch) {
   const expand = treeButton(tree, '展开全部');
   const collapse = treeButton(tree, '收起全部');
   await (touch ? expand.tap() : expand.click());
-  assert.equal(await tree.locator('[data-tree-toggle][aria-expanded="false"]').count(), 0);
+  await tree.locator('[data-tree-toggle][aria-expanded="false"]').first().waitFor({state:'hidden'});
   await expand.focus();
   await page.keyboard.press('Tab');
   assert.ok(await active(collapse, ':focus-visible'));
@@ -138,17 +170,48 @@ test('UI01 与 UI02 共享组件通过目录身份和路径回归', { skip: !pro
           const go = (path, route) => page.goto(origin + path + '?theme=' + theme + '#/' + route);
           const capture = stage => evidence && page.screenshot({ path: join(evidence, width + '-' + theme + '-' + stage + '.png') });
           await go('/', 'system/users');
-          if (touch) await page.locator('.directory-org summary').tap();
+
           assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
           const tree = page.locator('[data-directory-tree] .dev-tree');
           const ready = page.locator('tbody tr[data-row]');
           await page.locator('tbody .person-name').first().waitFor();
+          const business = () => fixture.reads.filter(url=>url.pathname.startsWith(system));
+          const userRequests = () => business().filter(url=>url.pathname === system+'/user-page');
+          const branches = () => business().filter(url=>url.pathname === directory+'departments');
+          if (!touch) await tree.waitFor();
+          assert.equal(userRequests().length,1);
+          assert.equal(userRequests()[0].searchParams.get('limit'),'10');
+          assert.equal(branches().length,touch ? 0 : 1);
+          assert.equal(business().filter(url=>url.pathname===directory+'sync-runs').length,1);
+          assert.equal(business().length,touch ? 2 : 3);
+          if (touch) await page.locator('.directory-org summary').tap();
+          await treeButton(tree,'展开'+team).click();
+          await treeButton(tree,'运维').waitFor();
+          assert.equal(branches().length,2);
+          await page.locator('[data-next]').click();
+          await page.locator('[data-row="directory:extra-8"]').waitFor();
+          assert.equal(userRequests().length,2);
+          assert.equal(userRequests()[1].searchParams.get('offset'),'10');
+          await page.locator('[data-size]').selectOption('50');
+          await page.locator('[data-row="directory:extra-47"]').waitFor();
+          assert.equal(userRequests().at(-1).searchParams.get('limit'),'50');
+          assert.equal(userRequests().length,3);
+          await page.locator('[data-size]').selectOption('10');
+          await page.locator('[data-row="'+account.id+'"]').waitFor();
+          fixture.failMonitor(true);
+          await page.clock.fastForward(5000);
+          await page.getByText(/暂时无法获取同步状态/).waitFor();
+          assert.equal(await ready.count(),10);
+          assert.equal(await treeButton(tree,'运维').count(),1);
+          fixture.failMonitor(false);
           await checkTree(page, tree, '全部组织', team, '交付中心', '交付一组', touch);
+          await page.locator('[data-total]').getByText('共 2 条',{exact:true}).waitFor();
           assert.equal(await ready.count(), 2);
           const employee = page.locator('[data-row="' + account.id + '"]');
           const other = page.locator('[data-row="directory:' + pending.open_id + '"]');
           await treeButton(tree, '展开' + team).click();
           await treeButton(tree, '运维').click();
+          await page.locator('[data-total]').getByText('共 1 条',{exact:true}).waitFor();
           assert.equal(await ready.count(), 1);
           assert.equal(await employee.count(), 1);
           await treeButton(tree, '全部组织').click();
@@ -250,4 +313,56 @@ test('UI01 与 UI02 共享组件通过目录身份和路径回归', { skip: !pro
       });
     }
   }
+  await t.test('同步跨路由恢复、重试及分页冲突清理',async()=>{
+    const page = await browser.newPage();
+    try {
+      page.setDefaultTimeout(8000);
+      await page.clock.install();
+      const fixture = await mountFixture(page);
+      await page.goto(origin+'/#/system/users');
+      const employee = page.locator('[data-row="'+account.id+'"]');
+      await employee.waitFor();
+      await employee.getByRole('button',{name:'查看',exact:true}).click();
+      const drawer = page.getByRole('dialog',{name:'用户详情'});
+      await drawer.waitFor();
+      assert.equal(fixture.reads.filter(url=>url.pathname===system+'/accounts/'+account.id).length,1);
+      assert.equal(fixture.reads.filter(url=>url.pathname===system+'/role-grants' && url.searchParams.get('accountId')===account.id).length,1);
+      await page.keyboard.press('Escape');
+      await drawer.waitFor({state:'hidden'});
+      const sync = page.locator('[data-directory-sync]');
+      const notice = page.locator('[data-directory-notice]');
+      await sync.click();
+      await notice.filter({hasText:'同步排队中'}).waitFor();
+      await page.getByText('已有同步任务，已并入该任务。',{exact:true}).waitFor();
+      await page.evaluate(()=>{location.hash='#/workbench';});
+      await sync.waitFor({state:'detached'});
+      fixture.phase('running');
+      await page.evaluate(()=>{location.hash='#/system/users';});
+      await notice.filter({hasText:'同步进行中'}).waitFor();
+      assert.equal(await sync.isDisabled(),true);
+      fixture.phase('failed');
+      await page.clock.fastForward(1500);
+      await notice.filter({hasText:'本轮同步失败'}).waitFor();
+      assert.equal(await employee.isVisible(),true);
+      await sync.click();
+      await notice.filter({hasText:'同步排队中'}).waitFor();
+      fixture.phase('succeeded');
+      await page.clock.fastForward(1500);
+      await page.waitForFunction(()=>!document.querySelector('[data-directory-sync]').disabled);
+      await employee.locator('.person-name').click();
+      await openCard(page).waitFor();
+      fixture.conflict();
+      await page.locator('[data-next]').click();
+      await page.locator('tbody .person-name').filter({hasText:'新快照成员'}).first().waitFor();
+      await openCard(page).waitFor({state:'detached'});
+      assert.equal(await page.locator('tbody').getByText(name,{exact:true}).count(),0);
+      const pages = fixture.reads.filter(url=>url.pathname===system+'/user-page');
+      assert.ok(pages.some(url=>url.searchParams.get('snapshot_version')==='17' && url.searchParams.get('offset')==='10'));
+      assert.equal(pages.at(-1).searchParams.get('offset'),'0');
+      await page.locator('[data-next]').click();
+      await page.locator('[data-row="directory:extra-8"]').waitFor();
+      assert.equal(fixture.reads.filter(url=>url.pathname===system+'/user-page').length,pages.length+1);
+    } finally { await page.close(); }
+  });
+
 });

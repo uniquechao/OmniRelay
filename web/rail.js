@@ -1,6 +1,6 @@
-export function mountRail(shell, groups) {
-  const railToggle = document.getElementById('rail-toggle');
-  const railResizer = document.getElementById('rail-resizer');
+export function mountRail(shell, groups, signal) {
+  const railToggle = shell.querySelector('.rail-toggle');
+  const railResizer = shell.querySelector('.rail-resizer');
   const compactRail = matchMedia('(max-width: 720px)');
   let railPreference;
 
@@ -23,16 +23,16 @@ export function mountRail(shell, groups) {
   }
   railToggle.addEventListener('click', () => {
     setRail(shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed');
-  });
+  }, { signal });
   for (const group of groups) {
     group.querySelector('summary').addEventListener('click', event => {
       if (shell.dataset.rail !== 'collapsed') return;
       event.preventDefault();
       setRail('expanded');
       group.open = true;
-    });
+    }, { signal });
   }
-  compactRail.addEventListener('change', renderRail);
+  compactRail.addEventListener('change', renderRail, { signal });
   renderRail();
 
   let railDrag = null;
@@ -53,27 +53,27 @@ export function mountRail(shell, groups) {
     railResizer.focus({preventScroll:true});
     railResizer.setPointerCapture(event.pointerId);
     shell.dataset.dragging = '';
-  });
+  }, { signal });
   window.addEventListener('pointermove', event => {
     if (railDrag?.id !== event.pointerId) return;
     railDrag.delta = event.clientX - railDrag.start;
     const width = Math.max(52,Math.min(166,railDrag.width + railDrag.delta));
     shell.style.setProperty('--rail-drag-width',width + 'px');
     shell.dataset.rail = width >= 124 ? 'expanded' : 'collapsed';
-  });
+  }, { signal });
   window.addEventListener('pointerup', event => {
     if (railDrag?.id !== event.pointerId) return;
     railDrag.delta = event.clientX - railDrag.start;
     finishRailDrag(true);
-  });
+  }, { signal });
   window.addEventListener('pointercancel', event => {
     if (railDrag?.id === event.pointerId) finishRailDrag(false);
-  });
-  railResizer.addEventListener('lostpointercapture', () => finishRailDrag(false));
+  }, { signal });
+  railResizer.addEventListener('lostpointercapture', () => finishRailDrag(false), { signal });
   railResizer.addEventListener('keydown', event => {
     if (event.key === 'Escape' && railDrag) { finishRailDrag(false); return; }
     const keys = { ArrowLeft:'collapsed', Home:'collapsed', ArrowRight:'expanded', End:'expanded',
       Enter:shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed' };
     if (Object.hasOwn(keys,event.key)) { event.preventDefault(); setRail(keys[event.key]); }
-  });
+  }, { signal });
 }

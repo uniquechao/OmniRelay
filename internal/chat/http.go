@@ -98,6 +98,20 @@ func (s *Service) Register(mux *http.ServeMux,
 	s.registerDelivery(mux, auth)
 }
 
+// CanReadConversation 供登录回跳复用与消息读取相同的会话范围。
+func (s *Service) CanReadConversation(ctx context.Context, p identity.Principal, projectID, chatID string) (bool, error) {
+	if !validIdentifier(chatID) {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	_, err := s.authorizeProject(ctx, p, chatID, projectID)
+	if errors.Is(err, ErrAccessLost) || errors.Is(err, errHidden) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Service) authorize(ctx context.Context, p identity.Principal, id string) (authorizedScope, error) {
 	return s.authorizeProject(ctx, p, id, "")
 }

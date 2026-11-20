@@ -33,6 +33,8 @@ OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自�
 使用账号密码登录时，设置 `OMNIRELAY_TLS_CERT_FILE` 和 `OMNIRELAY_TLS_KEY_FILE`，让 Go 监听 HTTPS。若经 Kubernetes Ingress 访问，入口到 Go 服务的连接也需使用 TLS，并验证上游证书。只在入口终止 TLS 的部署仍可提供飞书登录。避免在入口访问日志及 APM 中采集 `/auth/` 请求体或登录回调查询参数。
 
 ```sh
+npm ci
+npm run build
 mkdir -p bin
 go build -o bin/omnirelay ./cmd/omnirelay
 ./bin/omnirelay migrate
@@ -49,7 +51,7 @@ go build -o bin/omnirelay ./cmd/omnirelay
 
 系统角色授权、撤销和用户启停经服务端鉴权并写入审计。项目级权限由可信的 OmniGrid 正式成员关系、业务权限和委派代次决定，当前运行配置尚未接通项目权限源。接口字段见[权限能力协议](design/engineering/feishu-integration-contract.md#系统角色与权限能力)。
 
-## React 迁移基线
+## React 工作台开发与构建
 
 在仓库根目录使用 Node.js 22.12 或更高版本和 `go.mod` 指定的 Go 工具链。干净检出的构建顺序如下。
 
@@ -61,7 +63,7 @@ go test ./...
 go build -o bin/omnirelay ./cmd/omnirelay
 ```
 
-`npm run dev` 启动带 React 快速刷新的 Vite。打开 `/` 或 `/setup`，可通过 `OMNIRELAY_DEV_ORIGIN` 指向已有 Go 后端，默认上游为 `http://127.0.0.1:8080`。生产构建输出到 `web/dist`。使用已有服务配置运行 `OMNIRELAY_PREVIEW_DIR="$PWD/web/dist" ./bin/omnirelay serve` 即可同源验证。镜像内对应目录为 `/opt/omnirelay/ui`。变量未设置时 Go 继续提供当前业务入口。预发布工作台可读取会话，首次配置入口显示回调地址和保存结果；登录、配置提交及业务表单由各自的迁移任务实现。
+`npm run dev` 启动带 React 快速刷新的 Vite。打开 `/` 或 `/setup`，可通过 `OMNIRELAY_DEV_ORIGIN` 指向已有 Go 后端，默认上游为 `http://127.0.0.1:8080`。生产构建输出到 `web/dist`。使用已有服务配置运行 `OMNIRELAY_PREVIEW_DIR="$PWD/web/dist" ./bin/omnirelay serve` 即可同源验证。镜像内对应目录为 `/opt/omnirelay/ui`。变量未设置时，Go 从二进制提供 React 工作台、首次配置页面和哈希资源。修改前端后先运行 `npm run build`，再重新构建 Go 二进制。预发布升级和恢复步骤见 [Kubernetes 部署说明](deploy/k8s/README.md#工作台升级与恢复)。
 
 已配置的 Go 服务在 `/` 提供工作台；首次配置模式将 `/` 重定向到 `/setup`，OAuth 回跳 `/?setup=complete` 也使用初始化入口。两个入口均从 `/assets/` 加载带哈希资源。
 
@@ -72,7 +74,7 @@ OMNIRELAY_BROWSER_DIST=web/dist node --test tests/integration/preview_browser.te
 OMNIRELAY_PLAYWRIGHT_MODULE=playwright-core go test ./cmd/omnirelay -run '^TestPreviewUI$' -count=1
 ```
 
-旧套件的 mock API 仍可独立运行。默认静态资源取自 Go 的实际嵌入清单；设置 `OMNIRELAY_ASSET_ORIGIN` 可以从指定 Go 服务读取静态资源，同时保留 mock API。原型对照使用独立的 `/prototype/` 路径或原型文件。真实后端用例沿用各 Go 测试创建的服务、账号和 PostgreSQL 夹具。
+旧套件的 mock API 仍可独立运行。默认静态资源取自构建输出 `web/dist`；设置 `OMNIRELAY_ASSET_ORIGIN` 可以从指定 Go 服务读取静态资源，同时保留 mock API。原型对照使用独立的 `/prototype/` 路径或原型文件。真实后端用例沿用各 Go 测试创建的服务、账号和 PostgreSQL 夹具。
 
 ## 系统架构
 

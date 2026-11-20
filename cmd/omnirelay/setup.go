@@ -206,15 +206,7 @@ func newWebSetupHandler(store webSetupStore, origin string,
 	transport http.RoundTripper, onSaved func(),
 ) http.Handler {
 	mux := http.NewServeMux()
-	web.Register(mux)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("setup") == "complete" {
-			web.ServeSetup(w, r)
-			return
-		}
-		http.Redirect(w, r, "/setup", http.StatusSeeOther)
-	})
-	mux.HandleFunc("GET /setup", web.ServeSetup)
+	web.RegisterSetup(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})

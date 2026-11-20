@@ -8,83 +8,28 @@ const directory = base + '/directory';
 const fixtures = JSON.parse(await readFile(new URL('../fixtures/feishu/directory.json', import.meta.url), 'utf8'));
 const byName = name => fixtures.find(item => item.name === name);
 
-test('组织树、人员及后续分页共用同一快照，账号与目录状态独立', async () => {
-  const { departments, people } = byName('visible');
-  const signal = new AbortController().signal;
-  const observed = [];
-  const queryOrder = [];
-  const request = systemAPI(async (path, options) => {
-    assert.equal(options.signal, signal);
-    const { pathname, searchParams } = new URL(path, 'https://relay.example.test');
-    if (pathname === base + '/accounts') return { items: [{ id:'account-example-1', active:true, source:'feishu' }] };
-    if (pathname === base + '/role-grants') return { items:[] };
-    const resource = pathname.split('/').at(-1);
-    const parent = searchParams.get('parent_id');
-    const offset = searchParams.get('offset');
-    queryOrder.push([resource, parent, offset, searchParams.get('snapshot_version')]);
-    if (resource === 'departments') {
-      if (parent) return { ...departments, items:[{ id:'od_ops', name:'运维', parent_id:'od_eng' }], total:1 };
-      return departments;
-    }
-    assert.equal(resource, 'people');
-    return { ...people, items:people.items.slice(Number(offset), Number(offset) + 1) };
+test('子节点分页固定快照，单次人员读取采用界面页大小', async () => {
+  const calls = [];
+  const request = systemAPI(async path => {
+    const url = new URL(path,'https://relay.example.test');
+    calls.push(url);
+    const offset = Number(url.searchParams.get('offset'));
+    if (url.pathname === base + '/user-page') return {...byName('visible').people,items:[],total:1001};
+    return {...byName('visible').departments,items:[{id:'child-' + offset,parent_id:'root',name:'分部'}],total:2};
   });
-  const result = await request(directory + '/view', { signal, onSnapshot: value => observed.push(value) });
-  assert.deepEqual(queryOrder, [
-    ['departments',null,'0',null], ['departments','od_eng','0','17'],
-    ...people.items.map((_, index) => ['people',null,String(index),'17'])
-  ]);
-  assert.equal(observed.length, 1);
-  assert.equal(result.snapshot.snapshotVersion, 17);
-  assert.equal(result.departments[1].parentId, 'od_eng');
-  assert.deepEqual(result.users[0].departmentIds, ['od_eng','od_ops']);
-  assert.equal(result.users[0].org, '研发；研发 / 运维');
-  assert.equal(result.users[0].status, 'active');
-  assert.equal(result.users[1].status, 'unprovisioned');
-  assert.equal(result.users[1].directoryStatus, 'unknown');
-  assert.equal(new Set(result.users.map(row => row.id)).size, result.users.length);
+  const nodes = await request(directory + '/children',{query:{parent_id:'root',snapshot_version:17}});
+  assert.deepEqual(nodes.map(item=>item.id),['child-0','child-1']);
+  await request(base + '/user-page',{query:{offset:50,limit:50,q:'研发',snapshot_version:17}});
+  assert.deepEqual(calls.map(url=>url.searchParams.get('snapshot_version')),['17','17','17']);
+  assert.deepEqual(calls.map(url=>url.searchParams.get('limit')),['200','200','50']);
+  assert.equal(calls[2].searchParams.get('offset'),'50');
 });
 
-test('同名人员保留各自标识，目录隐藏后已开通账号仍使用同一标识', async () => {
-  const visible = byName('visible');
-  const hidden = byName('scope-hidden');
-  const people = [
-    visible.people.items.find(person => person.account_id),
-    visible.people.items.find(person => person.account_status === 'unprovisioned')
-  ].map((person, index) => ({ ...person, name: '同名人员', person_key: 'person-' + index }));
-  const [registered] = people;
-  const request = fixture => systemAPI(async path => {
-    if (path.startsWith(base + '/accounts?')) {
-      return { items: [{ id: registered.account_id, name: registered.name, personKey: registered.person_key, active: true }] };
-    }
-    if (path.startsWith(directory + '/departments?')) return { ...fixture.departments, items: [], total: 0 };
-    if (path.startsWith(directory + '/people?')) return fixture.people;
-    return { items: [] };
-  })(directory + '/view');
-  const full = await request({ ...visible, people: { ...visible.people, items: people, total: people.length } });
-  assert.deepEqual(full.users.map(user => user.name), people.map(person => person.name));
-  assert.equal(new Set(full.users.map(user => user.personKey)).size, people.length);
-  assert.equal(full.users[0].personKey, registered.person_key);
-  const restricted = await request(hidden);
-  assert.equal(restricted.users.length, 1);
-  assert.equal(restricted.users[0].personKey, registered.person_key);
-  assert.deepEqual(restricted.users[0].departmentIds, []);
-  assert.equal(restricted.users[0].org, '');
-});
-
-test('原子目录读取拒绝失效或混版结果', async () => {
-  const visible = byName('visible');
-  const hidden = byName('scope-hidden');
-  for (const starting of [visible, hidden]) {
-    const request = systemAPI(async path => {
-      if (path.includes('/departments?')) return { ...starting.departments, total:0, items:[] };
-      if (path.includes('/people?')) {
-        if (starting === visible) throw Object.assign(new Error(), { status:409, data:{ error:'directory_snapshot_changed' } });
-        return visible.people;
-      }
-      return { items:[] };
-    });
-    await assert.rejects(request(directory + '/view'), isDirectoryConflict);
+test('人员页和组织树均拒绝混版响应', async () => {
+  const request = systemAPI(async () => byName('visible').departments);
+  for (const path of [directory + '/children',base + '/user-page']) {
+    await assert.rejects(request(path,{query:{snapshot_version:16}}),isDirectoryConflict);
+    await assert.rejects(request(path,{query:{snapshot_version:0}}),isDirectoryConflict);
   }
 });
 
@@ -134,23 +79,19 @@ test('角色目录沿用服务端标识和说明，默认人数取自启用账�
     { id:'system_operator', name:'系统运维者', scope:'system', default:false, grantable:true, permissions:['执行连接检测'] },
     { id:'project_admin', name:'项目管理员', scope:'project', default:false, grantable:true, permissions:[] }
   ];
-  const accounts = [{ id:'a', active:true, systemRoles:['system_user'] }, { id:'b', active:false, systemRoles:[] }];
   const grants = [{ id:'g', accountId:'b', role:'system_operator' }];
   const writes = [];
   const request = systemAPI(async (path, options) => {
     if (options.method === 'POST') return writes.push(options.body);
     if (path === base + '/roles') return { items:catalog };
-    if (path.includes('/accounts?')) return { items:accounts };
+    if (path === base + '/role-counts') return {system_user:1,system_operator:1};
     if (path.includes('/role-grants?')) return { items:grants };
     return { visible:false, snapshot_version:null, total:0, items:[] };
   });
   const roles = await request(base + '/roles');
   assert.deepEqual(roles, catalog.map((role,i) => ({ ...role, count:[1,1,null][i] })));
-  const {users} = await request(directory + '/view');
-  assert.deepEqual(users[0].roles, []);
-  assert.deepEqual(users[0].systemRoles, ['system_user']);
-  assert.deepEqual(users[1].systemRoles, []);
-  assert.equal(users[1].roles[0].id, 'g');
+  const accountGrants = await request(base + '/users/b/roles');
+  assert.equal(accountGrants[0].id,'g');
   const grant = role => request(base + '/users/a/roles', { method:'POST', body:{ role, project:'p' } });
   await assert.rejects(grant('system_user'));
   await grant('project_admin');

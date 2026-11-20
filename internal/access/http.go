@@ -28,10 +28,13 @@ func (s *Service) Register(mux *http.ServeMux, authenticate func(http.ResponseWr
 			}
 		})
 	}
-	// The directory view also reads accounts and grants during snapshot refresh.
+	register("GET /api/v1/system/user-page", identity.ValidateSession, s.handleUserPage)
+	register("GET /api/v1/system/accounts/{accountID}", identity.ValidateSession, s.handleAccount)
+	register("GET /api/v1/system/accounts/{accountID}/projects", identity.ValidateSession, s.handleAccountProjects)
 	register("GET /api/v1/system/accounts", identity.ValidateSession, s.handleAccounts)
 	register("POST /api/v1/system/accounts", identity.RefreshSessionWithCSRF, s.handlePreauthorizeAccount)
 	register("PATCH /api/v1/system/accounts/{accountID}", identity.RefreshSessionWithCSRF, s.handleAccountStatus)
+	register("GET /api/v1/system/role-counts", identity.ValidateSession, s.handleRoleCounts)
 	register("GET /api/v1/system/roles", identity.RefreshSession, s.handleRoles)
 	register("GET /api/v1/system/role-grants", identity.ValidateSession, s.handleRoleGrants)
 	register("POST /api/v1/system/role-grants", identity.RefreshSessionWithCSRF, s.handleCreateGrant)
@@ -180,9 +183,23 @@ func (s *Service) handleAuditEvents(w http.ResponseWriter, r *http.Request, acto
 		writeError(w, err)
 		return
 	}
+	query, err := parseAuditQuery(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	cursor, limit, err := readPage(r)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if query.extended {
+		page, err := s.queryAudit(r.Context(), query, cursor, limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
 		return
 	}
 	var before *int64
@@ -263,6 +280,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &tooLarge):
 		status, message = http.StatusRequestEntityTooLarge, "request body too large"
+	case errors.Is(err, errMembershipChanged):
+		status, message = http.StatusConflict, err.Error()
 	case errors.Is(err, errInvalidInput):
 		status, message = http.StatusBadRequest, "invalid request"
 	case errors.Is(err, ErrForbidden):

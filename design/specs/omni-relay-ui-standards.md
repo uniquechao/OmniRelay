@@ -113,3 +113,33 @@
 - 浅深色跟随主题变量。减少动态模式显示完整静态 Logo 和静态等待条；页面隐藏及区域离屏时暂停动画。等待状态不抢焦点，进度条有名称，百分比仅在可测量时提供。
 
 从“开发者 → 组件列表 → 加载状态”查看页面、区域和按钮效果。正式工作台通过 Go 内嵌相同组件资产。
+
+## React 共享组件
+
+业务页从 `frontend/src/ui/components` 导入下表中的导出。`WorkbenchLayout` 在工作区内提供 SVG 符号和全局消息播报区。独立页面在根部挂载一次 `VisualResources`。组件入口按原型顺序载入主题、工作台、控件、富文本和动效样式。品牌色、控件填充、文字、边框、焦点、风险、图表和头像取色统一使用 `--or-*` 语义变量。
+
+| 原型位置 | 组件导出 | 用法、视觉状态和交互 |
+| --- | --- | --- |
+| 列表页、组件列表 · 列表组件与行操作 | `DataList` | 传入稳定字符串 `id` 的记录、列、搜索函数和可选筛选。列用 `text` 显示文本，用 `render` 嵌入 React 元素，用 `sort` 开启排序。按行配置操作标签、可见条件与回调；确认和数据更新由业务页接管。搜索、空结果、分页、选中摘要、键盘调宽沿用原型。`onSelection` 返回记录 ID。 |
+| 表单页、组件列表 · 文本填写框 | `FormGrid`、`Field`、`TextField`、`TextArea`、`Button` | 字段使用可见标签；`Field` 的 `id` 对应子控件。输入组件透传原生表单属性，`error` 关联错误说明。网格随宽度由两列变一列。按钮支持普通、主操作、信息、成功、警告、危险、禁用和忙碌；提交按钮传 `type="submit"`。 |
+| 信息展示页 · 概要、项目说明 | `Panel`、`Facts`、`Multiline` | 按标题组织分段，键值对使用 `items`，值可放状态标签。多行正文保留换行，可键盘聚焦后滚动。 |
+| 组件列表 · 状态显示 | `Status` | 传 `tone` 和可读状态文字；圆点、底色与文字色随主题切换。禁用映射到中性待办色。 |
+| 表单页、组件列表 · 搜索下拉、人员选择 | `SearchSelect`、`PersonSelect` | `name` 写入表单，`choices` 提供稳定 ID、标签、可选组织说明和检索串，`multiple` 开启多选。方向键移动、Enter 选择、Escape 关闭，多选标签可移除。`onChange` 接收 ID 数组，表单使用逗号分隔的 ID；标识符应不含逗号。 |
+| 信息展示页、组件列表 · 人员单个展示 | `PersonCard` | 传入 `personKey`、姓名、组织和来源。头像按稳定标识分色，姓名和头像均能打开资料卡，Escape 关闭。 |
+| 表单页、组件列表 · 组织树和组织选择框 | `OrganizationTree`、`OrganizationPicker` | 提供含 `id/name/parentId` 的节点。树支持同级互斥、展开全部、收起全部；`selectBranches` 控制分支能否选中。选择器受控于 `value/onChange`，确认后回填 ID 和完整路径，清除后焦点回到选择按钮。 |
+| 表单页、组件列表 · 富文本填写框 | `RichText` | 传 `name/label` 和可选初始 Delta。Quill 工具栏保留标题、格式、列表、引用、代码块和链接；`FormData` 读取 Delta JSON，`onChange` 接收 Delta 对象。内容资源按需从同源加载，失败可重试。 |
+| 组件列表 · Markdown 显示框 | `Markdown` | `source` 传原文，支持渲染与原文切换、围栏代码高亮和键盘滚动。沿用原型禁用内嵌 HTML 的解析器。 |
+| 表单页、组件列表 · 日期选择和日期滚动 | `DateField`、`DateStrip` | 单日填写使用原生日期控件。滚动控件由 `value/onChange` 管理有效的 YYYY-MM-DD 字符串，`mode` 选择按日或 ISO 周移动。周一为周起点，读屏播报新日期范围。 |
+| 组件列表 · 对话框、右侧抽屉 | `Dialog`、`Drawer` | 按打开状态挂载，并在 `onClose` 卸载。传标题、内容、变体和确认文案；`onSubmit` 可返回字段与错误。抽屉使用 `width="normal"` 或 `wide`，对应 480 或 720 像素，窄屏占满可用宽度。`isDirty` 启用继续编辑、不保存、保存并关闭；Escape 和按钮遵循同一关闭路径。 |
+| 组件列表 · 加载状态；登录品牌区 | `Loading`、`Button`、`BrandMotion` | 页面、局部、按钮对应 `page/compact/inline`。仅有真实百分比时传 `progress`。按钮传 `busy` 防止重复点击。登录品牌区复用画布、双向波纹和 Logo；减少动态效果时显示静态帧，隐藏或卸载时停止绘制。 |
+| 组件列表 · 浮动提示；全局图标 | `VisualResources`、`Icon`、`notify` | 图标通过符号名复用；交互控件由调用方提供可访问名称。提示用 `notify(level,message)`，四级反馈、最多三条、默认六秒，悬停或聚焦时暂停，可手动关闭。 |
+| 工作台布局说明 | `WorkbenchLayout`、`PageHeading`、`Breadcrumbs`、`Tabs` | 将导航、品牌、账号、面包屑、移动导航和顶栏操作作为插槽传入。侧栏 166/52 像素，支持拖动、键盘和保存偏好；窄屏显示移动导航。`layout="list"` 配合直接子级列表使分页位于表格下方。面包屑末级标记当前位置；受控页签支持方向键、Home 和 End。 |
+| 色彩系统 · 交互色板 | `ThemeToggle`、`ColorPalette`、`ColorSwatch` | 主题按钮同步图标、可访问名称、本地偏好和原型过渡。色板覆盖品牌色阶、界面、交互、侧栏、状态、数据和头像色，支持复制当前主题色值、手动复制回退和下载 CSS。单独色块接收标签和 CSS 变量名称数组。 |
+
+列表状态限于组件实例。会话或资源身份切换时用对应身份设置 React `key`，使选择、编辑和草稿随之重置。列表列定义、可选项和编辑器初值宜保持引用稳定；`initial` 用于初始化，用户编辑后的值从回调或表单读取。组织选择器、页签和日期滚动由页面持有当前值。接入示例见[可运行组件样例](../../tests/fixtures/react-components/sample.tsx)，逐项验证见[共享组件验收报告](../engineering/react-components-acceptance.md)。
+
+### 工作台路由与共享组件接线
+
+菜单、页面标题、面包屑、移动选项和登录返回目标统一读取 `frontend/src/routes/targets.ts`。路由项提供正式路径、历史别名、分组、标题与能力键；资源页可通过 `parse` 返回规范路径和上下文标题。菜单显示使用会话中的导航及分项能力。资源标识的匹配可复用 `matchPattern`，例如 `/#/sample/projects/:project/files/:file`。测试注册表及样例见 [workbench-routes.test.mjs](../../tests/contract/workbench-routes.test.mjs)。资源页面上线时将正式定义和跨端路径样例一起接入。
+
+登录使用 `BrandMotion`、`ThemeToggle`、`TextField` 和 `Button`；账号资料与改密使用 `Dialog`、`Facts` 和表单字段；工作台使用 `WorkbenchLayout`、`Breadcrumbs`、`Icon`、`Panel`、`Loading` 与全局提示。既有业务页通过专属挂载节点和取消信号接入，草稿视图提供 `confirmNavigation` 和 `hasDraft`，并在组件卸载时释放刷新监听器。Go 在 OAuth 回调时重新检查页面能力，对具体项目、会话使用对应服务的读取权限。

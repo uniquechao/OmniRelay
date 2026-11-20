@@ -1,0 +1,144 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {chromium} from 'playwright-core';
+
+const origin=process.env.OMNIRELAY_BROWSER_ORIGIN;
+const endpoint='/api/v1/system/audit-events';
+test('审计页使用真实会话、服务端游标和构建资源', {skip:!origin}, async t=>{
+  const browser=await chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1366,height:900}});
+  page.setDefaultTimeout(8000);
+  const requests=[],errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  page.on('request',request=>requests.push(new URL(request.url())));
+  const list=page.getByRole('table',{name:'审计日志'});
+  const search=page.getByRole('searchbox');
+  const total=page.locator('[data-total]');
+  const rows=list.locator('tbody tr');
+  const pageLabel=page.locator('[data-page]');
+  const details=page.getByRole('dialog',{name:'审计详情'});
+  const latestQuery=()=>requests.filter(url=>url.pathname===endpoint).at(-1).searchParams;
+  const waitTotal=count=>total.getByText('共 '+count+' 条',{exact:true}).waitFor();
+  async function changeAccount(username){
+    const response=await page.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username,password:'fixture-password-only'}});
+    assert.equal(response.status(),204);
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.locator('.rail .account-trigger-name').filter({hasText:username}).waitFor({state:'attached'});
+  }
+  await page.goto(origin+'/#/system/audit');
+  await page.locator('#login-username').fill('admin');
+  await page.locator('#login-password').fill('fixture-password-only');
+  const first=page.waitForResponse(res=>new URL(res.url()).pathname===endpoint);
+  await page.locator('#password-login button[type=submit]').click();
+  await waitTotal(10001);
+  assert.equal(new URL(page.url()).hash,'#/system/audit');
+  assert.ok(requests.some(url=>url.pathname.startsWith('/assets/') && url.pathname.endsWith('.js')));
+  assert.equal(requests.filter(url=>url.pathname===endpoint).length,1);
+  const sessions=requests.filter(url=>url.pathname==='/api/v1/me').length;
+  assert.ok(sessions>0);
+  t.diagnostic('首屏审计请求 1 次，会话请求 '+sessions+' 次，审计响应正文 '+(await (await first).body()).length+' 字节。');
+  assert.equal(await rows.count(),10);
+  const visibleColumns=()=>list.locator('th[data-column]:visible').evaluateAll(nodes=>nodes.map(node=>node.dataset.column));
+  assert.deepEqual(await visibleColumns(),['time','action','actor','target','result','actions']);
+  await list.locator('[data-column=time] [data-column-resizer]').press('ArrowRight');
+  assert.match(await page.locator('[data-column-notice]').textContent(),/列宽.*像素/);
+  await rows.first().getByRole('button').click();
+  await details.getByText('变更摘要',{exact:true}).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByLabel('每页条数').selectOption('50');
+  for(let n=1;n<201;n++){
+    await pageLabel.getByText('第 '+n+' / 201 页',{exact:true}).waitFor();
+    await page.locator('[data-next]').evaluate(button=>button.click());
+  }
+  await pageLabel.getByText('第 201 / 201 页',{exact:true}).waitFor();
+  assert.equal(await rows.count(),1);
+  await rows.getByText('样例-1',{exact:true}).waitFor();
+  assert.ok(latestQuery().get('cursor'));
+  assert.equal(await list.getAttribute('data-sized-columns'),'');
+  assert.ok(await page.locator('[data-next]').isDisabled());
+  await page.locator('[data-sort=time]').click();
+  await pageLabel.getByText('第 1 / 201 页',{exact:true}).waitFor();
+  assert.equal(latestQuery().has('cursor'),false);
+  assert.equal(await list.locator('[data-column=time]').getAttribute('aria-sort'),'ascending');
+  await page.locator('[data-next]').click();
+  await pageLabel.getByText('第 2 / 201 页',{exact:true}).waitFor();
+  await page.locator('[data-more]').click();
+  await page.locator('[data-filter=kind]').selectOption('account');
+  await page.keyboard.press('Escape');
+  await pageLabel.getByText(/^第 1 /).waitFor();
+  assert.equal(latestQuery().has('cursor'),false);
+
+  // 保留真实 Go 响应，直到新的操作已完成再交付旧响应。
+  async function hold(matches,act){
+    const started=Promise.withResolvers(),release=Promise.withResolvers(),done=Promise.withResolvers();
+    const pattern=url=>url.pathname===endpoint && matches(url.searchParams);
+    await page.route(pattern,async route=>{
+      const response=await route.fetch();
+      started.resolve();
+      await release.promise;
+      try {await route.fulfill({response});} finally {done.resolve();}
+    },{times:1});
+    await act();
+    await started.promise;
+    return async()=>{release.resolve();await done.promise;};
+  }
+  const oldPage=await hold(q=>q.has('cursor'),()=>page.locator('[data-next]').click());
+  await search.fill('样例-1234');
+  await waitTotal(1);
+  await oldPage();
+  const oldSearch=await hold(q=>q.get('q')==='样例-8888',()=>search.fill('样例-8888'));
+  await search.fill('样例-7654');
+  await waitTotal(1);
+  await oldSearch();
+  await rows.getByText('样例-7654',{exact:true}).waitFor();
+  await page.route(url=>url.pathname===endpoint,route=>route.fulfill({status:503,body:'{}'}),{times:1});
+  await search.fill('样例-4567');
+  await page.getByRole('button',{name:'重新读取'}).click();
+  await rows.getByText('样例-4567',{exact:true}).waitFor();
+
+  const leaving=await hold(q=>q.get('q')==='样例-3210',()=>search.fill('样例-3210'));
+  await page.locator('[data-nav=workbench]').click();
+  await page.getByRole('heading',{name:'工作台总览'}).waitFor();
+  await leaving();
+  assert.equal(await list.count(),0);
+  await page.evaluate(()=>{location.hash='#/system/audit';});
+  await waitTotal(10001);
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.getByRole('button',{name:'切换深色主题'}).click();
+  assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
+  assert.deepEqual(await visibleColumns(),['time','action','result','actions']);
+  await page.locator('[data-sort=time]').click();
+  await page.locator('[data-column=time][aria-sort=ascending]').waitFor();
+  await page.locator('[data-next]').click();
+  await pageLabel.getByText('第 2 / 1001 页',{exact:true}).waitFor();
+  await page.locator('[data-more]').click();
+  await page.locator('[data-filter=result]').selectOption('success');
+  await page.keyboard.press('Escape');
+  await search.fill('样例-1234');
+  await waitTotal(1);
+  const button=rows.getByRole('button',{name:/查看详情/});
+  await button.click();
+  await details.getByText('样例-1234',{exact:true}).waitFor();
+  await page.keyboard.press('Escape');
+  await details.waitFor({state:'hidden'});
+  assert.ok(await button.evaluate(el=>el===document.activeElement));
+  await button.click();
+  await changeAccount('auditor');
+  await waitTotal(10002);
+  assert.equal(await details.count(),0);
+  assert.equal(await search.inputValue(),'');
+  assert.equal(await page.locator('[data-filter=result]').inputValue(),'');
+  assert.equal(latestQuery().has('cursor'),false);
+  await pageLabel.getByText('第 1 / 1001 页').waitFor();
+  assert.equal(await rows.count(),10);
+  await rows.first().getByRole('button').click();
+  await details.getByText('登录',{exact:true}).waitFor();
+  await page.keyboard.press('Escape');
+  await changeAccount('historical');
+  await page.getByRole('heading',{name:'工作台总览'}).waitFor();
+  assert.equal(await list.count(),0);
+  assert.equal((await page.request.get(origin+endpoint)).status(),403);
+  assert.deepEqual(errors,[]);
+});

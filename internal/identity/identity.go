@@ -58,10 +58,11 @@ type Config struct {
 	// Audit, when configured, records a successful login or logout in its transaction.
 	Audit func(context.Context, pgx.Tx, Principal, string) error
 	// Transport is optional. Feishu endpoints remain fixed.
-	Transport  http.RoundTripper
-	Access     func(context.Context, Principal) (WorkbenchAccess, error)
-	SessionTTL time.Duration
-	IdleTTL    time.Duration
+	Transport    http.RoundTripper
+	Access       func(context.Context, Principal) (WorkbenchAccess, error)
+	ResourceRead func(ctx context.Context, principal Principal, projectID, chatID string) (bool, error)
+	SessionTTL   time.Duration
+	IdleTTL      time.Duration
 	// OAuthProxyToken authenticates the TLS upstream that supplies the OAuth source IP.
 	OAuthProxyToken string
 }
@@ -241,11 +242,9 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 			redirectLoginError(w, r, "denied")
 			return
 		}
-		if err != nil || !allowed.canReturnTo(target) {
-			target = "/"
-			if err == nil && allowed.canReturnTo(allowed.DefaultRoute) {
-				target = allowed.DefaultRoute
-			}
+		target = "/"
+		if err == nil {
+			target = s.returnForAccess(r.Context(), principal, allowed, returnPath)
 		}
 	}
 	setCookie(w, sessionCookie, token, int(s.cfg.SessionTTL.Seconds()))
@@ -355,7 +354,36 @@ func (s *Service) me(w http.ResponseWriter, r *http.Request) {
 
 const botChatsPath = "/#/feishu/bot-chats"
 
-var botChatsReturn = regexp.MustCompile(`^/#/(feishu/)?bot-chats(/[A-Za-z0-9_-]{1,160}){0,2}$`)
+var chatIdentifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,160}$`)
+
+func matchPathPattern(pattern, path string, valid func(string) bool) bool {
+	segments, values := strings.Split(pattern, "/"), strings.Split(path, "/")
+	if len(segments) != len(values) {
+		return false
+	}
+	for i, seg := range segments {
+		if strings.HasPrefix(seg, ":") {
+			if !valid(values[i]) {
+				return false
+			}
+		} else if seg != values[i] {
+			return false
+		}
+	}
+	return true
+}
+func chatTarget(raw string) (string, bool) {
+	path := raw
+	if raw == "/#/bot-chats" || strings.HasPrefix(raw, "/#/bot-chats/") {
+		path = botChatsPath + strings.TrimPrefix(raw, "/#/bot-chats")
+	}
+	for _, suffix := range []string{"", "/:chat", "/:chat/:message"} {
+		if matchPathPattern(botChatsPath+suffix, path, chatIdentifier.MatchString) {
+			return path, true
+		}
+	}
+	return "", false
+}
 
 // Project return routes stay in the workbench fragment and are authorized again on read.
 const projectSegment = `[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}`
@@ -368,11 +396,14 @@ func ValidProjectID(id string) bool { return projectIDPattern.MatchString(id) }
 var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
 
 func (a WorkbenchAccess) canReturnTo(path string) bool {
-	if projectReturn.MatchString(path) {
+	if _, ok := projectTarget(path); ok {
 		return a.Navigation["workbench"]
 	}
-	if path == "/#/feishu/drive" || botChatsReturn.MatchString(path) {
+	if _, ok := chatTarget(path); path == "/#/feishu/drive" || ok {
 		return a.Navigation["bot_chats"]
+	}
+	if strings.HasPrefix(path, "/#/system/") && !a.Navigation["system"] {
+		return false
 	}
 	switch path {
 	case "/#/workbench":
@@ -405,12 +436,105 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func localReturnPath(raw string) (string, error) {
-	if len(raw) <= 4096 && projectReturn.MatchString(raw) {
-		return raw, nil
+// 返回时重新读取权限，浏览器保存的目标和默认入口都经过同一检查。
+func (s *Service) returnForAccess(ctx context.Context, principal Principal, access WorkbenchAccess, raw string) string {
+	for _, candidate := range []string{raw, access.DefaultRoute} {
+		path, err := localReturnPath(candidate)
+		if err != nil || !access.canReturnTo(path) {
+			continue
+		}
+		base, _, _ := strings.Cut(path, "?")
+		parts := strings.Split(base, "/")
+		var project, chat string
+		switch {
+		case strings.HasPrefix(base, "/#/projects/"):
+			project = parts[3]
+			if len(parts) > 5 && parts[4] == "chats" {
+				chat = parts[5]
+			}
+		case strings.HasPrefix(base, botChatsPath+"/"):
+			chat = parts[4]
+		}
+		if project != "" || chat != "" {
+			if s.cfg.ResourceRead == nil {
+				continue
+			}
+			allowed, err := s.cfg.ResourceRead(ctx, principal, project, chat)
+			if err != nil || !allowed {
+				continue
+			}
+		}
+		return path
 	}
-	if botChatsReturn.MatchString(raw) {
-		return botChatsPath + strings.TrimPrefix(strings.TrimPrefix(raw, "/#/feishu/bot-chats"), "/#/bot-chats"), nil
+	return "/"
+}
+
+func projectTarget(raw string) (string, bool) {
+	if !projectReturn.MatchString(raw) {
+		return "", false
+	}
+	base, query, hasQuery := strings.Cut(raw, "?")
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return "", false
+	}
+	parts := strings.Split(base, "/")
+	if len(parts) == 4 {
+		base += "/overview"
+	}
+	if len(parts) >= 5 {
+		tab, tail := parts[4], parts[5:]
+		switch tab {
+		case "brief":
+			if len(tail) > 1 {
+				return "", false
+			}
+			parts[4] = "reports/brief"
+			return strings.Join(parts, "/"), true
+		case "reports":
+			if len(tail) > 0 && (tail[0] != "brief" || len(tail) > 2) {
+				return "", false
+			}
+		case "chats":
+			if len(tail) > 2 {
+				return "", false
+			}
+		case "tasks":
+			if len(tail) > 1 {
+				if len(tail) != 3 || tail[0] != "source" {
+					return "", false
+				}
+				switch tail[1] {
+				case "minutes", "document", "sheets", "bitable", "file":
+				case "message":
+					if !ValidProjectID(values.Get("chat_id")) {
+						return "", false
+					}
+				default:
+					return "", false
+				}
+			}
+		default:
+			if len(tail) > 0 {
+				return "", false
+			}
+		}
+	}
+	if hasQuery {
+		base += "?" + query
+	}
+	return base, true
+}
+
+func localReturnPath(raw string) (string, error) {
+	if len(raw) > 4096 {
+		return "", errors.New("invalid workbench return path")
+	}
+	if project, ok := projectTarget(raw); ok {
+		return project, nil
+	}
+	if canonical, ok := chatTarget(raw); ok {
+		return canonical, nil
 	}
 	switch raw {
 	case "":

@@ -4,7 +4,7 @@ import '../../../design/prototype/omni-relay-colors.css';
 import './entry.css';
 
 export function Entry({ title, children }: { title: string; children: ReactNode }) {
-  return <main>
+  return <main className="session-entry">
     <img src={logo} width="195" height="65" alt="OmniRelay" />
     <h1>{title}</h1>
     {children}

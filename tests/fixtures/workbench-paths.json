@@ -1,0 +1,40 @@
+{
+  "access": {
+    "普通用户": {"navigation":{"workbench":true,"bot_chats":true}},
+    "管理员": {"navigation":{"system":true,"workbench":true,"bot_chats":true},"admin":{"users":true,"roles":true,"audit":true,"settings":true,"feishu_bot":true}},
+    "运维": {"navigation":{"system":true},"admin":{"users":true,"roles":true,"settings":true,"feishu_bot":true,"audit":true}},
+    "审计": {"navigation":{"system":true,"workbench":true},"admin":{"audit":true}},
+    "无页面": {"admin":{"feishu_bot":true}}
+  },
+  "cases": [
+    ["/#/workbench","/#/workbench",["普通用户","管理员","审计"]],
+    ["/#/system/users","/#/system/users",["管理员","运维"]],
+    ["/#/system/roles","/#/system/roles",["管理员","运维"]],
+    ["/#/system/audit","/#/system/audit",["管理员","运维","审计"]],
+    ["/#/system/settings","/#/system/settings",["管理员","运维"]],
+    ["/#/settings","/#/system/settings",["管理员","运维"]],
+    ["/#/system/feishu-bot","/#/system/feishu-bot",["管理员","运维"]],
+    ["/#/system/bot","/#/system/feishu-bot",["管理员","运维"]],
+    ["/#/bot-chats/oc_1/om_1","/#/feishu/bot-chats/oc_1/om_1",["普通用户","管理员"]],
+    ["/#/feishu/drive","/#/feishu/drive",["普通用户","管理员"]],
+    ["/#/projects/p1","/#/projects/p1/overview",["普通用户","管理员","审计"]],
+    ["/#/projects/p1/brief/r1","/#/projects/p1/reports/brief/r1",["普通用户","管理员","审计"]],
+    ["/#/projects/p1/tasks/source/message/m1?chat_id=c1","/#/projects/p1/tasks/source/message/m1?chat_id=c1",["普通用户","管理员","审计"]],
+    ["/#/projects/p1/tasks/source/message/m1","",[]],
+    ["/#/projects/p1/tasks/source/message/m1?chat_id=c1&q=%","",[]],
+    ["/#/projects?q=%", "", []],
+    ["/#/projects/p1/members/missing","",[]],
+    ["/#/projects/p1/tasks/source/unknown/id","",[]],
+    ["/#/system/unknown","",[]],["/#/login","",[]],
+    ["/#/settings?return_to=https://example.invalid","",[]],
+    ["https://example.invalid/#/workbench","",[]],["//example.invalid","",[]],
+    ["/#/system/../settings","",[]],["/#/bot-chats/c%2Fm","",[]]
+  ],
+  "patterns":[
+    ["/#/sample/projects/:project","/#/sample/projects/p-1",true],
+    ["/#/sample/projects/:project/files/:file","/#/sample/projects/p-1/files/f_2",true],
+    ["/#/sample/projects/:project/messages/:message","/#/sample/projects/p-1/messages/m.3",true],
+    ["/#/sample/projects/:project/files/:file","/#/sample/projects/p/files/..",false],
+    ["/#/sample/projects/:project","/#/sample/projects/p/extra",false]
+  ]
+}

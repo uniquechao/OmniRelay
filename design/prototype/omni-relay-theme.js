@@ -132,5 +132,5 @@ window.OmniRelayTheme = (() => {
   });
 
   document.addEventListener('DOMContentLoaded',syncControls);
-  return { href:decorate, eventType };
+  return { href:decorate, eventType, syncControls };
 })();

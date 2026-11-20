@@ -1,16 +1,16 @@
-const connectionStates = new Map([
+export const connectionStates = new Map([
   ['disabled', ['pending', '已停用']],
   ['connecting', ['progress', '连接中']],
   ['connected', ['success', '在线']],
   ['reconnecting', ['progress', '重连中']],
   ['unavailable', ['warning', '连接不可用']]
 ]);
-const checkStates = new Map([
+export const checkStates = new Map([
   ['passed', ['success', '通过']],
   ['failed', ['danger', '失败']],
   ['skipped', ['pending', '未执行']]
 ]);
-const checkErrors = new Map([
+export const checkErrors = new Map([
   ['credentials_missing', '部署尚未注入飞书应用凭据。'],
   ['credentials_rejected', '飞书拒绝了应用凭据，请核对部署配置。'],
   ['bot_unavailable', '无法读取 Bot 信息，请检查飞书应用的机器人能力。'],
@@ -21,7 +21,7 @@ const dateTime = new Intl.DateTimeFormat('zh-CN', {
 });
 const inProgress = task => task?.state === 'queued' || task?.state === 'running';
 
-function time(value) {
+export function time(value) {
   const timestamp = value ? Date.parse(value) : NaN;
   return Number.isFinite(timestamp) ? dateTime.format(timestamp) + ' UTC' : '';
 }

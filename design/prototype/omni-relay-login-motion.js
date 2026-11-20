@@ -1,5 +1,4 @@
-(() => {
-  const stage = document.querySelector('.login-brand');
+window.OmniRelayLoginMotion = function mountLoginMotion(stage) {
   const orbit = stage.querySelector('.login-orbit');
   const canvas = stage.querySelector('.login-motion');
   const context = canvas.getContext('2d');
@@ -128,7 +127,18 @@
     if (!reducedMotion.matches) frame = requestAnimationFrame(tick);
   }
 
-  new ResizeObserver(syncMotion).observe(stage);
+  const observer = new ResizeObserver(syncMotion);
+  observer.observe(stage);
   document.addEventListener('visibilitychange',syncMotion);
   reducedMotion.addEventListener('change',syncMotion);
-})();
+  return () => {
+    observer.disconnect();
+    cancelAnimationFrame(frame);
+    document.removeEventListener('visibilitychange',syncMotion);
+    reducedMotion.removeEventListener('change',syncMotion);
+  };
+};
+if (document.currentScript) {
+  const stage = document.querySelector('.login-brand');
+  if (stage) window.OmniRelayLoginMotion(stage);
+}

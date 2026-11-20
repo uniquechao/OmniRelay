@@ -28,7 +28,7 @@ async function collectPages(api, path, { signal } = {}) {
   do {
     const query = new URLSearchParams({ limit: '100' });
     if (cursor) query.set('cursor', cursor);
-    const page = await api(path + '?' + query, { signal });
+    const page = await api(path + (path.includes('?') ? '&' : '?') + query, { signal });
     if (!Array.isArray(page?.items)) throw new Error('服务返回了无效的列表。');
     records.push(...page.items);
     cursor = page.nextCursor;
@@ -52,48 +52,6 @@ function groupGrants(grants) {
   return byAccount;
 }
 
-function directoryFields(person, account) {
-  const departments = person?.departments ?? [];
-  return {
-    personKey: person?.person_key ?? account?.personKey,
-    departmentIds: [...new Set(departments.map(item => item.id))],
-    org: departments.map(item => item.path.join(' / ')).join('；'),
-    directoryStatus: person?.directory_status ?? account?.directoryStatus,
-    resignedAt: account?.resignedAt,
-    disableProtected: account?.disableProtected === true
-  };
-}
-
-function directoryUsers(accounts, grants, people) {
-  const directoryByAccount = new Map(people.filter(person => person.account_id).map(person => [person.account_id, person]));
-  const accountGrants = groupGrants(grants);
-
-  const registered = accounts.map(account => {
-    const person = directoryByAccount.get(account.id);
-    return {
-      id: account.id,
-      name: person?.name || account.name || account.id,
-      source: account.source === 'local' ? '本地账号' : '飞书',
-      status: account.active ? 'active' : 'disabled',
-      systemRoles: account.active ? account.systemRoles ?? [] : [],
-      roles: accountGrants.get(account.id) ?? [],
-      projects: [],
-      ...directoryFields(person, account)
-    };
-  });
-  const unprovisioned = people.filter(person => person.account_status === 'unprovisioned')
-    .map(person => ({
-      id: directoryPrefix + person.open_id,
-      name: person.name,
-      source: '飞书',
-      status: 'unprovisioned',
-      roles: [],
-      projects: [],
-      ...directoryFields(person)
-    }));
-  return [...registered, ...unprovisioned];
-}
-
 async function roleCatalog(api, options) {
   const response = await api(system + '/roles', options);
   if (!Array.isArray(response?.items)) throw new Error('角色目录响应无效。');
@@ -101,46 +59,24 @@ async function roleCatalog(api, options) {
 }
 
 async function listRoles(api, options) {
-  const [catalog, grants, accounts] = await Promise.all([
-    roleCatalog(api, options),
-    collectPages(api, grantsPath, options),
-    collectPages(api, accountPath, options)
-  ]);
-  const counts = new Map();
-  for (const grant of grants) counts.set(grant.role, (counts.get(grant.role) ?? 0) + 1);
-  return catalog.map(role => ({
-    ...role,
-    count: role.default ? accounts.filter(account => account.active && account.systemRoles?.includes(role.id)).length
-      : role.scope === 'system' ? counts.get(role.id) ?? 0 : null
-  }));
+  const [catalog, counts] = await Promise.all([roleCatalog(api,options),api(system + '/role-counts',options)]);
+  return catalog.map(role => ({...role,count:counts[role.id] ?? (role.scope === 'system' ? 0 : null)}));
 }
 
-const auditActions = new Map([
-  ['identity.login', '登录'], ['identity.logout', '退出'], ['identity.password_change', '修改密码'],
-  ['account.preauthorize', '开通飞书账号'], ['account.enable', '启用账号'], ['account.disable', '停用账号'],
-  ['role.bootstrap', '初始化管理员'], ['role.grant', '授予角色'], ['role.revoke', '撤销角色'],
-  ['directory.sync', '同步组织和用户'], ['directory.resign', '确认人员离职'],
-  ['account.disable_protected', '保留最后一位管理员账号']
-]);
-const eventKinds = new Map([
-  ['identity', 'login'], ['account', 'account'], ['role', 'role'], ['directory', 'directory']
-]);
-
-async function listAudit(api, options) {
-  const events = await collectPages(api, system + '/audit-events', options);
-  return events.map(event => ({
-    id: String(event.id),
-    time: event.createdAt,
-    actor: event.directorySyncRunId ? '系统（飞书通讯录同步）' : event.actorAccountId,
-    directorySyncRunId: event.directorySyncRunId,
-    kind: eventKinds.get(event.action.split('.')[0]) ?? 'config',
-    action: auditActions.get(event.action) ?? event.action,
-    target: event.resourceId,
-    result: event.result,
-    before: '',
-    after: '',
-    source: event.correlationId
-  }));
+export async function listAudit(api, query, signal) {
+  const params = new URLSearchParams({ sort: 'time', direction: 'desc', ...query });
+  const page = await api(system + '/audit-events?' + params, { signal });
+  if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) || page.total < 0) {
+    throw new Error('审计分页响应无效。');
+  }
+  return {
+    ...page,
+    items: page.items.map(event => ({
+      id: event.recordId, time: event.createdAt, actor: event.actorLabel,
+      directorySyncRunId: event.directorySyncRunId, kind: event.kind, action: event.actionLabel,
+      target: event.resourceId, result: event.result, before: '', after: '', source: event.correlationId
+    }))
+  };
 }
 
 function directoryStatus(response) {
@@ -159,59 +95,23 @@ const snapshotChanged = () => Object.assign(new Error('组织目录已更新，�
 
 export const isDirectoryConflict = error => error.status === 409 && error.data?.error === 'directory_snapshot_changed';
 
-async function readDirectory(api, { signal, onSnapshot } = {}) {
-  let snapshot;
-  async function items(resource, params = {}) {
-    const records = [];
-    const limit = 200;
-    let offset = 0;
-    for (;;) {
-      const query = new URLSearchParams({ ...params, limit, offset });
-      if (snapshot?.visible) query.set('snapshot_version', snapshot.snapshotVersion);
-      const page = await api(directory + '/' + resource + '?' + query, { signal });
-      if (signal?.aborted) throw signal.reason;
-      if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) ||
-          typeof page.visible !== 'boolean' ||
-          (page.visible ? !Number.isSafeInteger(page.snapshot_version) || page.snapshot_version <= 0 : page.snapshot_version !== null)) {
-        throw new Error('飞书目录响应无效。');
-      }
-      const status = directoryStatus(page);
-      if (!snapshot) {
-        snapshot = status;
-        onSnapshot?.(status);
-      }
-      if (snapshot.snapshotVersion !== status.snapshotVersion) throw snapshotChanged();
-      records.push(...page.items);
-      offset += page.items.length;
-      if (offset >= page.total) return records;
-      if (!page.items.length || offset > 1000000) throw new Error('无法读取完整的飞书目录。');
-    }
-  }
-  const queue = await items('departments');
-  const departments = [];
-  const visited = new Set();
-  for (const item of queue) {
-    if (visited.has(item.id)) throw new Error('飞书组织结构数据无效。');
-    visited.add(item.id);
-    departments.push({ id: item.id, name: item.name, parentId: item.parent_id });
-    if (item.has_children) {
-      for (const child of await items('departments', { parent_id: item.id })) queue.push(child);
-    }
-  }
-  const people = await items('people');
-  return { snapshot, departments, people };
+async function directoryPage(api, path, query, signal) {
+  const page = await api(path + '?' + new URLSearchParams(query), { signal });
+  if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) || page.total < 0 ||
+      typeof page.visible !== 'boolean' || (page.visible ? !Number.isSafeInteger(page.snapshot_version) ||
+      page.snapshot_version < 1 : page.snapshot_version !== null)) throw new Error('目录分页响应无效。');
+  if (query.snapshot_version !== undefined && Number(query.snapshot_version) !== (page.snapshot_version ?? 0)) throw snapshotChanged();
+  return page;
 }
 
-async function directoryView(api, options) {
-  // Collect the tree and people together before publishing either to the list.
-  const [view, accounts, grants] = await Promise.all([
-    readDirectory(api, options),
-    collectPages(api, accountPath, options),
-    collectPages(api, grantsPath, options)
-  ]);
-  return {
-    snapshot: view.snapshot, departments: view.departments, users: directoryUsers(accounts, grants, view.people)
-  };
+async function departmentChildren(api, query, signal) {
+  const items = [];
+  for (;;) {
+    const page = await directoryPage(api, directory + '/departments', { ...query, limit:200, offset:items.length }, signal);
+    items.push(...page.items.map(item => ({id:item.id, parentId:item.parent_id, name:item.name, hasChildren:item.has_children})));
+    if (items.length >= page.total) return items;
+    if (!page.items.length) throw new Error('组织节点分页响应无效。');
+  }
 }
 
 function syncRun(run) {
@@ -250,6 +150,7 @@ async function startSync(api, { signal } = {}) {
 }
 
 const writeErrors = new Map([
+  ['membership_changed', '项目会籍已变更，请重新打开用户详情后选择项目。'],
   ['permission denied', '当前账号没有执行此操作的权限。'],
   ['resource not found', '记录不可用，请刷新后重试。'],
   ['at least one active system administrator is required', '系统必须保留至少一位已启用的管理员。'],
@@ -285,19 +186,27 @@ function provisionAccount(api, segment, signal) {
 // Normalizes the admin view's data at the HTTP boundary. Navigation and client
 // filtering never grant capabilities, which remain controlled by the API.
 export function systemAPI(api) {
-  return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion } = {}) => {
+  let definitions;
+  return async (path, { method = 'GET', body, signal, snapshotVersion, query } = {}) => {
     if (method === 'GET') {
       switch (path) {
         case system + '/connections': return api(path, { signal });
-        case system + '/role-catalog': return roleCatalog(api, { signal });
+        case system + '/role-catalog': return definitions = await roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
-        case system + '/audit': return listAudit(api, { signal });
-        case directory + '/view': return directoryView(api, { signal, onSnapshot });
+        case system + '/audit': return listAudit(api, query, signal);
+        case system + '/user-page': return directoryPage(api, path, query, signal);
+        case directory + '/children': return departmentChildren(api, query, signal);
         case directory + '/sync-summary': return getSyncSummary(api, snapshotVersion, signal);
         case directory + '/sync': return getSync(api, { signal });
       }
     }
     if (method === 'POST' && path === directory + '/sync') return startSync(api, { signal });
+    const projectRoute = path.match(/^\/api\/v1\/system\/users\/([^/]+)\/projects$/);
+    if (method === 'GET' && projectRoute) {
+      const result = await api(accountPath + '/' + encodeURIComponent(accountID(projectRoute[1])) + '/projects', {signal});
+      if (!Array.isArray(result?.items) || typeof result.canDelegate !== 'boolean') throw new Error('项目候选响应无效。');
+      return result;
+    }
     const provisionRoute = path.match(/^\/api\/v1\/system\/users\/([^/]+)\/provision$/);
     if (method === 'POST' && provisionRoute) return provisionAccount(api, provisionRoute[1], signal);
 
@@ -306,17 +215,22 @@ export function systemAPI(api) {
 
     const [, account, grantRoute, grant] = accountRoute;
     const id = accountID(account);
+    if (method === 'GET' && !grantRoute) return api(accountPath + '/' + encodeURIComponent(id), {signal});
+    if (method === 'GET' && grantRoute && !grant) {
+      const grants = await collectPages(api, grantsPath + '?accountId=' + encodeURIComponent(id), {signal});
+      return groupGrants(grants).get(id) ?? [];
+    }
     if (method === 'PATCH' && !grantRoute && ['active', 'disabled'].includes(body?.status)) {
       return write(api, accountPath + '/' + encodeURIComponent(id), {
         method, signal, body: { active: body.status === 'active' }
       });
     }
     if (method === 'POST' && grantRoute && !grant) {
-      const roles = await roleCatalog(api, { signal });
+      const roles = definitions ?? await roleCatalog(api, { signal });
       const role = roles.find(item => item.id === body?.role);
       if (role?.grantable !== true || role.default) throw new Error('该角色无法手动授予。');
       return write(api, grantsPath, {
-        method, signal, body: { accountId: id, role: role.id, ...(role.scope === 'project' && { projectId:body.project }) }
+        method, signal, body: { accountId: id, role: role.id, ...(role.scope === 'project' && { projectId:body.project, ...(body.generation && {generation:body.generation}) }) }
       });
     }
     if (method === 'DELETE' && grant) {

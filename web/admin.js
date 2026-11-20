@@ -1,3 +1,4 @@
+import {eventKinds,eventResults,showTime} from './audit-display.js';
 import { isDirectoryConflict } from './system-api.js';
 
 const system = '/api/v1/system';
@@ -19,26 +20,13 @@ function syncFailure(reason, scopeHidden) {
 }
 const activeRun = run => ['queued','running'].includes(run?.status);
 const scopes = { system:'系统级', project:'项目级' };
-const eventKinds = { login:'身份认证', account:'用户管理', role:'角色授权', config:'系统配置', directory:'组织同步' };
-const eventResults = { success:'成功', denied:'已拒绝', cancelled:'已取消', failed:'失败', requested:'已请求', coalesced:'已合并', protected:'最后一位管理员保护' };
 const statusTone = status => status === 'active' ? 'success' : 'pending';
-const dateFormat = new Intl.DateTimeFormat('sv-SE', {
-  timeZone:'Asia/Singapore', year:'numeric', month:'2-digit', day:'2-digit',
-  hour:'2-digit', minute:'2-digit', second:'2-digit'
-});
-const showTime = value => value && Number.isFinite(Date.parse(value)) ? dateFormat.format(new Date(value)) : '—';
 const messageOf = (error, fallback) => error instanceof Error && error.message ? error.message : fallback;
 
 export async function mountAdmin(page, section, api, { user, signal } = {}) {
   if (!Object.hasOwn(titles,section)) throw new Error('未知的系统管理页面');
-  const { escape, mountList, mountOrganizationTree, personView, mountPersonCards, openDialog, toast } = window.OmniRelayUI;
   const usersPage = section === 'users';
-  const canManageAccounts = user.permissions?.['account.manage'] === true;
-  const canManageRoles = user.permissions?.['role.manage'] === true;
-  const maySync = user.permissions?.['directory.sync'] === true;
   const ifUsers = html => usersPage ? html : '';
-  const request = (path,options) => api(system + path, { signal, ...options });
-  const userPath = id => '/users/' + encodeURIComponent(id);
   const element = document.createElement('template');
   element.innerHTML = '<header class="head admin-heading"><h1 id="page-heading" tabindex="-1">' + titles[section] + '</h1>' +
     ifUsers('<div class="system-heading-actions"><button class="button primary" type="button" data-directory-sync title="同步飞书组织与用户">同步</button>' +
@@ -48,8 +36,19 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     ifUsers('<div class="directory-layout"><details class="directory-org" open><summary>组织结构</summary>' +
     '<div class="directory-tree" data-directory-tree></div></details>') +
     '<section id="system-list" class="or-loading-placeholder"></section>' + ifUsers('</div>');
-  const heading = element.content.querySelector('#page-heading');
   page.replaceChildren(element.content);
+  return bindAdmin(page,section,api,{user,signal});
+}
+
+export async function bindAdmin(page, section, api, {user,signal}) {
+  const { escape, mountList, mountOrganizationTree, personView, mountPersonCards, openDialog, toast } = window.OmniRelayUI;
+  const usersPage = section === 'users';
+  const canManageAccounts = user.permissions?.['account.manage'] === true;
+  const canManageRoles = user.permissions?.['role.manage'] === true;
+  const maySync = user.permissions?.['directory.sync'] === true;
+  const request = (path,options) => api(system + path, {signal,...options});
+  const userPath = id => '/users/' + encodeURIComponent(id);
+  const heading = page.querySelector('#page-heading');
   const list = page.querySelector('#system-list');
   const closePersonCard = usersPage ? mountPersonCards(list, { signal }) : undefined;
   const inPage = () => !signal?.aborted && list.isConnected;
@@ -117,14 +116,17 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const rows = [];
   const catalog = new Map();
   let selectedId = '';
-  let selectedDepartments;
+  const listStates = new Map();
+  let currentUserQuery;
+  let treeRequest;
+  let detailRequest = 0;
+  let conflicts = 0;
   let sync = null;
   let detailsTarget;
   let lastDetailsMarkup = '';
   let loadingSync = false;
   let requestingSync = false;
   let directoryMeta;
-  let displayedVersion;
   let readForbidden = false;
   let syncForbidden = false;
   let directoryError = false;
@@ -132,8 +134,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   let syncRevision = 0;
   let syncRequest = 0;
   let summaryRequest;
-  let listVersion = 0;
-  let directoryRequest;
+  let directoryRequest = new AbortController();
   let reloadingAfterConflict = false;
   let mounted;
   const refresh = () => mounted.refresh();
@@ -144,7 +145,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       .map(id => ({ role:id, scope:'system', default:catalog.get(id)?.default === true })),
     ...record.roles
   ];
-  const userRoles = record => [...new Set(displayedRoles(record).map(grant => roleName(grant.role)))];
+  const userRoles = record => record.roleNames ?? [...new Set(displayedRoles(record).map(grant => roleName(grant.role)))];
   const sourceOf = record => record.source || '—';
   const isCurrent = record => user?.id != null && String(user.id) === String(record.id);
   const badge = (tone,label) => '<span class="chip" data-tone="' + tone + '">' + escape(label) + '</span>';
@@ -161,12 +162,27 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const focusAction = (key,id) => [...list.querySelectorAll('[data-admin-action]')].find(button =>
     button.dataset.adminAction === key && button.dataset.record === String(id)) ?? focusHeading();
 
+  const auditCursors = [];
+  async function loadAuditPage(state, pageSignal) {
+    const page = state.page;
+    const query = { limit: state.pageSize, q: state.query, kind: state.filters.kind || '',
+      result: state.filters.result || '', sort: state.sort.key, direction: state.sort.direction };
+    if (page) query.cursor = auditCursors[page];
+    const result = await request('/audit', { query, signal: pageSignal });
+    if (!pageSignal.aborted) {
+      auditCursors.length = page + 1;
+      if (result.nextCursor) auditCursors.push(result.nextCursor);
+      rows.splice(0, rows.length, ...result.items);
+    }
+    return { ...result, options: { kind: eventKinds, result: eventResults } };
+  }
+
   function configuration() {
     const shared = { key:'system-' + section, label:titles[section], selection:false, rows };
     if (section === 'users') return {
       ...shared, itemLabel:'用户或账号', rowLabel:record => record.name,
-      includes:record => !directoryMeta?.visible || !selectedId || (record.departmentIds ?? []).some(id => selectedDepartments?.has(String(id))),
-      search:record => [record.name,record.id,record.org,sourceOf(record),...userRoles(record)].join(' '),
+      states:listStates, signal:signal ? AbortSignal.any([signal,directoryRequest.signal]) : directoryRequest.signal,
+      loadPage:loadUserPage,
       filters:[{ key:'status', label:'账号状态', options:statuses }],
       columns:[
         column('name','用户',record => {
@@ -199,7 +215,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       ]
     };
     return {
-      ...shared, itemLabel:'操作、操作者或编号', rowLabel:entry => entry.action,
+      ...shared, states:new Map(), signal:signal ?? new AbortController().signal, loadPage:loadAuditPage,
+      itemLabel:'操作、操作者或编号', rowLabel:entry => entry.action,
       search:entry => [entry.actor,entry.action,entry.target,entry.id].join(' '),
       filters:[{ key:'kind', label:'事件类型', options:eventKinds },{ key:'result', label:'结果', options:eventResults }],
       defaultSort:{ key:'time', direction:'desc' },
@@ -226,49 +243,71 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     catalog.clear();
     for (const role of roles) catalog.set(role.id,role);
   }
-  function paintTree(departments) {
-    if (!departments.some(item => String(item.id) === selectedId)) selectedId = '';
-    const focused = treeHost.contains(document.activeElement);
-    const tree = mountOrganizationTree(treeHost, departments, {
-      initialId: selectedId,
-      onChange(selection) {
-        if (selection.id === selectedId) return;
-        selectedId = selection.id;
-        selectedDepartments = selection.descendants;
-        mounted?.resetPage();
-      }
-    });
-    selectedDepartments = tree.value().descendants;
-    if (focused) tree.focus();
+  const orgPanel = treeHost?.closest('details');
+  function directorySignal() {
+    return signal ? AbortSignal.any([signal,directoryRequest.signal]) : directoryRequest.signal;
+  }
+  function treeError(error) {
+    if (isDirectoryConflict(error)) return retrySnapshot();
+    if ([401,403].includes(error.status)) return denyDirectory();
+    directoryError = true;
+    updateSyncControls();
+  }
+  async function paintTree() {
+    if (!orgPanel?.open || !directoryMeta?.visible || treeHost.childElementCount || treeRequest) return;
+    const version = directoryMeta.snapshotVersion;
+    const treeSignal = directorySignal();
+    const loadChildren = parent => request('/directory/children',{signal:treeSignal,
+      query:{parent_id:parent,snapshot_version:version}});
+    treeRequest = loadChildren('');
+    try {
+      const roots = await treeRequest;
+      if (treeSignal.aborted || !inPage()) return;
+      mountOrganizationTree(treeHost, roots, {
+        loadChildren, onLoadError:treeError,
+        onChange(selection) {
+          if (selection.id === selectedId) return;
+          selectedId = selection.id;
+          mounted?.resetPage();
+        }
+      });
+    } catch (error) {
+      if (!treeSignal.aborted) treeError(error);
+    } finally {
+      if (!treeSignal.aborted) treeRequest = undefined;
+    }
   }
   function clearDirectory() {
-    displayedVersion = undefined;
-    selectedDepartments = undefined;
-    const focusTree = treeHost.contains(document.activeElement);
-    const focusRow = list.querySelector('tbody')?.contains(document.activeElement);
+    ++detailRequest;
+    directoryRequest.abort();
+    directoryRequest = new AbortController();
+    treeRequest = undefined;
+    selectedId = '';
+    const state = listStates.get('system-users');
+    if (state) state.page = 0;
+    const restore = treeHost.contains(document.activeElement) || list.contains(document.activeElement);
     for (const dialog of dialogs) {
       if (dialog !== detailsTarget?.closest('dialog') && dialog.open) dialog.close('cancel');
     }
     closePersonCard?.();
     treeHost.replaceChildren();
-    if (mounted) replaceRows([]);
-    else list.replaceChildren();
-    if (focusTree || focusRow) heading.focus();
+    list.replaceChildren();
+    rows.length = 0;
+    mounted = undefined;
+    if (restore) heading.focus();
   }
   function observeDirectory(next) {
-    const changed = directoryMeta?.snapshotVersion !== next.snapshotVersion;
+    const changed = directoryMeta !== undefined && directoryMeta.snapshotVersion !== next.snapshotVersion;
     if (changed) {
-      syncRevision++;
+      ++syncRevision;
       summaryRequest = undefined;
-      if (displayedVersion !== undefined) clearDirectory();
+      clearDirectory();
     }
-    directoryMeta = next;
+    directoryMeta = { ...directoryMeta,...next };
     return changed;
   }
   function denyDirectory() {
     readForbidden = true;
-    ++listVersion;
-    directoryRequest?.abort();
     clearTimeout(pollTimer);
     directoryMeta = undefined;
     sync = null;
@@ -276,60 +315,80 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     detailsTarget?.closest('dialog')?.close('cancel');
     updateSyncControls();
   }
-  async function refreshUsers() {
-    directoryRequest?.abort();
-    const controller = new AbortController();
-    directoryRequest = controller;
-    const requestSignal = signal ? AbortSignal.any([signal,controller.signal]) : controller.signal;
-    const version = ++listVersion;
-    const current = () => inPage() && !readForbidden && version === listVersion;
-    for (let attempt = 0; current(); attempt++) {
-      try {
-        const view = await request('/directory/view',{
-          signal:requestSignal,
-          onSnapshot(next) {
-            if (current()) {
-              observeDirectory(next);
-              updateSyncControls();
-            }
-          }
-        });
-        if (!current()) return;
-        if (view.snapshot.visible && displayedVersion !== view.snapshot.snapshotVersion) paintTree(view.departments);
-        displayedVersion = view.snapshot.snapshotVersion;
-        replaceRows(view.users);
-        directoryError = false;
-        reloadingAfterConflict = false;
-        updateSyncControls();
-        return true;
-      } catch (error) {
-        if (!current()) return;
-        if (error.status === 403 || error.status === 401) {
-          denyDirectory();
-          return;
-        }
-        if (isDirectoryConflict(error)) {
-          clearDirectory();
-          directoryMeta = undefined;
-          summaryRequest = undefined;
-          ++syncRevision;
-          if (attempt < 2) {
-            reloadingAfterConflict = true;
-            updateSyncControls();
-            continue;
-          }
-        }
-        reloadingAfterConflict = false;
-        directoryError = true;
-        if (!mounted) list.replaceChildren();
-        updateSyncControls();
-        throw error;
+  function retrySnapshot() {
+    clearDirectory();
+    directoryMeta = undefined;
+    ++syncRevision;
+    summaryRequest = undefined;
+    sync = null;
+    schedulePoll(0);
+    reloadingAfterConflict = ++conflicts <= 2;
+    directoryError = !reloadingAfterConflict;
+    updateSyncControls();
+    if (reloadingAfterConflict) reloadDirectory();
+  }
+  async function loadUserPage(state, pageSignal) {
+    if (readForbidden) throw Object.assign(new Error(),{status:403});
+    currentUserQuery = undefined;
+    closePersonCard?.();
+    ++detailRequest;
+    const query = {limit:state.pageSize,offset:state.page * state.pageSize,q:state.query,
+      status:state.filters.status || '',department_id:selectedId,sort:state.sort?.key || '',direction:state.sort?.direction || 'asc'};
+    if (directoryMeta) query.snapshot_version = directoryMeta.snapshotVersion ?? 0;
+    try {
+      const result = await request('/user-page',{query,signal:pageSignal});
+      if (pageSignal.aborted) throw pageSignal.reason;
+      if (directoryMeta && directoryMeta.snapshotVersion !== result.snapshot_version) {
+        retrySnapshot();
+        return {items:[],total:0};
       }
+      observeDirectory({visible:result.visible,snapshotVersion:result.snapshot_version});
+      conflicts = 0;
+      reloadingAfterConflict = false;
+      currentUserQuery = {...query,snapshot_version:result.snapshot_version ?? 0};
+      rows.splice(0,rows.length,...result.items);
+      void paintTree();
+      updateSyncControls();
+      return {...result,options:{status:statuses}};
+    } catch (error) {
+      if (!pageSignal.aborted) {
+        if (isDirectoryConflict(error)) retrySnapshot();
+        if ([403,401].includes(error.status)) denyDirectory();
+      }
+      throw error;
     }
   }
-  function reloadDirectory() {
-    void refreshUsers().catch(() => {});
+  async function refreshUsers() {
+    if (!inPage() || readForbidden) return;
+    if (mounted) return mounted.refresh();
+    else mounted = mountList(list,configuration());
   }
+  async function refreshGrantRow(record) {
+    const listed = findUser(record.id);
+    if (!listed || !inPage()) return;
+    const roleNames = [...new Set(displayedRoles(record).map(grant => roleName(grant.role)))];
+    if (record.projectError && listed.roleNames.includes(roleName('project_admin'))) {
+      roleNames.push(roleName('project_admin'));
+    }
+    listed.roleNames = roleNames;
+    const query = currentUserQuery;
+    const search = query?.q.trim().toLowerCase();
+    if (!search || [listed.name,listed.id,listed.org,listed.source,...roleNames].join(' ').toLowerCase().includes(search)) {
+      const tr = list.querySelector('tr[data-row="' + CSS.escape(record.id) + '"]');
+      const column = configuration().columns.findIndex(col => col.key === 'roles');
+      if (tr) tr.cells[column].textContent = roleNames.join('、') || '未授权';
+      return;
+    }
+    // 被筛选掉的行只需补读原页末尾的一条记录。
+    const boundary = await request('/user-page',{signal:directorySignal(),query:{
+      ...query,limit:1,offset:query.offset + rows.length - 1
+    }});
+    if (currentUserQuery !== query) return;
+    rows.splice(rows.indexOf(listed),1);
+    rows.push(...boundary.items);
+    await mounted.replacePage(rows,boundary.total);
+  }
+  function reloadDirectory() { void refreshUsers(); }
 
   function busyDialog(dialog, pending) {
     dialog.toggleAttribute('aria-busy', pending);
@@ -413,7 +472,10 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       async change() {
         await request(userPath(record.id), { method:'PATCH', body:{ status } });
         if (!inPage()) return;
-        await refreshUsers();
+        if (await refreshUsers() === false) {
+          toast('warning','账号状态已提交，列表读取失败。请点击列表中的重新读取。');
+          return;
+        }
         toast('success',record.name + '的账号' + statuses[status] + '。');
       }
     });
@@ -423,6 +485,33 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     return '<option value="">' + escape(placeholder) + '</option>' +
       items.map(([id,label]) => '<option value="' + escape(id) + '">' + escape(label) + '</option>').join('');
   }
+  async function openUser(record) {
+    const ticket = ++detailRequest;
+    const current = () => inPage() && ticket === detailRequest && !readForbidden;
+    try {
+      if (record.status === 'unprovisioned') {
+        showUser({...record,roles:[],systemRoles:[]});
+        return;
+      }
+      const options = {signal:directorySignal()};
+      const [account,roles,definitions,projects] = await Promise.all([
+        request(userPath(record.id),options),request(userPath(record.id) + '/roles',options),request('/role-catalog',options),
+        request(userPath(record.id) + '/projects',options).catch(error => ({items:[],canDelegate:false,error}))
+      ]);
+      if (!current()) return;
+      replaceCatalog(definitions);
+      showUser({...record,status:account.active ? 'active' : 'disabled',resignedAt:account.resignedAt,
+        disableProtected:account.disableProtected,systemRoles:account.systemRoles ?? [],...projectFields(projects,roles)});
+    } catch (error) {
+      if (current()) toast('error',messageOf(error,'用户详情读取失败，请重试。'));
+    }
+  }
+  function projectFields(response,roles) {
+    const projects = response.items;
+    return {projects,canDelegate:response.canDelegate,projectError:response.error,
+      roles:[...roles,...projects.filter(p => p.grant).map(p => ({id:p.grant,role:'project_admin',scope:'project',project:p.id}))]};
+  }
+
   function showUser(record) {
     const unprovisioned = record.status === 'unprovisioned';
     let replacementDrawer = false;
@@ -432,12 +521,12 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     const content = () => displayedRoles(record).length ? '<ul class="admin-grants">' + displayedRoles(record).map(grant =>
       '<li><div class="user-grant-label"><strong>' + escape(roleName(grant.role)) + '</strong>' +
       '<small class="user-grant-scope" data-scope="' + (grant.scope === 'project' ? 'project' : 'system') + '">' + escape(grantScopeLabel(grant,record)) +
-      '</small></div>' + (canManageRoles && grant.id && catalog.get(grant.role)?.grantable === true && (!isCurrent(record) || grant.role !== 'system_admin') ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
+      '</small></div>' + ((grant.scope === 'project' ? record.canDelegate : canManageRoles) && grant.id && catalog.get(grant.role)?.grantable === true && (!isCurrent(record) || grant.role !== 'system_admin') ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
       '</ul>' : '<p class="aux">' + (record.status === 'unprovisioned' ?
         '飞书目录人员尚未开通账号。开通后可在此授予角色。' : '当前无角色授权。') + '</p>';
-    const roleOptions = options([...catalog.values()].filter(role => role.grantable === true && !role.default)
+    const roleOptions = options([...catalog.values()].filter(role => role.grantable === true && !role.default && (role.scope === 'project' ? record.canDelegate || canManageRoles : canManageRoles))
       .map(role => [role.id,role.name + ' · ' + scopes[role.scope]]),'选择角色');
-    const editor = canManageRoles && record.status === 'active' ? '<div class="user-grant-tools">' +
+    const editor = (canManageRoles || record.canDelegate) && record.status === 'active' ? '<div class="user-grant-tools">' +
       '<button class="button" type="button" data-admin-action="add-role" aria-expanded="false" aria-controls="user-grant-editor">' +
       '<span aria-hidden="true">＋</span> 添加角色</button></div>' +
       '<div class="user-grant-editor" id="user-grant-editor" hidden>' +
@@ -456,7 +545,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : []),
         ...(record.resignedAt ? [['离职确认时间',showTime(record.resignedAt) + ' (UTC+08:00)']] : []),
         ...(record.disableProtected ? [['停用保护','同步尝试停用时，该账号是最后一位已启用的系统管理员。转交权限后可停用。']] : [])
-      ]) + provision) + group('角色授权','<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
+      ]) + provision) + group('角色授权',(record.projectError ? '<p role="alert">项目授权读取失败。<button type="button" class="button" data-admin-action="retry-projects">重新读取</button></p>' :
+        !unprovisioned && !canManageRoles && !record.canDelegate ? '<p class="aux">当前账号无授权操作权限。</p>' : '') + '<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
       isDirty:() => dirty(),
       onClose() {
         window.removeEventListener('beforeunload',warnBeforeUnload);
@@ -496,7 +586,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       const invalid = (field,message) => ({ error:{ field,message } });
       if (!role || role.grantable !== true || role.default) return invalid(roleField,'请选择可授权的角色。');
       if (role.scope === 'project' && !project) {
-        return scopeField.disabled ? invalid(roleField,'该用户没有可授权的项目。') : invalid(scopeField,'请选择项目。');
+        return scopeField.disabled ? invalid(roleField,row.querySelector('[data-project-empty]').textContent) : invalid(scopeField,'请选择项目。');
       }
       if ((record.roles ?? []).some(grant => grant.role === role.id && (grant.project || '') === project)) {
         return invalid(project ? scopeField : roleField,'该用户已有相同范围的角色授权。');
@@ -506,7 +596,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     async function saveGrant({ role, project },closeAfter) {
       const unlock = busyDialog(dialog,true);
       try {
-        await request(userPath(record.id) + '/roles',{ method:'POST', body:{ role:role.id, project } });
+        await request(userPath(record.id) + '/roles',{ method:'POST', body:{ role:role.id, project, generation:record.projects?.find(p => p.id === project)?.generation } });
       } catch (error) {
         unlock();
         if (dialog.open) fieldError(dialog,messageOf(error,'角色保存失败，请重试。'),form.elements[project ? 'scope' : 'role']);
@@ -517,7 +607,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       dialog.querySelector('[data-grant-status]').textContent = '角色已保存。';
       toast('success','已为' + record.name + '授予' + role.name + '。');
       setEditor(false);
-      await updateGrants();
+      if (!await updateGrants(role.scope)) return false;
       if (closeAfter && dialog.open) dialog.close('confirm');
       return true;
     }
@@ -532,7 +622,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       }
     };
 
-    async function updateGrants() {
+    async function updateGrants(scope) {
+      dialog.querySelector('[data-retry-grants]')?.remove();
       fetchingGrants = true;
       if (add) add.disabled = true;
       grantBody.querySelectorAll('button').forEach(button => { button.disabled = true; });
@@ -541,22 +632,36 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       const loading = window.OmniRelayLoading.mount(indicator,{size:'inline'});
       indicator.setAttribute('aria-label','正在刷新角色授权…');
       try {
-        await refreshUsers();
-        if (!dialog.open) return;
-        const updated = findUser(String(record.id));
-        record.roles = updated?.roles ?? [];
-        record.systemRoles = updated?.systemRoles ?? [];
-        grantBody.innerHTML = content();
-      } catch (error) {
-        if (dialog.open && inPage()) {
-          grantBody.querySelectorAll('button').forEach(button => { button.disabled = false; });
-          toast('warning',messageOf(error,'变更已提交，刷新角色授权失败。'));
+        const path = userPath(record.id);
+        if (scope === 'project') {
+          const response = await request(path + '/projects');
+          Object.assign(record,projectFields(response,record.roles.filter(g => g.scope !== 'project')));
+        } else {
+          const [account,grants] = await Promise.all([request(path),request(path + '/roles')]);
+          record.roles = [...grants,...record.roles.filter(g => g.scope === 'project')];
+          record.systemRoles = account.systemRoles;
         }
+        await refreshGrantRow(record);
+        if (!dialog.open) return false;
+        grantBody.innerHTML = content();
+        return true;
+      } catch {
+        if (dialog.open && inPage()) {
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'button';
+          retry.dataset.retryGrants = '';
+          retry.textContent = '变更已提交，重新读取授权';
+          retry.onclick = () => void updateGrants(scope);
+          grantBody.after(retry);
+          retry.focus();
+        }
+        return false;
       } finally {
         loading.finish();
         indicator.remove();
         fetchingGrants = false;
-        if (add) add.disabled = false;
+        if (add) add.disabled = (!canManageRoles && !record.canDelegate) || Boolean(dialog.querySelector('[data-retry-grants]'));
         if (dialog.open && !row?.hidden) form.elements.role?.focus();
         else if (dialog.open && add && document.activeElement === document.body) add.focus();
       }
@@ -572,6 +677,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       field.disabled = !isProject || emptyProjects;
       field.innerHTML = options(available.map(item => [item.id,item.name]),emptyProjects ? '暂无可选项目' : '选择项目');
       if (available.some(item => item.id === previous)) field.value = previous;
+      row.querySelector('[data-project-empty]').textContent = record.projectError ? '项目候选读取失败。' :
+        !record.canDelegate ? '当前账号没有项目委派权限。' : '该用户没有可授权的项目。';
       row.querySelector('[data-project-empty]').hidden = !emptyProjects;
       save.disabled = emptyProjects;
     }
@@ -604,8 +711,12 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
           const created = await request(userPath(record.id) + '/provision',{ method:'POST' });
           if (!inPage() || !dialog.open) return;
           try {
-            await refreshUsers();
-            refreshed = created?.id ? findUser(String(created.id)) : undefined;
+            if (await refreshUsers() === false) {
+              toast('warning','账号已开通，列表读取失败。请点击列表中的重新读取。');
+              return;
+            }
+            if (created?.id && dialog.open) refreshed = findUser(String(created.id)) ??
+              {...record,id:created.id,status:created.active ? 'active' : 'disabled'};
           } catch {
             if (inPage()) toast('warning','账号已开通，用户列表刷新失败。请重新打开用户管理。');
             return;
@@ -616,7 +727,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
           if (!inPage() || !dialog.open) return;
           replacementDrawer = Boolean(refreshed);
           dialog.close('confirm');
-          if (refreshed) showUser(refreshed);
+          if (refreshed) void openUser(refreshed);
         }
       });
     }
@@ -624,6 +735,13 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       if (fetchingGrants || dialog.hasAttribute('aria-busy')) return;
       const button = event.target.closest('[data-admin-action]');
       if (!button) return;
+      if (button.dataset.adminAction === 'retry-projects') {
+        if (dirty()) { fieldError(dialog,'请先保存或取消当前角色草稿。'); return; }
+        replacementDrawer = true;
+        dialog.close('cancel');
+        void openUser(record);
+        return;
+      }
       if (button.dataset.adminAction === 'provision' && canProvision) provisionUser(button);
       if (button.dataset.adminAction === 'add-role') setEditor(true);
       if (button.dataset.adminAction === 'cancel-role') setEditor(false);
@@ -637,7 +755,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         async change() {
           await request(userPath(record.id) + '/roles/' + encodeURIComponent(grant.id),{ method:'DELETE' });
           if (!inPage()) return;
-          if (dialog.open) await updateGrants();
+          if (dialog.open && !await updateGrants(grant.scope)) return;
           toast('success','角色授权已撤销。');
         }
       });
@@ -718,7 +836,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       run?.startedAt ? '开始于 ' + showTime(run.startedAt) :
       run?.createdAt ? '排队于 ' + showTime(run.createdAt) : '';
     const failure = run?.status === 'failed' ? syncFailure(run.failureReason,!visible && Boolean(lastTime)) : '';
-    const last = visible && sync?.snapshotVersion === directoryMeta.snapshotVersion ? sync.lastSuccess : null;
+    const last = visible && sync?.snapshotVersion === directoryMeta?.snapshotVersion ? sync.lastSuccess : null;
     const markup = '<section class="directory-sync-status"><div><strong>' + escape(phase) + '</strong>' +
       badge(tone,label) + '</div>' + (active || run?.status === 'succeeded'
         ? window.OmniRelayLoading.markup({size:'compact',label:active ? phase + '…' : phase,progress:active ? null : 100,active}) : '') +
@@ -740,8 +858,21 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     clearTimeout(pollTimer);
     if (inPage() && !readForbidden) pollTimer = setTimeout(readSync,delay);
   }
+  async function recheckDirectoryAccess() {
+    const checkSignal = directorySignal();
+    try {
+      const page = await request('/user-page',{signal:checkSignal,query:{limit:1,offset:0,
+        ...(directoryMeta && {snapshot_version:directoryMeta.snapshotVersion ?? 0})}});
+      if (!checkSignal.aborted && directoryMeta && page.snapshot_version !== directoryMeta.snapshotVersion) retrySnapshot();
+    } catch (error) {
+      if (checkSignal.aborted) return;
+      if (isDirectoryConflict(error)) retrySnapshot();
+      else if ([401,403].includes(error.status)) denyDirectory();
+    }
+  }
   async function readSync() {
-    if (loadingSync || requestingSync || readForbidden || !inPage()) return;
+    if (requestingSync || readForbidden || !inPage()) return;
+    if (loadingSync) { schedulePoll(1200); return; }
     clearTimeout(pollTimer);
     const requestID = ++syncRequest;
     const revision = syncRevision;
@@ -758,6 +889,7 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       sync = next;
       syncError = false;
       if (changed) reloadDirectory();
+      void paintTree();
       if (activeRun(previous) && next.run?.id === previous.id && !activeRun(next.run)) {
         if (next.run.status === 'succeeded') toast('success','组织与人员同步完成。');
         if (next.run.status === 'failed') toast('error','组织与人员同步失败，请查看同步详情。');
@@ -766,8 +898,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       readPreviousSummary();
     } catch (error) {
       if (!current()) return;
-      if (error.status === 403 || error.status === 401) denyDirectory();
-      else syncError = true;
+      syncError = true;
+      if ([401,403].includes(error.status)) void recheckDirectoryAccess();
     } finally {
       loadingSync = false;
       if (current()) {
@@ -786,9 +918,11 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       sync.lastSuccess = result;
       updateSyncControls();
     }).catch(error => {
-      if (!inPage() || summaryRequest !== version) return;
+      if (!inPage() || summaryRequest !== version || directoryMeta?.snapshotVersion !== version) return;
       summaryRequest = undefined;
-      if (error.status === 403 || error.status === 401) denyDirectory();
+      syncError = true;
+      updateSyncControls();
+      if ([401,403].includes(error.status)) void recheckDirectoryAccess();
     });
   }
   async function startSync() {
@@ -832,9 +966,9 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     const loading = window.OmniRelayLoading.mount(list,{size:'compact',label:'正在读取' + titles[section] + '…'});
     try {
       if (usersPage) {
-        replaceCatalog(await request('/role-catalog'));
-        if (!inPage()) return;
         await refreshUsers();
+      } else if (section === 'audit') {
+        mounted = mountList(list, configuration());
       } else {
         const next = await request('/' + section);
         if (inPage()) replaceRows(next);
@@ -856,17 +990,18 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
     const record = findUser(id);
     if (!record) return;
     switch (trigger.dataset.adminAction) {
-      case 'user': showUser(record); break;
+      case 'user': void openUser(record); break;
       case 'toggle': if (canManageAccounts) toggleUser(record,trigger); break;
       case 'role': showRole(record,trigger); break;
       case 'event': showEvent(record,trigger); break;
     }
   });
   if (usersPage) {
+    orgPanel.addEventListener('toggle',paintTree);
     syncButton.addEventListener('click',startSync);
     syncDetails.addEventListener('click',showSyncDetails);
     retry.addEventListener('click',() => {
-      if (directoryError) reloadDirectory();
+      if (directoryError) { directoryError = false; conflicts = 0; reloadDirectory(); void paintTree(); }
       void readSync();
     });
   }

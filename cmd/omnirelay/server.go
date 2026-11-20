@@ -60,9 +60,18 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	if err != nil {
 		return nil, nil, err
 	}
+	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
+	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
+	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
 	identityService, err := identity.New(pool, identity.Config{
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, PublicOrigin: cfg.publicOrigin,
 		Transport: transport, Audit: roles.AuditIdentity, Access: roles.WorkbenchAccess,
+		ResourceRead: func(ctx context.Context, principal identity.Principal, projectID, chatID string) (bool, error) {
+			if chatID != "" {
+				return chatService.CanReadConversation(ctx, principal, projectID, chatID)
+			}
+			return roles.Check(ctx, principal, "project.read", projectID)
+		},
 		OAuthProxyToken: cfg.oauthProxyToken, IdleTTL: cfg.sessionIdleTTL,
 	})
 	if err != nil {
@@ -78,9 +87,6 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		}
 		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
 	}
-	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
-	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
-	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
 	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles)
 	chatService.ConfigureFiles(fileService)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
