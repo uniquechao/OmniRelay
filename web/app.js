@@ -302,7 +302,8 @@ async function render() {
   page.dataset.layout = project?.id ? 'project' : chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
   if (project) {
-    void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id});
+    view = {};
+    void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id,navigation:view});
   } else if (chat) {
     mountChatReader(page, chats, {
       signal, draftScope: session.user.id, chatId: chat.chatId, messageId: chat.messageId,

@@ -73,6 +73,8 @@ async function fixture(page) {
       }
       if (section in data) return respond({ project_id: project.id, panel: section, data: data[section] });
       if (section === 'tasks/' + task.id) return respond(task);
+      if (section === 'tasks/' + task.id + '/actions') return respond({});
+      if (['task-tags','milestones',...['activity','update-suggestions','evidence'].map(name=>'tasks/'+task.id+'/'+name)].includes(section)) return respond(list([]));
       if (section.startsWith('sources/')) return respond(list([task]));
       if (section === 'reports/briefings') return respond(list([run]));
       if (section === 'reports/briefings/r-1') return respond(list([history]));
@@ -164,6 +166,13 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await page.goto(prototype.href);
       await page.getByRole('tab', { name: '项目概览' }).waitFor();
       const expectedTabs = await page.getByRole('tab').allTextContents();
+      prototype.hash = '/projects/beichen/tasks/1';
+      await page.goto(prototype.href);
+      const inspector=page.locator('.or-task-inspector');
+      await inspector.waitFor();
+      const referenceLayout=await inspector.locator('.task-edit-grid').evaluate(el=>getComputedStyle(el).display);
+      const referenceBody=await inspector.locator('.task-edit-copy').evaluate(el=>getComputedStyle(el).padding);
+      if(process.env.OMNIRELAY_TASK_EVIDENCE)await inspector.screenshot({path:process.env.OMNIRELAY_TASK_EVIDENCE+'/原型-'+width+'-'+theme+'.png'});
       await page.addInitScript(() => {
         const fetchOriginal = window.fetch;
         window.fetch = (path, options) => {
@@ -192,11 +201,16 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       assert.deepEqual(await page.getByRole('tab').allTextContents(), expectedTabs);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.getByText('验收节点').click();
-      await visible('联调验收');
+      await page.getByLabel('标题', { exact:true }).waitFor();
       await page.reload();
-      await visible('联调验收');
+      await page.getByLabel('标题', { exact:true }).waitFor();
+      assert.equal(await page.getByLabel('标题', { exact:true }).inputValue(), task.title);
+      assert.equal(await inspector.locator('.task-edit-grid').evaluate(el=>getComputedStyle(el).display),referenceLayout);
+      assert.equal(await inspector.locator('.task-edit-copy').evaluate(el=>getComputedStyle(el).padding),referenceBody);
+      assert.ok(await inspector.evaluate(el=>el.scrollWidth<=el.clientWidth+1));
+      if(process.env.OMNIRELAY_TASK_EVIDENCE)await inspector.screenshot({path:process.env.OMNIRELAY_TASK_EVIDENCE+'/正式-'+width+'-'+theme+'.png'});
       await page.getByRole('link', { name: '返回项目列表' }).click();
-      await visible('联调项目');
+      await page.getByRole('link', {name:'联调项目',exact:true}).waitFor();
       assert.equal(await page.locator('input[name=q]').inputValue(), '联调');
       assert.equal(await page.evaluate(() => document.activeElement.textContent), '联调项目');
       assert.match(page.url(), /page=2/);
@@ -208,7 +222,7 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
         await visible(title);
         await page.getByRole('link', { name: '查看关联任务' }).click();
         await page.getByRole('link', { name: '联调验收' }).click();
-        await visible('任务说明');
+        await page.getByLabel('正文', { exact:true }).waitFor();
       }
       await go(path + 'chats/oc_21');
       await visible('提交任务');
@@ -358,4 +372,100 @@ test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async 
     assert.equal(await page.locator('[data-move-task]').count(), 0);
     await page.close();
   }
+});
+
+test('任务字段、条件校验、草稿、冲突及活动', {skip: !moduleName}, async t=>{
+  const browser=await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const {errors}=await fixture(page);
+  let current={...task,status:'in_progress',version:1,description:'初始正文',participant_ids:[],tag_ids:[]};
+  let readonly=false;
+  const events=[],suggestions=[];
+  const endpoint=origin+root+'/tasks/'+task.id;
+  const detail='#/projects/'+project.id+'/tasks/'+task.id;
+  await page.route(origin+root+'/members',r=>r.fulfill({json:{data:{members:[{id:'m1',display_name:'王宁'}]}}}));
+  await page.route(endpoint+'**',async r=>{
+    const {pathname,searchParams}=new URL(r.request().url());
+    const path=pathname.slice(new URL(endpoint).pathname.length);
+    const body=r.request().postDataJSON();
+    let result;
+    switch(path) {
+      case '':
+        if(body){
+          if(body.expected_task_version!==current.version)return r.fulfill({status:409,json:{error:'task_version_conflict'}});
+          current={...current,...body,version:current.version+1};
+        }
+        result=current;break;
+      case '/actions':result={edit_fields:!readonly,update_progress:!readonly,comment:!readonly,review_feedback:!readonly};break;
+      case '/activity':result={items:searchParams.has('cursor')?[{id:8,kind:'change',actor_name:'审核人',before:{标题:'旧'},after:{标题:'新'}}]:events,next_cursor:searchParams.has('cursor')?null:'续页'};break;
+      case '/evidence':result={items:[{accessible:false,reason:'当前账号无权读取原始依据。'}]};break;
+      case '/comments':events.unshift({id:1,kind:'comment',body:body.body,actor_name:'王宁'});result=events[0];break;
+      case '/update-suggestions':
+        if(body)suggestions.push({id:'s1',version:1,status:'pending',actor_id:'m1',...body});
+        result={items:suggestions,can_submit:!readonly,can_review:!readonly};break;
+      default:throw Error(path);
+    }
+    await r.fulfill({json:result});
+  });
+  await page.route(origin+root+'/task-update-suggestions/s1/review',async r=>{
+    const body=r.request().postDataJSON();
+    assert.equal(body.expected_version,1);
+    suggestions[0].status='rejected';suggestions[0].reason=body.reason;
+    await r.fulfill({json:suggestions[0]});
+  });
+  await page.goto(origin+'/'+detail);
+  const byName=k=>page.locator('[name="'+k+'"]'), save=page.getByRole('button',{name:'保存任务'});
+  await save.waitFor();
+  assert.ok(await save.isDisabled());
+  await byName('title').fill('  ');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'title');
+  await byName('title').fill('本地草稿');
+  await byName('owner_member_id').fill('wangning');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'owner_member_id');
+  await byName('owner_member_id').fill('wn');await page.getByRole('button',{name:'王宁 · m1'}).click();
+  await byName('start_at').fill('2026-11-19');await byName('due_at').fill('2026-11-18');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'due_at');
+  await byName('due_at').fill('2026-11-20');await byName('status').selectOption('blocked');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'blocked_reason');
+  await byName('blocked_reason').fill('等待审核');await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'继续编辑'}).click();
+  assert.equal(await byName('title').inputValue(),'本地草稿');
+  current={...current,description:'另一位成员补充的正文',version:2};
+  await save.click();await page.getByRole('button',{name:'应用比对结果'}).click();
+  assert.equal(await byName('description').inputValue(),current.description);
+  assert.equal(await byName('title').inputValue(),'本地草稿');await save.click();
+  await page.getByText('任务已保存。',{exact:true}).waitFor();
+  assert.equal(current.version,3);assert.equal(current.owner_member_id,'m1');assert.ok(page.url().endsWith(detail));
+  await page.getByText('当前账号无权读取原始依据。').waitFor();
+  await page.getByRole('button',{name:'加载更多'}).click();await page.getByText('旧 → 新').waitFor();
+  await page.getByRole('button',{name:'提交进展反馈'}).click();await byName('note').fill('提请核验');
+  await page.getByRole('button',{name:'确认提交'}).click();
+  await page.getByRole('button',{name:'拒绝',exact:true}).click();await byName('note').fill('请补充依据');
+  await page.getByRole('button',{name:'确认提交'}).click();await page.getByText('审核说明　请补充依据').waitFor();
+  await byName('status').selectOption('cancelled');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'change_reason');
+  await byName('change_reason').fill('计划取消');
+  await page.locator('.head').click({position:{x:1,y:1}});
+  await page.getByRole('button',{name:'不保存',exact:true}).click();await save.waitFor({state:'detached'});
+  assert.equal(current.status,'blocked');
+  await page.goto(origin+'/'+detail);await page.getByPlaceholder('留下评论…').fill('保留此条评论');
+  await page.getByRole('tab',{name:'成员',exact:true}).click();
+  await page.getByRole('button',{name:'保存并关闭'}).click();
+  await save.waitFor({state:'detached'});assert.equal(events[0].body,'保留此条评论');
+  await page.goto(origin+'/'+detail);
+  await byName('status').selectOption('done');
+  await byName('completion_note').fill('已完成核验');
+  await save.click();await page.getByText('任务已保存。',{exact:true}).waitFor();
+  assert.equal(current.status,'done');
+  await byName('status').selectOption('in_progress');await save.click();
+  assert.equal(await page.evaluate(()=>document.activeElement.name),'change_reason');
+  await byName('change_reason').fill('补充复验');
+  await page.getByRole('link',{name:'收起任务详情'}).click();
+  await page.getByRole('button',{name:'保存并关闭'}).click();await save.waitFor({state:'detached'});
+  assert.equal(current.status,'in_progress');assert.equal(current.change_reason,'补充复验');
+  readonly=true;await page.goto(origin+'/'+detail);await save.waitFor();
+  assert.ok(await byName('title').isDisabled());assert.ok(await save.isDisabled());
+  assert.deepEqual(errors,[]);
 });
