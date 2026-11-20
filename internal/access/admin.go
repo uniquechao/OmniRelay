@@ -188,10 +188,13 @@ func (s *Service) listGrants(ctx context.Context, projectID, accountID, after st
 	})
 }
 
+var errMembershipChanged = errors.New("membership_changed")
+
 type grantRequest struct {
-	AccountID string `json:"accountId"`
-	Role      string `json:"role"`
-	ProjectID string `json:"projectId"`
+	Generation string `json:"generation,omitempty"`
+	AccountID  string `json:"accountId"`
+	Role       string `json:"role"`
+	ProjectID  string `json:"projectId"`
 }
 
 func (r grantRequest) valid() bool {
@@ -201,9 +204,9 @@ func (r grantRequest) valid() bool {
 	}
 	switch role.Scope {
 	case "system":
-		return r.ProjectID == ""
+		return r.ProjectID == "" && r.Generation == ""
 	case "project":
-		return validIdentifier(r.ProjectID)
+		return validIdentifier(r.ProjectID) && (r.Generation == "" || validIdentifier(r.Generation))
 	default:
 		return false
 	}
@@ -246,6 +249,9 @@ func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r gra
 				return errNotFound
 			}
 			generation = access.MembershipGeneration
+			if r.Generation != "" && r.Generation != generation {
+				return errMembershipChanged
+			}
 			if !validIdentifier(generation) {
 				return ErrForbidden
 			}

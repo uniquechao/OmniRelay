@@ -93,8 +93,9 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
     case 'settings':
       page=<ConnectionSettings key={visit} locked={locked}/>;
       break;
+    case 'roles':
     case 'users':
-      page=<UsersPage key={visit} user={user} guard={view}/>;
+      page=<UsersPage section={target.route.id} key={visit} user={user} guard={view}/>;
       break;
     case 'audit':
       page=<AuditPage key={visit}/>;

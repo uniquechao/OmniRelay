@@ -80,6 +80,7 @@ func (s *Service) handleUserPage(w http.ResponseWriter, r *http.Request, actor i
 	for id, role := range roleCatalog {
 		names[id] = role.Name
 	}
+	_, localProjects := s.ProjectAccess.(LocalProjects)
 	var items json.RawMessage
 	var total int
 	err = tx.QueryRow(ctx, `WITH RECURSIVE scoped(id) AS (
@@ -96,7 +97,14 @@ func (s *Service) handleUserPage(w http.ResponseWriter, r *http.Request, actor i
 			CASE WHEN a.id IS NULL THEN 'unprovisioned' WHEN a.active THEN 'active' ELSE 'disabled' END AS status,
 			coalesce(p.directory_status,CASE WHEN r.resigned_at IS NOT NULL THEN 'resigned' END) AS "directoryStatus",
 			r.resigned_at AS "resignedAt",coalesce(a.active AND r.resigned_at IS NOT NULL,false) AS "disableProtected",
-			CASE WHEN a.active THEN array_prepend('system_user'::text,`+systemGrantRoles+`) ELSE `+systemGrantRoles+` END AS "roleIds"
+			CASE WHEN a.active THEN array_prepend('system_user'::text,`+systemGrantRoles+`) ELSE `+systemGrantRoles+` END ||
+            CASE WHEN $10 AND EXISTS (SELECT FROM role_grants g
+                JOIN project_members m ON (m.tenant_key,m.app_id,m.project_id,m.account_id,m.generation)=
+                    (g.tenant_key,g.app_id,g.project_id,g.account_id,g.membership_generation)
+                JOIN project_members actor ON (actor.tenant_key,actor.app_id,actor.project_id)=(m.tenant_key,m.app_id,m.project_id)
+                WHERE (g.tenant_key,g.app_id,g.account_id)=($1,$2,a.id) AND a.active AND m.role!='revoked'
+                AND g.role='project_admin' AND g.revoked_at IS NULL AND actor.account_id=$11 AND actor.role='manager')
+                THEN ARRAY['project_admin'] ELSE '{}'::text[] END AS "roleIds"
 		FROM accounts_here a FULL JOIN people p USING(open_id)
 		LEFT JOIN directory_roster r ON (r.tenant_key,r.app_id,r.open_id)=(a.tenant_key,a.app_id,a.open_id)
 		LEFT JOIN LATERAL (
@@ -111,7 +119,7 @@ func (s *Service) handleUserPage(w http.ResponseWriter, r *http.Request, actor i
 			strpos(lower(concat_ws(' ',name,id,org,source,(SELECT string_agg($7::jsonb->>role,' ') FROM unnest("roleIds") role))),lower($6))>0)
 	), page AS (SELECT *, ARRAY(SELECT $7::jsonb->>role FROM unnest("roleIds") role) AS "roleNames" FROM matched ORDER BY `+order+` LIMIT $8 OFFSET $9)
 	SELECT coalesce(jsonb_agg(to_jsonb(page)-'account_id'-'roleIds' ORDER BY `+order+`),'[]'),(SELECT count(*) FROM matched) FROM page`,
-		s.tenantKey, s.appID, version, dept, state, keyword, names, limit, offset).Scan(&items, &total)
+		s.tenantKey, s.appID, version, dept, state, keyword, names, limit, offset, localProjects, actor.AccountID).Scan(&items, &total)
 	if err != nil {
 		writeError(w, err)
 		return

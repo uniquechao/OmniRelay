@@ -79,6 +79,7 @@ async function mountFixture(page) {
       }
       if (path === system + '/accounts/'+account.id) return route.fulfill({json:account});
       if (path === system + '/accounts') return route.fulfill({ json: { items: [account] } });
+      if (path === system + '/accounts/' + account.id + '/projects') return route.fulfill({json:{items:[],canDelegate:false}});
       if ([system + '/roles', system + '/role-grants'].includes(path)) return route.fulfill({ json: { items: [] } });
       if (state === null && path.startsWith(directory)) return route.fulfill({ status: 403, json: { error: 'forbidden' } });
       if (path === directory + 'sync-runs') return monitorFailure ? route.fulfill({status:503,json:{}}) : route.fulfill({ json: {...state.runs,

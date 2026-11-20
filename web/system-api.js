@@ -59,18 +59,8 @@ async function roleCatalog(api, options) {
 }
 
 async function listRoles(api, options) {
-  const [catalog, grants, accounts] = await Promise.all([
-    roleCatalog(api, options),
-    collectPages(api, grantsPath, options),
-    collectPages(api, accountPath, options)
-  ]);
-  const counts = new Map();
-  for (const grant of grants) counts.set(grant.role, (counts.get(grant.role) ?? 0) + 1);
-  return catalog.map(role => ({
-    ...role,
-    count: role.default ? accounts.filter(account => account.active && account.systemRoles?.includes(role.id)).length
-      : role.scope === 'system' ? counts.get(role.id) ?? 0 : null
-  }));
+  const [catalog, counts] = await Promise.all([roleCatalog(api,options),api(system + '/role-counts',options)]);
+  return catalog.map(role => ({...role,count:counts[role.id] ?? (role.scope === 'system' ? 0 : null)}));
 }
 
 export async function listAudit(api, query, signal) {
@@ -160,6 +150,7 @@ async function startSync(api, { signal } = {}) {
 }
 
 const writeErrors = new Map([
+  ['membership_changed', '项目会籍已变更，请重新打开用户详情后选择项目。'],
   ['permission denied', '当前账号没有执行此操作的权限。'],
   ['resource not found', '记录不可用，请刷新后重试。'],
   ['at least one active system administrator is required', '系统必须保留至少一位已启用的管理员。'],
@@ -195,11 +186,12 @@ function provisionAccount(api, segment, signal) {
 // Normalizes the admin view's data at the HTTP boundary. Navigation and client
 // filtering never grant capabilities, which remain controlled by the API.
 export function systemAPI(api) {
+  let definitions;
   return async (path, { method = 'GET', body, signal, snapshotVersion, query } = {}) => {
     if (method === 'GET') {
       switch (path) {
         case system + '/connections': return api(path, { signal });
-        case system + '/role-catalog': return roleCatalog(api, { signal });
+        case system + '/role-catalog': return definitions = await roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
         case system + '/audit': return listAudit(api, query, signal);
         case system + '/user-page': return directoryPage(api, path, query, signal);
@@ -209,6 +201,12 @@ export function systemAPI(api) {
       }
     }
     if (method === 'POST' && path === directory + '/sync') return startSync(api, { signal });
+    const projectRoute = path.match(/^\/api\/v1\/system\/users\/([^/]+)\/projects$/);
+    if (method === 'GET' && projectRoute) {
+      const result = await api(accountPath + '/' + encodeURIComponent(accountID(projectRoute[1])) + '/projects', {signal});
+      if (!Array.isArray(result?.items) || typeof result.canDelegate !== 'boolean') throw new Error('项目候选响应无效。');
+      return result;
+    }
     const provisionRoute = path.match(/^\/api\/v1\/system\/users\/([^/]+)\/provision$/);
     if (method === 'POST' && provisionRoute) return provisionAccount(api, provisionRoute[1], signal);
 
@@ -228,11 +226,11 @@ export function systemAPI(api) {
       });
     }
     if (method === 'POST' && grantRoute && !grant) {
-      const roles = await roleCatalog(api, { signal });
+      const roles = definitions ?? await roleCatalog(api, { signal });
       const role = roles.find(item => item.id === body?.role);
       if (role?.grantable !== true || role.default) throw new Error('该角色无法手动授予。');
       return write(api, grantsPath, {
-        method, signal, body: { accountId: id, role: role.id, ...(role.scope === 'project' && { projectId:body.project }) }
+        method, signal, body: { accountId: id, role: role.id, ...(role.scope === 'project' && { projectId:body.project, ...(body.generation && {generation:body.generation}) }) }
       });
     }
     if (method === 'DELETE' && grant) {

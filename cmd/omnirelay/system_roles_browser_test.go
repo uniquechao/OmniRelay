@@ -46,6 +46,15 @@ func TestSystemRolesBrowser(t *testing.T) {
 	runSystemBrowser(t, "system_roles_browser.test.mjs")
 }
 
+func TestAccountGrantsBrowser(t *testing.T) {
+	dir, err := filepath.Abs("../../web/dist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OMNIRELAY_PREVIEW_DIR", dir)
+	runSystemBrowser(t, "account_grants_browser.test.mjs")
+}
+
 func TestReactAuditBrowser(t *testing.T) {
 	dir, err := filepath.Abs("../../web/dist")
 	if err != nil {
@@ -103,6 +112,22 @@ func runSystemBrowser(t *testing.T, suite string) {
 			}
 		}
 		if err := identity.ProvisionPassword(ctx, pool, cfg.tenantKey, cfg.appID, id, account.username, "fixture-password-only"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if suite == "account_grants_browser.test.mjs" {
+		roles.ProjectAccess = access.LocalProjects{Pool: pool}
+		_, err := pool.Exec(ctx, `INSERT INTO directory_sources(tenant_key,app_id) VALUES ('tenant_fixture','cli_fixture');
+        INSERT INTO directory_sync_runs(id,tenant_key,app_id,trigger,state) OVERRIDING SYSTEM VALUE VALUES(17,'tenant_fixture','cli_fixture','initial','succeeded');
+        UPDATE directory_sources SET visible=true,active_version=17,next_run_at=now()+interval '1 day' WHERE tenant_key='tenant_fixture' AND app_id='cli_fixture';
+        INSERT INTO directory_people VALUES ('tenant_fixture','cli_fixture',17,'ou_new','待开通成员','','active');`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role)
+            SELECT tenant_key,app_id,'acceptance-project',id,id,CASE WHEN open_id='ou_project_operator' THEN 'manager' ELSE 'member' END
+            FROM accounts WHERE open_id IN ('ou_project_operator','ou_historical')`)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -117,6 +117,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
   const catalog = new Map();
   let selectedId = '';
   const listStates = new Map();
+  let currentUserQuery;
   let treeRequest;
   let detailRequest = 0;
   let conflicts = 0;
@@ -328,6 +329,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
   }
   async function loadUserPage(state, pageSignal) {
     if (readForbidden) throw Object.assign(new Error(),{status:403});
+    currentUserQuery = undefined;
     closePersonCard?.();
     ++detailRequest;
     const query = {limit:state.pageSize,offset:state.page * state.pageSize,q:state.query,
@@ -343,6 +345,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       observeDirectory({visible:result.visible,snapshotVersion:result.snapshot_version});
       conflicts = 0;
       reloadingAfterConflict = false;
+      currentUserQuery = {...query,snapshot_version:result.snapshot_version ?? 0};
       rows.splice(0,rows.length,...result.items);
       void paintTree();
       updateSyncControls();
@@ -357,8 +360,33 @@ export async function bindAdmin(page, section, api, {user,signal}) {
   }
   async function refreshUsers() {
     if (!inPage() || readForbidden) return;
-    if (mounted) await mounted.refresh();
+    if (mounted) return mounted.refresh();
     else mounted = mountList(list,configuration());
+  }
+  async function refreshGrantRow(record) {
+    const listed = findUser(record.id);
+    if (!listed || !inPage()) return;
+    const roleNames = [...new Set(displayedRoles(record).map(grant => roleName(grant.role)))];
+    if (record.projectError && listed.roleNames.includes(roleName('project_admin'))) {
+      roleNames.push(roleName('project_admin'));
+    }
+    listed.roleNames = roleNames;
+    const query = currentUserQuery;
+    const search = query?.q.trim().toLowerCase();
+    if (!search || [listed.name,listed.id,listed.org,listed.source,...roleNames].join(' ').toLowerCase().includes(search)) {
+      const tr = list.querySelector('tr[data-row="' + CSS.escape(record.id) + '"]');
+      const column = configuration().columns.findIndex(col => col.key === 'roles');
+      if (tr) tr.cells[column].textContent = roleNames.join('、') || '未授权';
+      return;
+    }
+    // 被筛选掉的行只需补读原页末尾的一条记录。
+    const boundary = await request('/user-page',{signal:directorySignal(),query:{
+      ...query,limit:1,offset:query.offset + rows.length - 1
+    }});
+    if (currentUserQuery !== query) return;
+    rows.splice(rows.indexOf(listed),1);
+    rows.push(...boundary.items);
+    await mounted.replacePage(rows,boundary.total);
   }
   function reloadDirectory() { void refreshUsers(); }
 
@@ -444,7 +472,10 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       async change() {
         await request(userPath(record.id), { method:'PATCH', body:{ status } });
         if (!inPage()) return;
-        await refreshUsers();
+        if (await refreshUsers() === false) {
+          toast('warning','账号状态已提交，列表读取失败。请点击列表中的重新读取。');
+          return;
+        }
         toast('success',record.name + '的账号' + statuses[status] + '。');
       }
     });
@@ -463,17 +494,24 @@ export async function bindAdmin(page, section, api, {user,signal}) {
         return;
       }
       const options = {signal:directorySignal()};
-      const [account,roles,definitions] = await Promise.all([
-        request(userPath(record.id),options),request(userPath(record.id) + '/roles',options),request('/role-catalog',options)
+      const [account,roles,definitions,projects] = await Promise.all([
+        request(userPath(record.id),options),request(userPath(record.id) + '/roles',options),request('/role-catalog',options),
+        request(userPath(record.id) + '/projects',options).catch(error => ({items:[],canDelegate:false,error}))
       ]);
       if (!current()) return;
       replaceCatalog(definitions);
       showUser({...record,status:account.active ? 'active' : 'disabled',resignedAt:account.resignedAt,
-        disableProtected:account.disableProtected,systemRoles:account.systemRoles ?? [],roles});
+        disableProtected:account.disableProtected,systemRoles:account.systemRoles ?? [],...projectFields(projects,roles)});
     } catch (error) {
       if (current()) toast('error',messageOf(error,'用户详情读取失败，请重试。'));
     }
   }
+  function projectFields(response,roles) {
+    const projects = response.items;
+    return {projects,canDelegate:response.canDelegate,projectError:response.error,
+      roles:[...roles,...projects.filter(p => p.grant).map(p => ({id:p.grant,role:'project_admin',scope:'project',project:p.id}))]};
+  }
+
   function showUser(record) {
     const unprovisioned = record.status === 'unprovisioned';
     let replacementDrawer = false;
@@ -483,12 +521,12 @@ export async function bindAdmin(page, section, api, {user,signal}) {
     const content = () => displayedRoles(record).length ? '<ul class="admin-grants">' + displayedRoles(record).map(grant =>
       '<li><div class="user-grant-label"><strong>' + escape(roleName(grant.role)) + '</strong>' +
       '<small class="user-grant-scope" data-scope="' + (grant.scope === 'project' ? 'project' : 'system') + '">' + escape(grantScopeLabel(grant,record)) +
-      '</small></div>' + (canManageRoles && grant.id && catalog.get(grant.role)?.grantable === true && (!isCurrent(record) || grant.role !== 'system_admin') ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
+      '</small></div>' + ((grant.scope === 'project' ? record.canDelegate : canManageRoles) && grant.id && catalog.get(grant.role)?.grantable === true && (!isCurrent(record) || grant.role !== 'system_admin') ? action('revoke',grant.id,'撤销',true) : '') + '</li>').join('') +
       '</ul>' : '<p class="aux">' + (record.status === 'unprovisioned' ?
         '飞书目录人员尚未开通账号。开通后可在此授予角色。' : '当前无角色授权。') + '</p>';
-    const roleOptions = options([...catalog.values()].filter(role => role.grantable === true && !role.default)
+    const roleOptions = options([...catalog.values()].filter(role => role.grantable === true && !role.default && (role.scope === 'project' ? record.canDelegate || canManageRoles : canManageRoles))
       .map(role => [role.id,role.name + ' · ' + scopes[role.scope]]),'选择角色');
-    const editor = canManageRoles && record.status === 'active' ? '<div class="user-grant-tools">' +
+    const editor = (canManageRoles || record.canDelegate) && record.status === 'active' ? '<div class="user-grant-tools">' +
       '<button class="button" type="button" data-admin-action="add-role" aria-expanded="false" aria-controls="user-grant-editor">' +
       '<span aria-hidden="true">＋</span> 添加角色</button></div>' +
       '<div class="user-grant-editor" id="user-grant-editor" hidden>' +
@@ -507,7 +545,8 @@ export async function bindAdmin(page, section, api, {user,signal}) {
         ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : []),
         ...(record.resignedAt ? [['离职确认时间',showTime(record.resignedAt) + ' (UTC+08:00)']] : []),
         ...(record.disableProtected ? [['停用保护','同步尝试停用时，该账号是最后一位已启用的系统管理员。转交权限后可停用。']] : [])
-      ]) + provision) + group('角色授权','<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
+      ]) + provision) + group('角色授权',(record.projectError ? '<p role="alert">项目授权读取失败。<button type="button" class="button" data-admin-action="retry-projects">重新读取</button></p>' :
+        !unprovisioned && !canManageRoles && !record.canDelegate ? '<p class="aux">当前账号无授权操作权限。</p>' : '') + '<div data-user-grants>' + content() + '</div>' + editor + '<span class="sr-only" data-grant-status role="status"></span>'),
       isDirty:() => dirty(),
       onClose() {
         window.removeEventListener('beforeunload',warnBeforeUnload);
@@ -547,7 +586,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       const invalid = (field,message) => ({ error:{ field,message } });
       if (!role || role.grantable !== true || role.default) return invalid(roleField,'请选择可授权的角色。');
       if (role.scope === 'project' && !project) {
-        return scopeField.disabled ? invalid(roleField,'该用户没有可授权的项目。') : invalid(scopeField,'请选择项目。');
+        return scopeField.disabled ? invalid(roleField,row.querySelector('[data-project-empty]').textContent) : invalid(scopeField,'请选择项目。');
       }
       if ((record.roles ?? []).some(grant => grant.role === role.id && (grant.project || '') === project)) {
         return invalid(project ? scopeField : roleField,'该用户已有相同范围的角色授权。');
@@ -557,7 +596,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
     async function saveGrant({ role, project },closeAfter) {
       const unlock = busyDialog(dialog,true);
       try {
-        await request(userPath(record.id) + '/roles',{ method:'POST', body:{ role:role.id, project } });
+        await request(userPath(record.id) + '/roles',{ method:'POST', body:{ role:role.id, project, generation:record.projects?.find(p => p.id === project)?.generation } });
       } catch (error) {
         unlock();
         if (dialog.open) fieldError(dialog,messageOf(error,'角色保存失败，请重试。'),form.elements[project ? 'scope' : 'role']);
@@ -568,7 +607,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       dialog.querySelector('[data-grant-status]').textContent = '角色已保存。';
       toast('success','已为' + record.name + '授予' + role.name + '。');
       setEditor(false);
-      await updateGrants();
+      if (!await updateGrants(role.scope)) return false;
       if (closeAfter && dialog.open) dialog.close('confirm');
       return true;
     }
@@ -583,7 +622,8 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       }
     };
 
-    async function updateGrants() {
+    async function updateGrants(scope) {
+      dialog.querySelector('[data-retry-grants]')?.remove();
       fetchingGrants = true;
       if (add) add.disabled = true;
       grantBody.querySelectorAll('button').forEach(button => { button.disabled = true; });
@@ -592,23 +632,36 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       const loading = window.OmniRelayLoading.mount(indicator,{size:'inline'});
       indicator.setAttribute('aria-label','正在刷新角色授权…');
       try {
-        const [account,grants] = await Promise.all([request(userPath(record.id)),request(userPath(record.id) + '/roles')]);
-        if (!dialog.open) return;
-        record.roles = grants;
-        record.systemRoles = account.systemRoles;
-        await refreshUsers();
-        if (!dialog.open) return;
-        grantBody.innerHTML = content();
-      } catch (error) {
-        if (dialog.open && inPage()) {
-          grantBody.querySelectorAll('button').forEach(button => { button.disabled = false; });
-          toast('warning',messageOf(error,'变更已提交，刷新角色授权失败。'));
+        const path = userPath(record.id);
+        if (scope === 'project') {
+          const response = await request(path + '/projects');
+          Object.assign(record,projectFields(response,record.roles.filter(g => g.scope !== 'project')));
+        } else {
+          const [account,grants] = await Promise.all([request(path),request(path + '/roles')]);
+          record.roles = [...grants,...record.roles.filter(g => g.scope === 'project')];
+          record.systemRoles = account.systemRoles;
         }
+        await refreshGrantRow(record);
+        if (!dialog.open) return false;
+        grantBody.innerHTML = content();
+        return true;
+      } catch {
+        if (dialog.open && inPage()) {
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'button';
+          retry.dataset.retryGrants = '';
+          retry.textContent = '变更已提交，重新读取授权';
+          retry.onclick = () => void updateGrants(scope);
+          grantBody.after(retry);
+          retry.focus();
+        }
+        return false;
       } finally {
         loading.finish();
         indicator.remove();
         fetchingGrants = false;
-        if (add) add.disabled = false;
+        if (add) add.disabled = (!canManageRoles && !record.canDelegate) || Boolean(dialog.querySelector('[data-retry-grants]'));
         if (dialog.open && !row?.hidden) form.elements.role?.focus();
         else if (dialog.open && add && document.activeElement === document.body) add.focus();
       }
@@ -624,6 +677,8 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       field.disabled = !isProject || emptyProjects;
       field.innerHTML = options(available.map(item => [item.id,item.name]),emptyProjects ? '暂无可选项目' : '选择项目');
       if (available.some(item => item.id === previous)) field.value = previous;
+      row.querySelector('[data-project-empty]').textContent = record.projectError ? '项目候选读取失败。' :
+        !record.canDelegate ? '当前账号没有项目委派权限。' : '该用户没有可授权的项目。';
       row.querySelector('[data-project-empty]').hidden = !emptyProjects;
       save.disabled = emptyProjects;
     }
@@ -656,7 +711,10 @@ export async function bindAdmin(page, section, api, {user,signal}) {
           const created = await request(userPath(record.id) + '/provision',{ method:'POST' });
           if (!inPage() || !dialog.open) return;
           try {
-            await refreshUsers();
+            if (await refreshUsers() === false) {
+              toast('warning','账号已开通，列表读取失败。请点击列表中的重新读取。');
+              return;
+            }
             if (created?.id && dialog.open) refreshed = findUser(String(created.id)) ??
               {...record,id:created.id,status:created.active ? 'active' : 'disabled'};
           } catch {
@@ -677,6 +735,13 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       if (fetchingGrants || dialog.hasAttribute('aria-busy')) return;
       const button = event.target.closest('[data-admin-action]');
       if (!button) return;
+      if (button.dataset.adminAction === 'retry-projects') {
+        if (dirty()) { fieldError(dialog,'请先保存或取消当前角色草稿。'); return; }
+        replacementDrawer = true;
+        dialog.close('cancel');
+        void openUser(record);
+        return;
+      }
       if (button.dataset.adminAction === 'provision' && canProvision) provisionUser(button);
       if (button.dataset.adminAction === 'add-role') setEditor(true);
       if (button.dataset.adminAction === 'cancel-role') setEditor(false);
@@ -690,7 +755,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
         async change() {
           await request(userPath(record.id) + '/roles/' + encodeURIComponent(grant.id),{ method:'DELETE' });
           if (!inPage()) return;
-          if (dialog.open) await updateGrants();
+          if (dialog.open && !await updateGrants(grant.scope)) return;
           toast('success','角色授权已撤销。');
         }
       });

@@ -79,13 +79,12 @@ test('角色目录沿用服务端标识和说明，默认人数取自启用账�
     { id:'system_operator', name:'系统运维者', scope:'system', default:false, grantable:true, permissions:['执行连接检测'] },
     { id:'project_admin', name:'项目管理员', scope:'project', default:false, grantable:true, permissions:[] }
   ];
-  const accounts = [{ id:'a', active:true, systemRoles:['system_user'] }, { id:'b', active:false, systemRoles:[] }];
   const grants = [{ id:'g', accountId:'b', role:'system_operator' }];
   const writes = [];
   const request = systemAPI(async (path, options) => {
     if (options.method === 'POST') return writes.push(options.body);
     if (path === base + '/roles') return { items:catalog };
-    if (path.includes('/accounts?')) return { items:accounts };
+    if (path === base + '/role-counts') return {system_user:1,system_operator:1};
     if (path.includes('/role-grants?')) return { items:grants };
     return { visible:false, snapshot_version:null, total:0, items:[] };
   });

@@ -479,6 +479,7 @@ window.OmniRelayUI = (() => {
           return paint();
         }
         paintRows(result.items, result.total);
+        return true;
       } catch (error) {
         if (signal.aborted) return;
         for (const filter of filters) {
@@ -494,6 +495,7 @@ window.OmniRelayUI = (() => {
         retry.textContent = '重新读取';
         retry.onclick = paint;
         empty.append(' ', retry);
+        return false;
       } finally {
         loading.finish();
       }
@@ -726,7 +728,13 @@ window.OmniRelayUI = (() => {
 
     applyColumnWidths();
     paint();
-    return { refresh: paint, resetPage() { state.page = 0; paint(); } };
+    return { refresh: paint, replacePage(items,total) {
+      if (!items.length && state.page > 0) {
+        state.page = Math.max(0,Math.ceil(total/state.pageSize)-1);
+        return paint();
+      }
+      paintRows(items,total);
+    }, resetPage() { state.page = 0; paint(); } };
   }
 
   function mountAccount(onLogout) {
