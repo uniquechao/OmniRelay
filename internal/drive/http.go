@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 )
 
 type share struct {
+	ContextURL string    `json:"context_url"`
 	MessageID  string    `json:"message_id"`
 	ChatID     string    `json:"chat_id"`
 	ChatName   string    `json:"chat_name"`
@@ -29,25 +31,28 @@ type share struct {
 }
 type candidate struct {
 	share
+	Projects                 []string
+	ProjectVersion           int64
 	ID                       int64
 	Kind, Token, Name, State string
 	Version, Size            *int64
 	Updated                  *time.Time
 }
 type item struct {
-	token      string
-	ID         int64      `json:"id"`
-	Name       string     `json:"name"`
-	Category   string     `json:"category"`
-	FormatKey  string     `json:"format_key"`
-	Format     string     `json:"format"`
-	Size       *int64     `json:"size_bytes"`
-	SizeSource string     `json:"size_source"`
-	Sources    []share    `json:"sources"`
-	Projects   []string   `json:"project_ids"`
-	State      string     `json:"sync_state"`
-	Version    *int64     `json:"version_id"`
-	Updated    *time.Time `json:"updated_at"`
+	ProjectVersion int64 `json:"project_version"`
+	token          string
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	Category       string     `json:"category"`
+	FormatKey      string     `json:"format_key"`
+	Format         string     `json:"format"`
+	Size           *int64     `json:"size_bytes"`
+	SizeSource     string     `json:"size_source"`
+	Sources        []share    `json:"sources"`
+	Projects       []string   `json:"project_ids"`
+	State          string     `json:"sync_state"`
+	Version        *int64     `json:"version_id"`
+	Updated        *time.Time `json:"updated_at"`
 }
 
 const authorizedSources = ` FROM feishu_file_sources x
@@ -63,13 +68,18 @@ const authorizedSources = ` FROM feishu_file_sources x
 func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]candidate, error) {
 	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,l.project_id,
  x.file_id,x.kind,x.token,x.name,x.state,x.version_id,CASE WHEN x.kind IN ('attachment','file') THEN coalesce(v.byte_size,x.declared_size) END,
- x.synced_at`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens)
+ x.synced_at, (SELECT version FROM feishu_file_project_revisions r WHERE
+ (r.tenant_key,r.app_id,r.file_id)=(x.tenant_key,x.app_id,x.file_id)),
+ ARRAY(SELECT t.project_id FROM feishu_file_projects t JOIN project_members member USING(tenant_key,app_id,project_id)
+ WHERE (t.tenant_key,t.app_id,t.file_id)=(x.tenant_key,x.app_id,x.file_id) AND member.account_id=$4
+ AND member.role<>'revoked' ORDER BY t.project_id)`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (candidate, error) {
 		var c candidate
-		err := r.Scan(&c.MessageID, &c.ChatID, &c.ChatName, &c.SenderID, &c.SenderName, &c.SentAt, &c.ProjectID, &c.ID, &c.Kind, &c.Token, &c.Name, &c.State, &c.Version, &c.Size, &c.Updated)
+		err := r.Scan(&c.MessageID, &c.ChatID, &c.ChatName, &c.SenderID, &c.SenderName, &c.SentAt, &c.ProjectID, &c.ID, &c.Kind, &c.Token, &c.Name, &c.State, &c.Version, &c.Size, &c.Updated, &c.ProjectVersion, &c.Projects)
+		c.ContextURL = "/api/v1/feishu/chats/" + url.PathEscape(c.ChatID) + "/messages/" + url.PathEscape(c.MessageID) + "/context"
 		return c, err
 	})
 }
@@ -137,7 +147,7 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, c
 		if !ok {
 			pos = len(files)
 			positions[c.ID] = pos
-			files = append(files, item{ID: c.ID, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
+			files = append(files, item{ID: c.ID, Projects: c.Projects, ProjectVersion: c.ProjectVersion, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
 		}
 		f := &files[pos]
 		if len(f.Sources) == 0 || (c.Updated != nil && (f.Updated == nil || c.Updated.After(*f.Updated))) {
@@ -150,9 +160,6 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, c
 			f.Category, f.Format, f.FormatKey = format.Category, format.Label, format.Key
 		}
 		f.Sources = append(f.Sources, c.share)
-		if !slices.Contains(f.Projects, c.ProjectID) {
-			f.Projects = append(f.Projects, c.ProjectID)
-		}
 	}
 	return files, nil
 }
@@ -183,6 +190,7 @@ func problem(w http.ResponseWriter, status int, code string) {
 }
 func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
 	s.registerPreviews(mux, auth)
+	s.registerProjectChanges(mux, auth)
 	const base = "/api/v1/feishu/files"
 	mux.HandleFunc("GET "+base+"/formats", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := auth(w, r, identity.ValidateSession); ok {
