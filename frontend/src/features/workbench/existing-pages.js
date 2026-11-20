@@ -1,8 +1,6 @@
 import {client} from '../../api/session';
 import {mountAdmin} from '../../../../web/admin.js';
-import {mountFeishuBot} from '../../../../web/feishu-bot.js';
-import {mountConnectionSettings} from '../../../../web/connection-settings.js';
-import {systemAPI,feishuBotAPI} from '../../../../web/system-api.js';
+import {systemAPI} from '../../../../web/system-api.js';
 import {projectRoute,mountProjects} from '../../../../web/projects.js';
 import {chatRoute,chatAPI,mountChatReader} from '../../../../web/chat-reader.js';
 import {mountDrive} from '../../../../web/drive.js';
@@ -19,13 +17,6 @@ export async function mountExistingPage(host,target,user,guard,signal){
   const admin=systemAPI(api);
   const hash=target.path.slice(1);
   switch(target.route.id){
-    case 'feishu-bot':
-      guard.current=mountFeishuBot(host,feishuBotAPI(api),{signal,canConfigure:user.permissions?.['system.configure']===true,
-        canOperate:user.permissions?.['system.operate']===true,canSyncDirectory:user.permissions?.['directory.sync']===true && user.adminCapabilities?.users===true});
-      break;
-    case 'settings':
-      mountConnectionSettings(host,options=>admin('/api/v1/system/connections',options),signal);
-      break;
     case 'projects':
       await mountProjects(host,projectRoute(hash),api,{signal,memory:scope.projects,scope,navigation:guard.current});
       break;

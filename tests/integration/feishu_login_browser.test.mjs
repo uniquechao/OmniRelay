@@ -55,7 +55,7 @@ async function respond(request, response) {
     fixture.meChecks++;
     if (fixture.probeStatus) return json(response, fixture.probeStatus, {});
     return fixture.signedIn ? json(response, 200, {
-      principal: { account_id: 1, name: '测试账号', auth_method: fixture.method },
+      principal: { account_id: fixture.accountId ?? 1, name: '测试账号', auth_method: fixture.method },
       csrf_token: fixture.csrfMissing ? '' : mockCSRF,
       access: fixture.access ?? { admin: { feishu_bot: fixture.botAllowed }, roles: ['system_admin'], navigation: { workbench:true, system:fixture.botAllowed },
         permissions: { 'system.operate':fixture.botAllowed }, default_route:'/#/workbench' }
@@ -65,6 +65,7 @@ async function respond(request, response) {
     fixture.botReads++;
     const sample = JSON.parse(await readFile('tests/fixtures/feishu/bot-config.json', 'utf8'));
     if (!fixture.signedIn) return json(response, 401, { error: 'unauthorized' });
+    response.setHeader('ETag', sample[0].headers.ETag);
     return json(response, 200, sample[0].body);
   }
   if (path === '/auth/login') {
@@ -189,12 +190,12 @@ test('缺省能力拒绝访问，项目导航和操作点独立于角色名', { 
 test('窗口聚焦复核失败后锁定表单，联网后恢复同账号草稿并清除密码', { skip: !!goOrigin }, () => withPage(async page => {
   fixture.signedIn = true;
   fixture.method = 'password';
-  fixture.access = { admin:{feishu_bot:true}, navigation:{system:true}, permissions:{'system.configure':true} };
+  fixture.access = { admin:{feishu_bot:true}, navigation:{system:true}, default_route:'/#/system/feishu-bot', permissions:{'system.configure':true} };
   await page.goto(origin + '/' + botHash);
   const enabled = page.locator('#bot-enabled');
   await enabled.waitFor();
-  const draft = !await enabled.isChecked();
-  await enabled.setChecked(draft);
+  assert.equal(await enabled.isChecked(), false);
+  await enabled.check();
   await page.locator('.rail .account-trigger').click();
   await page.locator('[data-account="password"]').click();
   await page.locator('[name=currentPassword]').fill('测试密码');
@@ -203,10 +204,15 @@ test('窗口聚焦复核失败后锁定表单，联网后恢复同账号草稿�
   await page.locator('.session-lock[open]').waitFor();
   assert.equal(await enabled.isVisible(), false);
   assert.equal(await page.locator('[name=currentPassword]').count(), 0);
+  if(process.env.OMNIRELAY_BROWSER_DIST)assert.equal(await page.locator('#bot-save').isDisabled(),true);
+  const requests=fixture.botReads;
+  await page.locator('#bot-form').evaluate(form=>form.requestSubmit());
+  assert.equal(fixture.botReads,requests);
   fixture.probeStatus = 0;
   await page.evaluate(() => dispatchEvent(new Event('online')));
   await enabled.waitFor();
-  assert.equal(await enabled.isChecked(), draft);
+  assert.equal(await enabled.isChecked(), true);
+  await page.locator('#bot-save:enabled').waitFor();
   fixture.probeStatus = 503;
   await page.evaluate(() => dispatchEvent(new Event('focus')));
   await page.locator('.session-lock[open]').waitFor();
@@ -215,6 +221,14 @@ test('窗口聚焦复核失败后锁定表单，联网后恢复同账号草稿�
   await page.locator('#session-status button').click();
   await page.locator('#bot-content').waitFor();
   assert.equal(await enabled.isVisible(), false);
+  fixture.access.permissions['system.configure'] = true;
+  await page.evaluate(() => dispatchEvent(new Event('focus')));
+  await enabled.waitFor();
+  assert.equal(await enabled.isChecked(),false);
+  await enabled.check();
+  fixture.accountId=2;
+  await page.evaluate(() => dispatchEvent(new Event('focus')));
+  await page.waitForFunction(()=>document.querySelector('#bot-enabled')?.checked===false);
 }));
 
 test('后退缓存页可重试且重新校验权限', { skip: !!goOrigin }, () => withPage(async page => {
@@ -398,4 +412,111 @@ test('React 书签与草稿保护、刷新和键盘焦点', {skip:!!goOrigin || 
   await page.getByRole('dialog',{name:'个人信息'}).waitFor();
   await page.keyboard.press('Escape');
   await page.waitForFunction(()=>document.activeElement?.classList.contains('account-trigger'));
+}));
+
+test('Bot 版本复核、检测重试与跨页轮询', {skip:!!goOrigin || !process.env.OMNIRELAY_BROWSER_DIST},()=>withPage(async page=>{
+  fixture.signedIn=true;
+  fixture.access={navigation:{system:true},admin:{settings:true,feishu_bot:true},
+    permissions:{'system.configure':true,'system.operate':true}};
+  const bot='/api/v1/system/feishu-bot';
+  const config=JSON.parse(await readFile('tests/fixtures/feishu/bot-config.json','utf8'))[0].body;
+  const tasks=JSON.parse(await readFile('tests/fixtures/feishu/bot-checks.json','utf8'));
+  let etag, conflict, writes=0, polls=0, state='queued';
+  const keys=[];
+  await page.route('**'+bot, async route=>{
+    const request=route.request();
+    if(request.method()==='PATCH'){
+      writes++;
+      assert.equal(request.headers()['if-match'],etag);
+      if(conflict){
+        etag='"bot-'+writes+'"';
+        return route.fulfill({status:conflict,json:{}});
+      }
+      config.enabled=request.postDataJSON().enabled;
+    }
+    await route.fulfill({headers:etag?{ETag:etag}:{},json:config});
+  });
+  await page.route('**'+bot+'/checks',async route=>{
+    keys.push(route.request().headers()['idempotency-key']);
+    if(keys.length===1)return route.abort();
+    await route.fulfill({status:202,json:{id:'check-1',state:'queued'}});
+  });
+  await page.route('**'+bot+'/checks/check-1',route=>{
+    polls++;
+    assert.equal(route.request().headers()['x-omnirelay-activity'],'poll');
+    return route.fulfill({json:{...tasks.find(task=>task.name===state).body,id:'check-1'}});
+  });
+  await page.route('**/api/v1/system/connections',r=>r.fulfill({json:{items:[{id:'omnigrid',state:'not_configured'},{id:'deepseek_harness',state:'other'}]}}));
+  await page.goto(origin+'/#/system/bot');
+  const toggle=page.locator('#bot-enabled'),save=page.locator('#bot-save'),check=page.locator('#bot-test');
+  await toggle.check();
+  assert.equal(await save.isDisabled(),true);
+  await page.getByText(/无法获取配置版本/).waitFor();
+  etag='"bot-0"';
+  await page.locator('#bot-refresh').click();
+  for(conflict of [412,428]){
+    const previous=writes;
+    await page.locator('#bot-save:enabled').waitFor();
+    const refreshed=page.waitForResponse(r=>r.url().endsWith(bot) && r.request().method()==='GET');
+    await save.evaluate(b=>{b.click();b.click();});
+    await refreshed;
+    await page.locator('#bot-save:enabled').waitFor();
+    assert.equal(writes,previous+1);
+    assert.equal(await toggle.isChecked(),true);
+    assert.match(await page.locator('#bot-save-feedback').textContent(),/再次点击「保存」确认/);
+  }
+  conflict=0;
+  await save.click();
+  await page.locator('[data-bot=enabled]').getByText('已保存为启用').waitFor();
+  assert.equal(writes,3);
+  await check.click();
+  await check.getByText('重试检测').waitFor();
+  await check.evaluate(b=>{b.click();b.click();});
+  await page.getByText('等待开始检测…').waitFor();
+  assert.ok(keys[0]);assert.deepEqual(keys,[keys[0],keys[0]]);
+  state='running';
+  await page.getByText('正在检测飞书应用…').waitFor();
+  assert.equal(await check.getAttribute('aria-busy'),'true');
+  await page.getByRole('link',{name:'连接设置',exact:true}).click();
+  await page.getByText('未接入',{exact:true}).waitFor();
+  await page.getByText('状态未知',{exact:true}).waitFor();
+  const left=polls;
+  await new Promise(resolve=>setTimeout(resolve,2100));
+  assert.equal(polls,left);
+  state='succeeded';
+  await page.goBack();
+  await page.locator('[data-bot=bot_info]').getByText('通过').waitFor();
+  assert.equal(keys.length,2);
+  assert.equal(await check.getAttribute('aria-busy'),null);
+  state='bot_unavailable';
+  await check.click();
+  await page.locator('[data-bot=bot_info]').getByText('失败').waitFor();
+  assert.notEqual(keys[2],keys[0]);
+  assert.equal(await check.getAttribute('aria-busy'),null);
+}));
+
+test('配置、检测与目录同步分别检查能力，连接设置区分读取失败与拒绝访问', {skip:!!goOrigin || !process.env.OMNIRELAY_BROWSER_DIST},()=>withPage(async page=>{
+  fixture.signedIn=true;
+  fixture.access={navigation:{system:true},admin:{feishu_bot:true,settings:true,users:true},permissions:{}};
+  await page.goto(origin+'/#/system/bot');
+  const configure=page.locator('#bot-form'),detect=page.locator('#bot-test');
+  const sync=page.getByRole('link',{name:'前往用户管理同步组织与用户'});
+  for(const capability of ['system.read','system.configure','system.operate','directory.sync']){
+    fixture.access.permissions={[capability]:true};
+    const refreshed=page.waitForResponse(r=>r.url().endsWith('/system/feishu-bot'));
+    await page.evaluate(()=>dispatchEvent(new Event('focus')));
+    await refreshed;
+    await page.locator('#bot-content').waitFor();
+    assert.equal(await configure.isVisible(),capability==='system.configure');
+    assert.equal(await detect.isVisible(),capability==='system.operate');
+    assert.equal(await sync.isVisible(),capability==='directory.sync');
+  }
+  let status=503;
+  await page.route('**/api/v1/system/connections',route=>route.fulfill({status,json:{items:[]}}));
+  await page.getByRole('link',{name:'连接设置',exact:true}).click();
+  await page.getByText('暂时无法读取连接设置，请重试。').waitFor();
+  status=403;
+  await page.getByRole('button',{name:'重试',exact:true}).click();
+  await page.getByText('当前账号没有查看连接设置的权限。').waitFor();
+  assert.equal(await page.getByRole('button',{name:'重试',exact:true}).count(),0);
 }));

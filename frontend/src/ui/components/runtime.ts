@@ -23,7 +23,7 @@ export type DialogOptions = {
   variant?: 'form' | 'detail' | 'confirm'; confirm?: string; tone?: 'default' | 'info' | 'danger' | 'warning';
   isDirty?: (form: HTMLFormElement) => boolean;
   onSubmit?: (form: HTMLFormElement) => void | {field: HTMLElement; message: string} | Promise<void | {field: HTMLElement; message: string}>;
-  onClose?: (confirmed: boolean) => void; restoreFocus?: () => HTMLElement | null;
+  cancelLabel?: string; discard?: string; onClose?: (confirmed: boolean, result?: string) => void; restoreFocus?: () => HTMLElement | null;
 };
 declare global {
   interface Window {
