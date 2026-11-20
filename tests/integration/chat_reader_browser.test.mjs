@@ -357,7 +357,7 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   const second = { ...group, id: 'project_second', name: '第二个关联群' };
   await page.getByRole('heading', { name: '工作台总览' }).waitFor();
   // 适配器单测按测试专用地址注入，工作台仍从实际构建加载。
-  const adapters = ['chat-reader', 'chat-assignment', 'chat-composer', 'file-format'];
+  const adapters = ['chat-reader', 'chat-assignment', 'chat-card', 'chat-composer', 'file-format'];
   for (const name of adapters) {
     await page.route(origin + '/fixture/' + name + '.js', route =>
       route.fulfill({path:'web/' + name + '.js',contentType:'text/javascript'}));
@@ -376,7 +376,7 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
       messages: async id => {
         if (id === first.id) return new Promise(resolve => { window.lateProjectMessages = resolve; });
         const items = Array.from({ length: 30 }, (_, i) => ({ ...task, id: 'history_' + i, type: 'text', body: '第二群记录 ' + i }));
-        return { items };
+        return { items: [{ ...task, chat_id: id }, ...items] };
       },
       sync: async () => ({ items: [], total: 0 })
     }, { project: true });
@@ -385,6 +385,7 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   await page.waitForFunction(() => typeof window.lateProjectMessages === 'function');
   await page.getByRole('button', { name: '打开会话 第二个关联群' }).click();
   await page.getByText('第二群记录 29').waitFor();
+  await page.locator('[data-project-chat] .chat-card').getByRole('heading', { name: '任务已分派' }).waitFor();
   await page.evaluate(message => window.lateProjectMessages({ items: [message] }),
     { ...oldMessage, body: '迟到的项目会话' });
   assert.equal(await page.getByText('迟到的项目会话').count(), 0);
@@ -463,6 +464,91 @@ test('按桌面和手机视口核对原型的浅色及深色聊天界面', { ski
     }
     await page.close();
   }
+});
+
+test('飞书卡片保留标题、正文、操作和说明，并适配主题和屏幕宽度', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const evidence = process.env.OMNIRELAY_CHAT_EVIDENCE;
+  if (evidence) await mkdir(evidence, { recursive: true });
+  const card = { ...task, business_receipt: undefined, body: JSON.stringify({
+    title: '测试群 321 · 任务进度验收',
+    elements: [
+      [{ tag: 'text', text: 'OmniGrid 四项能力验收 20261113', style: ['bold'] },
+        { tag: 'text', text: '\n负责人：徐世超\n截止：2026-11-14 18:00（北京时间）\n当前测试进度：0%\n请点击下方提交50%进度，用于核对真实回调与任务更新。' }],
+      [{ tag: 'button', text: '提交50%进度（测试）', type: 'primary' },
+        { tag: 'button', text: '打开原生任务', type: 'default' }],
+      [{ tag: 'note', elements: [{ tag: 'text', text: '仅用于本次验收；卡片已发送不代表进度已保存。' }] }]
+    ]
+  }) };
+  const originalCard = { ...briefing, business_receipt: undefined, body: JSON.stringify({
+    schema: '2.0', header: { template: 'green', title: { content: '项目进展' } }, body: { elements: [
+      { tag: 'markdown', content: '**已更新** <img src=x>' },
+      { tag: 'button', text: { content: '打开详情' }, behaviors: [{ type: 'open_url', default_url: 'https://example.test/task' }] },
+      { tag: 'button', text: '无效链接', url: 'javascript:alert(1)' }
+    ] }
+  }) };
+  const malformed = { ...task, id: 'om_bad_card', body: '{', business_receipt: undefined };
+  const deleted = { ...card, id: 'om_deleted_card', state: 'deleted' };
+  const headers = [];
+  for (const viewport of [{ width: 1366, height: 900 }, { width: 390, height: 844 }]) {
+    const mobile = viewport.width < 500;
+    const page = await browser.newPage({ viewport, isMobile: mobile, hasTouch: mobile });
+    await mountFixture(page);
+    await page.route(origin + base + '/oc_group/{messages,search}*', route => {
+      const url = new URL(route.request().url());
+      return route.fulfill({ json: { items: url.searchParams.has('q') ? [card] : [deleted, malformed, originalCard, card] } });
+    });
+    for (const theme of ['light', 'dark']) {
+      await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + group.id);
+      const message = page.locator('[data-message="om_task"]');
+      const heading = message.getByRole('heading', { name: '测试群 321 · 任务进度验收' });
+      await heading.waitFor();
+      assert.equal(await message.locator('.chat-bubble').count(), 0);
+      const preview = message.locator('.chat-card');
+      const body = preview.locator('.chat-card-content');
+      assert.match(await body.locator('.chat-card-row').first().textContent(), /\n负责人：徐世超\n截止：/u);
+      assert.equal(await body.locator('strong').textContent(), 'OmniGrid 四项能力验收 20261113');
+      const buttons = body.locator('.chat-card-actions').getByRole('button');
+      assert.equal(await buttons.count(), 2);
+      assert.ok(await buttons.first().isDisabled());
+      assert.ok(await buttons.last().isDisabled());
+      assert.ok(await body.locator('.chat-card-note').isVisible());
+      if (evidence) await preview.screenshot({ path: evidence + '/card-' + viewport.width + '-' + theme + '.png' });
+      const geometry = await preview.evaluate(node => ({
+        width: node.offsetWidth,
+        fits: node.scrollWidth <= node.clientWidth + 1 && node.clientWidth <= node.closest('.chat-timeline').clientWidth,
+        header: getComputedStyle(node.querySelector('.chat-card-header')).backgroundColor,
+        surface: getComputedStyle(node).backgroundColor,
+        actionHeight: node.querySelector('button').offsetHeight
+      }));
+      assert.ok(geometry.fits && geometry.width <= 605);
+      assert.notEqual(geometry.header, geometry.surface);
+      assert.ok(geometry.actionHeight >= (mobile ? 44 : 34));
+      headers.push(geometry.header);
+    }
+    const raw = page.locator('[data-message="om_brief"] .chat-card');
+    const link = raw.getByRole('link', { name: '打开详情' });
+    const target = 'https://example.test/task';
+    assert.equal(await link.getAttribute('href'), target);
+    await page.context().route(target, route => route.fulfill({ body: '任务详情' }));
+    await link.focus();
+    assert.equal(await link.evaluate(node => document.activeElement === node), true);
+    const [popup] = await Promise.all([page.waitForEvent('popup'), link.press('Enter')]);
+    await popup.waitForURL(target);
+    await popup.close();
+    assert.ok(await raw.getByRole('button', { name: '无效链接' }).isDisabled());
+    assert.equal(await raw.locator('img').count(), 0);
+    assert.equal(await raw.getByText('已更新', { exact: true }).evaluate(node => node.tagName), 'STRONG');
+    assert.equal(await page.locator('[data-message="om_bad_card"] .chat-bubble').innerText(), '卡片消息');
+    assert.equal(await page.locator('[data-message="om_deleted_card"] .chat-bubble').innerText(), '这条消息已撤回。');
+    await page.getByRole('button', { name: '搜索当前会话' }).click();
+    await page.getByRole('searchbox', { name: '搜索当前会话' }).fill('进度验收');
+    await page.locator('.chat-card-header mark').getByText('进度验收', { exact: true }).waitFor();
+    await page.close();
+  }
+  assert.notEqual(headers[0], headers[1]);
+  assert.deepEqual(headers.slice(0, 2), headers.slice(2));
 });
 
 test('共享发送框按会话保存草稿并按原操作对账', { skip: !packageName }, async t => {
