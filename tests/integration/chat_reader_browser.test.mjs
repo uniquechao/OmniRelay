@@ -1,8 +1,8 @@
+import { browserAsset } from './browser-assets.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { extname } from 'node:path';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -20,8 +20,6 @@ const task = { id: 'om_task', chat_id: group.id, sender: { name: '飞书 Bot' },
 const briefing = { ...task, id: 'om_brief', body: '{"title":"项目简报"}',
   business_receipt: { id: 'rc_2', project_id: 'beichen', target_kind: 'briefing', target_id: 'brief_1' } };
 const p2pMessage = { ...oldMessage, id: 'om_direct', chat_id: direct.id, body: '收到，谢谢' };
-const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const packageName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
 
 async function mountFixture(page, {
@@ -99,17 +97,7 @@ async function mountFixture(page, {
       if (relative === '/oc_group/messages/om_deleted/context') return route.fulfill(error(410, 'message_deleted'));
       return route.fulfill(error(404, 'message_not_found'));
     }
-    const prototype = path.startsWith('/prototype/');
-    const asset = prototype ? path.slice('/prototype/'.length) : path.slice(1) || 'index.html';
-    for (const folder of prototype ? ['design/prototype'] : ['web', 'design/prototype']) {
-      try {
-        const body = await readFile(new URL('../../' + folder + '/' + asset, import.meta.url));
-        return route.fulfill({ body, contentType: mime[extname(asset)], headers: prototype ? {} : { 'Content-Security-Policy': csp } });
-      } catch (failure) {
-        if (failure.code !== 'ENOENT') throw failure;
-      }
-    }
-    return route.fulfill({ status: 404 });
+    return route.fulfill(await browserAsset(path));
   });
   return {
     queries,

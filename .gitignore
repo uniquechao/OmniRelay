@@ -11,3 +11,6 @@
 
 # Target-host configuration and credentials.
 /deploy/k8s/private/
+
+/node_modules/
+/web/dist/

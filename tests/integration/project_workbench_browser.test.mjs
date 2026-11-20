@@ -1,7 +1,6 @@
+import { browserAsset } from './browser-assets.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { extname } from 'node:path';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -10,7 +9,6 @@ const origin = 'https://project.example.test';
 const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active' };
 const task = { id: 't-99', project_id: project.id, title: '联调验收', status: 'done' };
 const root = '/api/v1/projects/' + project.id;
-const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
 const list = (items) => ({ items, total: items.length });
 
 async function fixture(page) {
@@ -120,18 +118,7 @@ async function fixture(page) {
         );
       throw new Error('意外的项目请求 ' + section);
     }
-    const asset = path.slice(1) || 'index.html';
-    for (const dir of ['web', 'design/prototype']) {
-      try {
-        return await route.fulfill({
-          body: await readFile(new URL('../../' + dir + '/' + asset, import.meta.url)),
-          contentType: mime[extname(asset)],
-        });
-      } catch (err) {
-        if (err.code !== 'ENOENT') throw err;
-      }
-    }
-    return route.fulfill({ status: 404 });
+    return route.fulfill(await browserAsset(path));
   });
   return {
     errors,
