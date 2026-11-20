@@ -32,6 +32,13 @@ func (s *Service) generate(ctx context.Context, actor identity.Principal, id, da
 	if err != nil || day.Year() < 1 || day.Format(time.DateOnly) != date {
 		return briefing{}, errInput
 	}
+	stopped, err := scope(actor, id).relayStopped(ctx, s.pool)
+	if err != nil {
+		return briefing{}, err
+	}
+	if stopped {
+		return briefing{}, errConflict
+	}
 	cfg, err := s.settings(ctx, actor, id)
 	if err != nil {
 		return briefing{}, err
@@ -52,6 +59,7 @@ func (s *Service) generate(ctx context.Context, actor identity.Principal, id, da
 		SELECT $1,$2,$3,$4::text::date,$5,nullif($6,''),$7,$8,$9
 		WHERE EXISTS(SELECT 1 FROM accounts WHERE (tenant_key,app_id,id,open_id)=($1,$2,$5,$10) AND active)
 		AND coalesce((SELECT version FROM project_relay_settings WHERE (tenant_key,app_id,project_id)=($1,$2,$3)),0)=$7
+		AND NOT EXISTS(SELECT 1 FROM project_profiles WHERE (tenant_key,app_id,project_id)=($1,$2,$3) AND status IN ('paused','archived'))
 		ON CONFLICT (tenant_key,app_id,project_id,business_date) DO NOTHING
 		RETURNING id,business_date::text,generated_at,visible_submissions`,
 		actor.TenantKey, actor.AppID, id, date, actor.AccountID, cfg.Target, cfg.Version, revision, count, actor.OpenID).
@@ -151,7 +159,9 @@ func (s *Service) authorizeSend(ctx context.Context, actor identity.Principal, k
 		SELECT 1 FROM project_relay_settings r JOIN project_chat_links l
 		ON (l.tenant_key,l.app_id,l.project_id,l.chat_id)=(r.tenant_key,r.app_id,r.project_id,r.target_chat_id)
 		WHERE (r.tenant_key,r.app_id,r.project_id,r.target_chat_id,r.version)=($1,$2,$3,$4,$5)
-		AND r.public_submission_count)`, actor.TenantKey, actor.AppID, id, target, run.version).Scan(&allowed)
+		AND r.public_submission_count
+		AND NOT EXISTS(SELECT 1 FROM project_profiles p WHERE (p.tenant_key,p.app_id,p.project_id)=(r.tenant_key,r.app_id,r.project_id)
+			AND p.status IN ('paused','archived')))`, actor.TenantKey, actor.AppID, id, target, run.version).Scan(&allowed)
 	return allowed, err
 }
 

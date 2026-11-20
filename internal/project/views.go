@@ -6,10 +6,11 @@ import (
 )
 
 type ProjectPage struct {
-	Items    []Project `json:"items"`
-	Total    int       `json:"total"`
-	Page     int       `json:"page"`
-	PageSize int       `json:"page_size"`
+	Items     []Project `json:"items"`
+	Total     int       `json:"total"`
+	Page      int       `json:"page"`
+	PageSize  int       `json:"page_size"`
+	CanCreate bool      `json:"can_create"`
 }
 
 func viewQuery(panel string, input url.Values) (url.Values, error) {

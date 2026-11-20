@@ -93,6 +93,15 @@ func (s *Service) setSettings(ctx context.Context, actor identity.Principal, id 
 		if err := s.requireSettingsMutation(ctx, tx, actor, id); err != nil {
 			return err
 		}
+		if cfg.Enabled {
+			stopped, err := scope(actor, id).relayStopped(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if stopped {
+				return errConflict
+			}
+		}
 		const columns = `tenant_key,app_id,project_id,target_chat_id,timezone,local_time,plan_enabled,public_submission_count,version`
 		stmt := `UPDATE project_relay_settings SET target_chat_id=nullif($4,''),timezone=$5,local_time=$6,
 			plan_enabled=$7,public_submission_count=$8,version=version+1
