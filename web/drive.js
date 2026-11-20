@@ -1,4 +1,6 @@
 import { fileIcon } from './file-format.js';
+import { assignmentAPI } from './chat-assignment.js';
+import { fileSources, fileProjects, editFileProjects, mountFileMetadata } from './drive-metadata.js';
 
 const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', files:'文件' };
 const coverage = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败', expired:'同步版本已过期', revoked:'访问受限' };
@@ -11,10 +13,14 @@ function sizeText(bytes) {
   return decimal.format(bytes / 1024 ** power) + ' ' + ['B','KB','MB','GB','TB'][power];
 }
 
-export function mountDrive(page, request, signal, {preview, editProjects} = {}) {
+export function mountDrive(page, request, signal, {preview, editProjects, memory = {}} = {}) {
   const { escape, mountList } = window.OmniRelayUI;
-  const states = new Map();
-  let category = 'all';
+  const returning = memory.source && memory.source.key === history.state?.driveReturn ? memory.source : null;
+  delete memory.source;
+  const states = returning?.states ?? new Map();
+  let focusSource = returning;
+  let names = new Map();
+  let category = returning?.category ?? 'all';
   let activeList;
   let files = new Map();
   page.innerHTML = '<header class="head"><h1 id="page-heading" tabindex="-1">文件网盘</h1></header>' +
@@ -24,20 +30,18 @@ export function mountDrive(page, request, signal, {preview, editProjects} = {}) 
   const bar = page.querySelector('.drive-categories');
   const list = page.querySelector('#drive-file-list');
 
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[data-source-file]');
+    if (!link || event.defaultPrevented || event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const key = crypto.randomUUID();
+    history.replaceState({...history.state, driveReturn:key}, '');
+    memory.source = {key, states, category, file:link.dataset.sourceFile, route:link.hash};
+  }, {signal, capture:true});
+
   function previewAttrs(row) {
     const ready = preview && row.version_id && row.sync_state === 'complete';
     return 'data-drive-preview="' + escape(row.id) + '"' + (ready ? '' : ' disabled title="' +
       (row.sync_state === 'complete' ? '预览暂不可用' : '当前同步状态无法预览') + '"');
-  }
-  function sources(row) {
-    const seen = new Set();
-    return row.sources.flatMap(source => {
-      const route = '#/feishu/bot-chats/' + encodeURIComponent(source.chat_id) + '/' + encodeURIComponent(source.message_id);
-      if (seen.has(route)) return [];
-      seen.add(route);
-      return '<a class="drive-source" href="' + escape(route) + '">' +
-        escape(source.chat_name || source.chat_id) + ' · ' + escape(source.sender_name || '未知分享人') + '</a>';
-    }).join('<br>');
   }
   function show() {
     activeList?.abort();
@@ -58,19 +62,28 @@ export function mountDrive(page, request, signal, {preview, editProjects} = {}) 
           params.set('sort',state.sort.key);
           params.set('order',state.sort.direction);
         }
-        const data = await request('/api/v1/feishu/files?' + params, {signal:pageSignal});
+        const [data, choices] = await Promise.all([
+          request('/api/v1/feishu/files?' + params, {signal:pageSignal}),
+          assignmentAPI(request).choices(pageSignal).catch(() => [])
+        ]);
         pageSignal.throwIfAborted();
+        names = new Map(choices.map(item => [item.id, item.label]));
         files = new Map(data.items.map(row => [String(row.id),row]));
-        return {...data, options:{project_id:data.projects}};
+        if (focusSource) requestAnimationFrame(() => {
+          if (pageSignal.aborted || !focusSource) return;
+          const target = [...root.querySelectorAll('[data-source-file]')].find(link =>
+            link.dataset.sourceFile === focusSource.file && link.hash === focusSource.route);
+          (target ?? root.querySelector('[data-search]')).focus();
+          focusSource = null;
+        });
+        return {...data, options:{project_id:Object.fromEntries(Object.entries(data.projects).map(([id,label]) => [id, names.get(id) || label]))}};
       },
       columns:[
         {key:'name',label:'名称',sort:true,render:row => '<button class="drive-file-name" type="button" ' + previewAttrs(row) + '>' +
           fileIcon(row.format_key,row.format) + '<span><strong>' + escape(row.name) + '</strong><small>' + escape(row.format) + '</small></span></button>'},
         {key:'category',label:'分类',sort:true,render:row => escape(categories[row.category] || '文件')},
-        {key:'source',label:'来源',sort:true,render:sources},
-        {key:'project',label:'所属项目',sort:true,render:row => '<button class="row-action drive-projects" type="button" data-drive-projects="' +
-          escape(row.id) + '"' + (editProjects ? '' : ' disabled title="项目改绑暂不可用"') + '>' +
-          row.project_ids.map(id => '<span class="kind">' + escape(id) + '</span>').join('') + '</button>'},
+        {key:'source',label:'来源',sort:true,render:fileSources},
+        {key:'project',label:'所属项目',sort:true,render:row => fileProjects(row, names)},
         {key:'size',label:'大小',sort:true,render:row => '<span class="drive-file-size" title="' +
           (row.size_source === 'original' ? '原件大小' : '大小未知') + '">' + sizeText(row.size_bytes) + '</span>'},
         {key:'updated_at',label:'同步状态',sort:true,render:row => {
@@ -85,7 +98,20 @@ export function mountDrive(page, request, signal, {preview, editProjects} = {}) 
       const button = event.target.closest('[data-drive-projects], [data-drive-preview]');
       if (!button || button.disabled) return;
       const row = files.get(button.closest('tr').dataset.row);
-      if (row) (button.hasAttribute('data-drive-projects') ? editProjects : preview)(row, button, view.refresh, lifetime);
+      if (!row) return;
+      const edit = (record, opener, updated) => editFileProjects({
+        row:record, trigger:opener, request, signal:lifetime, refresh:view.refresh, updated,
+        restoreFocus:() => document.querySelector('dialog[open] [data-drive-projects="' + CSS.escape(String(record.id)) + '"]') ||
+          root.querySelector('[data-drive-projects="' + CSS.escape(String(record.id)) + '"]') ||
+          root.querySelector('[data-search]')
+      });
+      if (button.hasAttribute('data-drive-projects')) {
+        if (editProjects) editProjects(row, button, view.refresh, lifetime);
+        else void edit(row, button);
+      } else preview(row, button, view.refresh, lifetime, {
+        mountMetadata:(dialog, host) => mountFileMetadata(dialog, host, row,
+          record => fileProjects(record, names), edit, lifetime)
+      });
     });
   }
   bar.addEventListener('click', event => {

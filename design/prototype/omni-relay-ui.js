@@ -433,8 +433,7 @@ window.OmniRelayUI = (() => {
     let pending;
     function paint() {
       if (config.loadPage) {
-        void loadPage();
-        return;
+        return loadPage();
       }
       const rows = filteredRows();
       const existingIds = new Set(config.rows.map(row => row.id));

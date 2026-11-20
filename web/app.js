@@ -38,6 +38,7 @@ let routeRequest;
 let view;
 let renderedHash;
 let projectMemory = {};
+let driveMemory = {};
 let checkingNavigation = false;
 const oauthReturnKey = 'omnirelay.feishu.return-route';
 const workbenchRoute = '#/workbench';
@@ -118,6 +119,7 @@ function closeSessionOverlays() {
 function showLogin({ preserveTarget = true } = {}) {
   if (view?.hasDraft?.()) ui.toast('warning', '会话已结束，未保存的修改已清除。');
   projectMemory = {};
+  driveMemory = {};
   clearChatDrafts();
   closeSessionOverlays();
   sessionCheck?.abort();
@@ -199,7 +201,10 @@ async function establishSession(nextSession, signal) {
     permissions:nextSession.access?.permissions,
     roles: nextSession.access?.roles ?? []
   };
-  if (session?.user.id !== nextSession.user.id) projectMemory = {};
+  if (session?.user.id !== nextSession.user.id) {
+    projectMemory = {};
+    driveMemory = {};
+  }
   setSession(nextSession);
   session = nextSession;
 }
@@ -310,7 +315,7 @@ async function render() {
   page.dataset.layout = project?.id ? 'project' : chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
   if (drive) {
-    mountDrive(page, protectedAPI, signal);
+    mountDrive(page, protectedAPI, signal, {memory:driveMemory});
   } else if (project) {
     view = {};
     void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id,navigation:view});
