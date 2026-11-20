@@ -12,7 +12,9 @@ COPY migrations ./migrations
 COPY web ./web
 RUN CGO_ENABLED=0 go test -mod=readonly ./... && \
     CGO_ENABLED=0 go build -mod=readonly -trimpath -o /out/omnirelay ./cmd/omnirelay
-FROM scratch
+FROM python:3.12-slim-bookworm
+COPY internal/drive/preview/requirements.txt /opt/preview/requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: -r /opt/preview/requirements.txt
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/omnirelay /omnirelay
 USER 10000:10000

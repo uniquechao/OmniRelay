@@ -182,6 +182,7 @@ func problem(w http.ResponseWriter, status int, code string) {
 	jsonResponse(w, status, map[string]string{"error": code})
 }
 func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
+	s.registerPreviews(mux, auth)
 	const base = "/api/v1/feishu/files"
 	mux.HandleFunc("GET "+base+"/formats", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := auth(w, r, identity.ValidateSession); ok {
@@ -259,6 +260,7 @@ func messageIDs(f item) []string {
 	return ids
 }
 func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Request, p identity.Principal, f item) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	var v int64
 	if raw := r.PathValue("versionID"); raw != "" {
 		v, _ = strconv.ParseInt(raw, 10, 64)
@@ -269,11 +271,7 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 		problem(w, 404, "file_unavailable")
 		return
 	}
-	rows, err := s.pool.Query(ctx, `SELECT h.byte_size,c.content FROM feishu_file_versions h
- LEFT JOIN LATERAL unnest(h.chunks) WITH ORDINALITY part(digest,ord) ON true
- LEFT JOIN feishu_file_chunks c ON c.file_id=h.file_id AND c.digest=part.digest
- WHERE h.file_id=$6 AND h.id=$8 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)) ORDER BY part.ord`,
-		s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, messageIDs(f), v)
+	rows, err := s.versionChunks(ctx, p, f, messageIDs(f), v)
 	if err != nil {
 		problem(w, 503, "source_unavailable")
 		return
@@ -411,4 +409,12 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 	offset = min(offset, total)
 	end := offset + min(total-offset, limit)
 	jsonResponse(w, 200, map[string]any{"projects": projectOptions, "items": selected[offset:end], "total": total, "offset": offset, "limit": limit})
+}
+
+func (s *Service) versionChunks(ctx context.Context, p identity.Principal, f item, sources []string, v int64) (pgx.Rows, error) {
+	return s.pool.Query(ctx, `SELECT h.byte_size,c.content FROM feishu_file_versions h
+ LEFT JOIN LATERAL unnest(h.chunks) WITH ORDINALITY part(digest,ord) ON true
+ LEFT JOIN feishu_file_chunks c ON c.file_id=h.file_id AND c.digest=part.digest
+ WHERE h.file_id=$6 AND h.id=$8 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)) ORDER BY part.ord`,
+		s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, sources, v)
 }
