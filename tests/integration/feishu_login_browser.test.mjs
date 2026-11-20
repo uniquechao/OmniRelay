@@ -1,9 +1,10 @@
+import { browserAsset } from './browser-assets.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { createRequire } from 'node:module';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -80,17 +81,8 @@ async function respond(request, response) {
     fixture.signedIn = false;
     return response.writeHead(204).end();
   }
-  const name = basename(path) || 'index.html';
-  const contentType = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css' };
-  for (const folder of ['web', 'design/prototype', 'design/prototype/vendor']) {
-    try {
-      const content = await readFile(join(folder, name));
-      return response.writeHead(200, { 'Content-Type': contentType[name.split('.').at(-1)] || 'application/octet-stream' }).end(content);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  response.writeHead(404).end();
+  const asset = await browserAsset(path);
+  response.writeHead(asset.status, asset.headers).end(asset.body);
 }
 
 before(async () => {
@@ -99,6 +91,7 @@ before(async () => {
     ignoreDefaultArgs: ['--disable-back-forward-cache'],
     args: ['--ignore-certificate-errors']
   });
+
   if (goOrigin) return;
   scratch = await mkdtemp('./.feishu-login-test-');
   const key = join(scratch, 'server.key');
@@ -132,7 +125,7 @@ async function startFeishu(page) {
   await page.waitForURL('**/authorize');
 }
 
-test('取消与失败后刷新登录页，重试仍返回原 Bot 页', () => withPage(async page => {
+test('取消与失败后刷新登录页，重试仍返回原 Bot 页', { skip: !!goOrigin }, () => withPage(async page => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin + '/' + botHash);
   for (const [scenario, message] of outcomes) {
@@ -170,7 +163,7 @@ test('取消与失败后刷新登录页，重试仍返回原 Bot 页', () => wit
   assert.equal(await page.evaluate(key => sessionStorage.getItem(key), storageKey), null);
 }, { reducedMotion: 'reduce' }));
 
-test('缺省能力拒绝访问，项目导航和操作点独立于角色名', () => withPage(async page => {
+test('缺省能力拒绝访问，项目导航和操作点独立于角色名', { skip: !!goOrigin }, () => withPage(async page => {
   fixture.signedIn = true;
   fixture.access = { roles:['system_admin'], admin:{feishu_bot:true} };
   await page.goto(origin + '/' + botHash);
@@ -192,7 +185,7 @@ test('缺省能力拒绝访问，项目导航和操作点独立于角色名', ()
   assert.equal(await page.locator('#mobile-nav option[value=workbench]').evaluate(option => option.hidden), true);
 }));
 
-test('后退缓存页可重试且重新校验权限', () => withPage(async page => {
+test('后退缓存页可重试且重新校验权限', { skip: !!goOrigin }, () => withPage(async page => {
   await page.addInitScript(() => addEventListener('pageshow', event => {
     window.restoredFromCache = event.persisted;
   }));
@@ -223,7 +216,7 @@ test('后退缓存页可重试且重新校验权限', () => withPage(async page 
   assert.equal(fixture.botReads, readsBeforeBack);
 }));
 
-test('拒绝未知或外部目标，401 与退出后重新确认会话', () => withPage(async page => {
+test('拒绝未知或外部目标，401 与退出后重新确认会话', { skip: !!goOrigin }, () => withPage(async page => {
   for (const target of ['#/system/unknown', 'https://example.invalid/#/workbench']) {
     await page.goto(origin + '/#/login');
     await page.evaluate(([key, value]) => sessionStorage.setItem(key, value), [storageKey, target]);
@@ -264,11 +257,11 @@ test('拒绝未知或外部目标，401 与退出后重新确认会话', () => w
   await page.locator('#feishu-login:enabled').waitFor();
 }));
 
-test('密码登录、改密、原型主题与减少动态效果', () => withPage(async page => {
+test('密码登录、改密、原型主题与减少动态效果', { skip: !!goOrigin }, () => withPage(async page => {
   const theme = page.locator('#login-page [data-theme-toggle]');
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
-    await page.goto(origin + '/omni-relay-workbench.html?theme=light#/login');
+    await page.goto(origin + '/prototype/omni-relay-workbench.html?theme=light#/login');
     const brand = page.locator('.login-brand');
     const background = node => getComputedStyle(node).backgroundColor;
     const prototypeLight = await brand.evaluate(background);

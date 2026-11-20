@@ -1,7 +1,8 @@
+import { browserAsset } from './browser-assets.mjs';
 import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -29,8 +30,6 @@ const departments = {
   od_eng: [{ id: 'od_ops', parent_id: 'od_eng', name: '运维' }],
   od_delivery: [{ id: 'od_delivery_1', parent_id: 'od_delivery', name: '交付一组' }]
 };
-const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 async function mountFixture(page) {
   let state = visible;
@@ -62,20 +61,7 @@ async function mountFixture(page) {
       return route.fulfill({ status: 404 });
     }
 
-    const isPrototype = path.startsWith('/prototype/');
-    const asset = isPrototype ? path.slice('/prototype/'.length) : path.slice(1) || 'index.html';
-    for (const folder of isPrototype ? ['design/prototype'] : ['web', 'design/prototype']) {
-      try {
-        const body = await readFile(new URL('../../' + folder + '/' + asset, import.meta.url));
-        return route.fulfill({
-          body, contentType: mime[extname(asset)] ?? 'application/octet-stream',
-          headers: isPrototype ? {} : { 'Content-Security-Policy': csp }
-        });
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    }
-    return route.fulfill({ status: 404 });
+    return route.fulfill(await browserAsset(path));
   });
   return { writes, revoke: () => { state = hidden; }, deny: () => { state = null; } };
 }
