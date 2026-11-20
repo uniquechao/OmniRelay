@@ -637,6 +637,7 @@ window.OmniRelayUI = (() => {
     });
 
     function placePopover() {
+      if (!popover.isConnected) return;
       const button = find('[data-more]').getBoundingClientRect();
       const width = popover.offsetWidth;
       const height = popover.offsetHeight;
@@ -656,7 +657,7 @@ window.OmniRelayUI = (() => {
       state.page = 0;
       state.selected.clear();
       paint();
-    });
+    }, {signal:config.signal});
     root.addEventListener('change', event => {
       const control = event.target;
       if (control.matches('[data-row-select]')) {
@@ -689,7 +690,7 @@ window.OmniRelayUI = (() => {
         state.selected.clear();
       }
       paint();
-    });
+    }, {signal:config.signal});
     root.addEventListener('click', event => {
       const button = event.target.closest('button');
       if (!button) return;
@@ -721,7 +722,7 @@ window.OmniRelayUI = (() => {
         paint();
         if (button.disabled) find(button.matches('[data-prev]') ? '[data-next]' : '[data-prev]').focus();
       }
-    });
+    }, {signal:config.signal});
 
     applyColumnWidths();
     paint();
@@ -774,7 +775,7 @@ window.OmniRelayUI = (() => {
   }
 
   function mountOrganizationTree(host, departments, {
-    initialId = '', onChange, includeAll = true, selectBranches = true
+    initialId = '', onChange, includeAll = true, selectBranches = true, loadChildren, onLoadError
   } = {}) {
     const byParent = new Map();
     const departmentIds = new Set(departments.map(item => String(item.id)));
@@ -808,7 +809,7 @@ window.OmniRelayUI = (() => {
       rendered.add(id);
       const path = [...ancestors, item.name];
       const descendants = new Set([id]);
-      included.set(id, { id, path:path.join(' / '), descendants });
+      included.set(id, { id, path:path.join(' / '), parts:path, descendants });
       const key = prefix + '-' + ++sequence;
       const children = (byParent.get(id) ?? []).map((child,index) => {
         const markup = branch(child, path, index === 0);
@@ -816,14 +817,14 @@ window.OmniRelayUI = (() => {
         return markup;
       }).join('');
       const choice = pick(id, item.name, path.join(' / '), ancestors.length && !children ? 'nav-team' : 'nav-projects');
-      if (!children) {
+      if (!children && !(loadChildren && item.hasChildren)) {
         return '<li class="tree-row tree-leaf"><span class="tree-toggle-space" aria-hidden="true"></span>' + choice + '</li>';
       }
       const controls = selectBranches ? toggle(key,item.name,open) + choice : toggle(key,item.name,open,'nav-projects');
       return '<li class="tree-branch"><div class="tree-row">' + controls + '</div>' +
         '<ul class="tree-children" id="' + key + '"' + (open ? '' : ' hidden') + '>' + children + '</ul></li>';
     }
-    let branches = (byParent.get('') ?? []).map((item,index) => branch(item, [], index === 0)).join('');
+    let branches = (byParent.get('') ?? []).map((item,index) => branch(item, [], !loadChildren && index === 0)).join('');
     for (const item of departments) branches += branch(item, [], false);
     host.innerHTML = '<div class="dev-tree" role="group" aria-label="组织结构"><div class="tree-surface tree-branch tree-root">' +
       '<div class="tree-tools" role="group" aria-label="分支显示">' +
@@ -834,16 +835,44 @@ window.OmniRelayUI = (() => {
         : toggle(rootKey,rootLabel,true,'nav-components')) + '</div>' +
       '<ul class="tree-children" id="' + rootKey + '">' + branches + '</ul></div>' +
       '<p class="aux tree-selection" data-org-selection role="status"></p></div>';
-    return mountTree(host.firstElementChild, { initialId, onChange, entries:included });
+    const pending = new Map();
+    const loaded = new Set();
+    async function expand(toggle) {
+      const choice = toggle.parentElement.querySelector('[data-org]');
+      const id = choice?.dataset.org;
+      if (!id || loaded.has(id)) return;
+      if (pending.has(id)) return pending.get(id);
+      const list = document.getElementById(toggle.getAttribute('aria-controls'));
+      const operation = loadChildren(id).then(items => {
+        if (!host.contains(toggle)) return;
+        const path = included.get(id).parts;
+        list.innerHTML = items.map(child => branch(child,path,false)).join('');
+        loaded.add(id);
+      }).catch(error => {
+        if (host.contains(toggle)) {
+          setToggleClosed(toggle,list);
+          onLoadError?.(error);
+        }
+      }).finally(() => pending.delete(id));
+      pending.set(id,operation);
+      return operation;
+    }
+    function setToggleClosed(toggle,list) {
+      toggle.setAttribute('aria-expanded','false');
+      toggle.title = '展开' + toggle.dataset.treeToggle;
+      toggle.setAttribute('aria-label',toggle.title);
+      list.hidden = true;
+    }
+    return mountTree(host.firstElementChild, { initialId, onChange, entries:included, expand:loadChildren && expand });
   }
 
-  function mountTree(root, { initialId = '', onChange, entries }) {
-    const branches = [...root.querySelectorAll('[data-tree-toggle]')];
-    const choices = [...root.querySelectorAll('[data-org]')];
+  function mountTree(root, { initialId = '', onChange, entries, expand }) {
+    const branches = () => [...root.querySelectorAll('[data-tree-toggle]')];
+    const choices = () => [...root.querySelectorAll('[data-org]')];
     const status = root.querySelector('[data-org-selection]');
     const controls = ':scope > .tree-row > [data-tree-toggle]';
-    const lists = new Map([...root.querySelectorAll('.tree-children')].map(list => [list.id,list]));
-    const branchList = toggle => lists.get(toggle.getAttribute('aria-controls'));
+    const branchList = toggle => toggle.closest('.tree-branch').querySelector(':scope > .tree-children');
+    let bulkRevision = 0;
     const rowControl = row => row.querySelector('[data-org]') ?? row.querySelector('[data-tree-toggle]');
     let selection;
 
@@ -853,9 +882,11 @@ window.OmniRelayUI = (() => {
       toggle.setAttribute('aria-label',label);
       toggle.title = label;
       branchList(toggle).hidden = !expanded;
+      if (expanded) return expand?.(toggle);
     }
 
     function openBranch(toggle) {
+      ++bulkRevision;
       const branch = toggle.closest('.tree-branch');
       for (const sibling of branch.parentElement.children) {
         if (sibling === branch || !sibling.matches('.tree-branch')) continue;
@@ -866,7 +897,7 @@ window.OmniRelayUI = (() => {
 
     function select(choice, notify = true) {
       selection = entries.get(choice.dataset.org);
-      choices.forEach(button => button.setAttribute('aria-pressed',String(button === choice)));
+      choices().forEach(button => button.setAttribute('aria-pressed',String(button === choice)));
       status.textContent = '已选择 ' + selection.path;
       if (notify) onChange?.(selection);
     }
@@ -874,11 +905,27 @@ window.OmniRelayUI = (() => {
     root.addEventListener('click',event => {
       const bulk = event.target.closest('[data-tree-expand]');
       if (bulk) {
-        branches.forEach(toggle => setExpanded(toggle,bulk.dataset.treeExpand === 'true'));
+        const revision = ++bulkRevision;
+        const open = bulk.dataset.treeExpand === 'true';
+        const seen = new Set();
+        async function apply() {
+          while (revision === bulkRevision && root.isConnected) {
+            const next = branches().filter(toggle => !seen.has(toggle));
+            if (!next.length) return;
+            for (const toggle of next) {
+              if (revision !== bulkRevision) return;
+              seen.add(toggle);
+              const loading = setExpanded(toggle,open);
+              if (loading) await loading;
+            }
+          }
+        }
+        void apply();
         return;
       }
       const toggle = event.target.closest('[data-tree-toggle]');
       if (toggle) {
+        ++bulkRevision;
         if (toggle.getAttribute('aria-expanded') === 'true') setExpanded(toggle,false);
         else openBranch(toggle);
         return;
@@ -894,6 +941,7 @@ window.OmniRelayUI = (() => {
         event.preventDefault();
         const toggle = row.querySelector('[data-tree-toggle]');
         const expanded = toggle?.getAttribute('aria-expanded') === 'true';
+        ++bulkRevision;
         if (event.key === 'ArrowRight' && toggle) {
           if (!expanded) openBranch(toggle);
           else {
@@ -918,7 +966,7 @@ window.OmniRelayUI = (() => {
       if (rows[next]) rowControl(rows[next]).focus();
     });
 
-    const initialChoice = choices.find(button => button.dataset.org === initialId);
+    const initialChoice = choices().find(button => button.dataset.org === initialId);
     if (initialChoice) {
       let branch = initialChoice.closest('.tree-branch');
       while (branch) {
@@ -927,7 +975,7 @@ window.OmniRelayUI = (() => {
       }
       select(initialChoice,false);
     }
-    return { value:() => selection, focus:() => (initialChoice ?? branches[0]).focus() };
+    return { value:() => selection, focus:() => (initialChoice ?? branches()[0]).focus() };
   }
 
   function combo(id, label, source, multiple = false) {

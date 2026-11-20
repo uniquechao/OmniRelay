@@ -1,3 +1,4 @@
+import {UsersPage} from "../users/UsersPage";
 import {BotPage,ConnectionSettings} from '../connections/Pages';
 import {AuditPage} from '../audit/AuditPage';
 import {useLayoutEffect,useRef,useState} from 'react';
@@ -91,6 +92,9 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
       break;
     case 'settings':
       page=<ConnectionSettings key={visit} locked={locked}/>;
+      break;
+    case 'users':
+      page=<UsersPage key={visit} user={user} guard={view}/>;
       break;
     case 'audit':
       page=<AuditPage key={visit}/>;

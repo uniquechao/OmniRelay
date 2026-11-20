@@ -28,7 +28,7 @@ async function collectPages(api, path, { signal } = {}) {
   do {
     const query = new URLSearchParams({ limit: '100' });
     if (cursor) query.set('cursor', cursor);
-    const page = await api(path + '?' + query, { signal });
+    const page = await api(path + (path.includes('?') ? '&' : '?') + query, { signal });
     if (!Array.isArray(page?.items)) throw new Error('服务返回了无效的列表。');
     records.push(...page.items);
     cursor = page.nextCursor;
@@ -50,48 +50,6 @@ function groupGrants(grants) {
     });
   }
   return byAccount;
-}
-
-function directoryFields(person, account) {
-  const departments = person?.departments ?? [];
-  return {
-    personKey: person?.person_key ?? account?.personKey,
-    departmentIds: [...new Set(departments.map(item => item.id))],
-    org: departments.map(item => item.path.join(' / ')).join('；'),
-    directoryStatus: person?.directory_status ?? account?.directoryStatus,
-    resignedAt: account?.resignedAt,
-    disableProtected: account?.disableProtected === true
-  };
-}
-
-function directoryUsers(accounts, grants, people) {
-  const directoryByAccount = new Map(people.filter(person => person.account_id).map(person => [person.account_id, person]));
-  const accountGrants = groupGrants(grants);
-
-  const registered = accounts.map(account => {
-    const person = directoryByAccount.get(account.id);
-    return {
-      id: account.id,
-      name: person?.name || account.name || account.id,
-      source: account.source === 'local' ? '本地账号' : '飞书',
-      status: account.active ? 'active' : 'disabled',
-      systemRoles: account.active ? account.systemRoles ?? [] : [],
-      roles: accountGrants.get(account.id) ?? [],
-      projects: [],
-      ...directoryFields(person, account)
-    };
-  });
-  const unprovisioned = people.filter(person => person.account_status === 'unprovisioned')
-    .map(person => ({
-      id: directoryPrefix + person.open_id,
-      name: person.name,
-      source: '飞书',
-      status: 'unprovisioned',
-      roles: [],
-      projects: [],
-      ...directoryFields(person)
-    }));
-  return [...registered, ...unprovisioned];
 }
 
 async function roleCatalog(api, options) {
@@ -147,59 +105,23 @@ const snapshotChanged = () => Object.assign(new Error('组织目录已更新，�
 
 export const isDirectoryConflict = error => error.status === 409 && error.data?.error === 'directory_snapshot_changed';
 
-async function readDirectory(api, { signal, onSnapshot } = {}) {
-  let snapshot;
-  async function items(resource, params = {}) {
-    const records = [];
-    const limit = 200;
-    let offset = 0;
-    for (;;) {
-      const query = new URLSearchParams({ ...params, limit, offset });
-      if (snapshot?.visible) query.set('snapshot_version', snapshot.snapshotVersion);
-      const page = await api(directory + '/' + resource + '?' + query, { signal });
-      if (signal?.aborted) throw signal.reason;
-      if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) ||
-          typeof page.visible !== 'boolean' ||
-          (page.visible ? !Number.isSafeInteger(page.snapshot_version) || page.snapshot_version <= 0 : page.snapshot_version !== null)) {
-        throw new Error('飞书目录响应无效。');
-      }
-      const status = directoryStatus(page);
-      if (!snapshot) {
-        snapshot = status;
-        onSnapshot?.(status);
-      }
-      if (snapshot.snapshotVersion !== status.snapshotVersion) throw snapshotChanged();
-      records.push(...page.items);
-      offset += page.items.length;
-      if (offset >= page.total) return records;
-      if (!page.items.length || offset > 1000000) throw new Error('无法读取完整的飞书目录。');
-    }
-  }
-  const queue = await items('departments');
-  const departments = [];
-  const visited = new Set();
-  for (const item of queue) {
-    if (visited.has(item.id)) throw new Error('飞书组织结构数据无效。');
-    visited.add(item.id);
-    departments.push({ id: item.id, name: item.name, parentId: item.parent_id });
-    if (item.has_children) {
-      for (const child of await items('departments', { parent_id: item.id })) queue.push(child);
-    }
-  }
-  const people = await items('people');
-  return { snapshot, departments, people };
+async function directoryPage(api, path, query, signal) {
+  const page = await api(path + '?' + new URLSearchParams(query), { signal });
+  if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) || page.total < 0 ||
+      typeof page.visible !== 'boolean' || (page.visible ? !Number.isSafeInteger(page.snapshot_version) ||
+      page.snapshot_version < 1 : page.snapshot_version !== null)) throw new Error('目录分页响应无效。');
+  if (query.snapshot_version !== undefined && Number(query.snapshot_version) !== (page.snapshot_version ?? 0)) throw snapshotChanged();
+  return page;
 }
 
-async function directoryView(api, options) {
-  // Collect the tree and people together before publishing either to the list.
-  const [view, accounts, grants] = await Promise.all([
-    readDirectory(api, options),
-    collectPages(api, accountPath, options),
-    collectPages(api, grantsPath, options)
-  ]);
-  return {
-    snapshot: view.snapshot, departments: view.departments, users: directoryUsers(accounts, grants, view.people)
-  };
+async function departmentChildren(api, query, signal) {
+  const items = [];
+  for (;;) {
+    const page = await directoryPage(api, directory + '/departments', { ...query, limit:200, offset:items.length }, signal);
+    items.push(...page.items.map(item => ({id:item.id, parentId:item.parent_id, name:item.name, hasChildren:item.has_children})));
+    if (items.length >= page.total) return items;
+    if (!page.items.length) throw new Error('组织节点分页响应无效。');
+  }
 }
 
 function syncRun(run) {
@@ -273,14 +195,15 @@ function provisionAccount(api, segment, signal) {
 // Normalizes the admin view's data at the HTTP boundary. Navigation and client
 // filtering never grant capabilities, which remain controlled by the API.
 export function systemAPI(api) {
-  return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion, query } = {}) => {
+  return async (path, { method = 'GET', body, signal, snapshotVersion, query } = {}) => {
     if (method === 'GET') {
       switch (path) {
         case system + '/connections': return api(path, { signal });
         case system + '/role-catalog': return roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
         case system + '/audit': return listAudit(api, query, signal);
-        case directory + '/view': return directoryView(api, { signal, onSnapshot });
+        case system + '/user-page': return directoryPage(api, path, query, signal);
+        case directory + '/children': return departmentChildren(api, query, signal);
         case directory + '/sync-summary': return getSyncSummary(api, snapshotVersion, signal);
         case directory + '/sync': return getSync(api, { signal });
       }
@@ -294,6 +217,11 @@ export function systemAPI(api) {
 
     const [, account, grantRoute, grant] = accountRoute;
     const id = accountID(account);
+    if (method === 'GET' && !grantRoute) return api(accountPath + '/' + encodeURIComponent(id), {signal});
+    if (method === 'GET' && grantRoute && !grant) {
+      const grants = await collectPages(api, grantsPath + '?accountId=' + encodeURIComponent(id), {signal});
+      return groupGrants(grants).get(id) ?? [];
+    }
     if (method === 'PATCH' && !grantRoute && ['active', 'disabled'].includes(body?.status)) {
       return write(api, accountPath + '/' + encodeURIComponent(id), {
         method, signal, body: { active: body.status === 'active' }

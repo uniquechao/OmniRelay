@@ -28,7 +28,8 @@ func (s *Service) Register(mux *http.ServeMux, authenticate func(http.ResponseWr
 			}
 		})
 	}
-	// The directory view also reads accounts and grants during snapshot refresh.
+	register("GET /api/v1/system/user-page", identity.ValidateSession, s.handleUserPage)
+	register("GET /api/v1/system/accounts/{accountID}", identity.ValidateSession, s.handleAccount)
 	register("GET /api/v1/system/accounts", identity.ValidateSession, s.handleAccounts)
 	register("POST /api/v1/system/accounts", identity.RefreshSessionWithCSRF, s.handlePreauthorizeAccount)
 	register("PATCH /api/v1/system/accounts/{accountID}", identity.RefreshSessionWithCSRF, s.handleAccountStatus)
