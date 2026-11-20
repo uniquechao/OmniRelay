@@ -1,5 +1,7 @@
 import { assignmentAPI, editAssignment } from './chat-assignment.js';
 import { mountChatComposer } from './chat-composer.js';
+import { fileIcon } from './file-format.js';
+
 const chatBase = '/api/v1/feishu/chats';
 const chatHash = '#/feishu/bot-chats';
 const identifier = /^[A-Za-z0-9_-]{1,160}$/;
@@ -386,13 +388,14 @@ export function mountChatReader(host, api, {
       const name = person.name || (fromBot ? '飞书 Bot' : '未知人员');
       const receipt = item.state !== 'deleted' && receiptLink(item.business_receipt);
       const org = orgOf(person);
+      const icons = (item.file_formats ?? []).map(format => fileIcon(format.key, format.label)).join('');
       return separator + `<li class="chat-message" data-message="${esc(item.id)}" tabindex="-1"
         data-author="${fromBot ? 'bot' : 'person'}" ${item.id === anchor ? 'data-source-message' : ''}>
         ${fromBot ? botAvatar : personButton(person, personAvatar(name, person.person_key || name), 'chat-person-button')}
         <div class="chat-message-body"><div class="chat-message-meta">
         ${fromBot ? '<strong>' + esc(name) + '</strong><span class="chat-bot-label">Bot</span>' : personButton(person, esc(name), 'person-name')}
         ${org ? `<span class="person-org" title="${esc(org)}">${esc(org)}</span>` : ''}${time(item.sent_at)}</div>
-        <p class="chat-bubble">${highlight(messageBody(item), query)}</p>
+        <p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}<span>${highlight(messageBody(item), query)}</span></p>
         ${receipt ? `<section class="chat-receipt"><div class="chat-receipt-type">Bot 回执</div><a href="${receipt[0]}">${receipt[1]}</a></section>` : ''}
         ${projectId && item.state !== 'deleted' && identifier.test(item.id) ? `<a class="button chat-page-action" href="#/projects/${esc(projectId)}/tasks/source/message/${esc(item.id)}?chat_id=${esc(selected.id)}">查看关联任务</a>` : ''}
         ${query ? `<button type="button" class="button chat-page-action" data-action="locate" data-message-id="${esc(item.id)}">定位消息</button>` : ''}

@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="omni-relay-system.css">
 <link rel="stylesheet" href="omni-relay-bot-chat.css">
 <link rel="stylesheet" href="chat-reader.css">
+<link rel="stylesheet" href="omni-relay-drive.css">
 <link rel="stylesheet" href="omni-relay-project.css">
 <link rel="stylesheet" href="/omni-relay-task-editor.css">
 </head>
@@ -45,6 +46,9 @@
   <symbol id="status-milestone" viewBox="0 0 24 24"><path d="M12 3 21 12 12 21 3 12zM12 9v6m-3-3h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="status-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5m0 3v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
   <symbol id="status-danger" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m9 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="file-zip" viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zm10 0v5h4M10 5h2m0 2h2m-4 2h2m0 2h2m-4 2h2m-2 2h3v3h-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="file-grid" viewBox="0 0 24 24"><path d="M4 4h16v16H4zm0 5h16M4 14h16M9 9v11m6-11v11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="file-minutes" viewBox="0 0 24 24"><path d="M4 11v2m4-6v10m4-13v16m4-13v10m4-6v2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 <div class="shell" hidden>
   <aside class="rail" id="workspace-rail">
@@ -63,6 +67,7 @@
           </summary>
           <div class="nav-children" id="feishu-nav-children">
             <a href="#/feishu/bot-chats" data-nav="bot-chats">机器人记录</a>
+            <a href="#/feishu/drive" data-nav="drive">文件网盘</a>
           </div>
         </details>
         <details class="nav-group" id="system-nav">
@@ -97,6 +102,7 @@
           <option value="workbench">工作台总览</option>
           <option value="projects">项目列表</option>
           <option value="feishu/bot-chats" hidden>机器人记录</option>
+            <option value="feishu/drive" hidden>文件网盘</option>
           <optgroup label="系统管理">
             <option value="system/users">用户管理</option>
             <option value="system/roles">角色权限</option>

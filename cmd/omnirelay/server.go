@@ -82,6 +82,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
 	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
 	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource)
+	chatService.ConfigureFiles(fileService)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	projectService := project.New(grid, pool, roles, botStore.Status, chatSource, chatService,
 		cfg.botSendEnabled && cfg.appSecret != "")

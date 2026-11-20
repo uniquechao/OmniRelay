@@ -9,11 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/directory"
+	"github.com/uniquechao/OmniRelay/internal/drive"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 type Service struct {
+	files           *drive.Service
 	pool            *pgxpool.Pool
 	tenant, app     string
 	generation      int64
@@ -30,6 +32,8 @@ func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source
 ) *Service {
 	return &Service{pool: pool, tenant: tenant, app: app, generation: generation, source: source, people: people, check: check, receipts: receipts}
 }
+
+func (s *Service) ConfigureFiles(files *drive.Service) { s.files = files }
 
 type conversation struct {
 	assignmentVersion int64

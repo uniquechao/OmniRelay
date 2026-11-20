@@ -23,7 +23,7 @@ import (
 )
 
 func TestReturnPathStaysOnWorkbench(t *testing.T) {
-	for _, path := range []string{"", "/", "/#/projects", "/#/projects/p-1/reports/brief/r-1", "/#/projects/p-1/tasks/source/message/m-1?chat_id=oc_1", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings"} {
+	for _, path := range []string{"", "/", "/#/feishu/drive", "/#/projects", "/#/projects/p-1/reports/brief/r-1", "/#/projects/p-1/tasks/source/message/m-1?chat_id=oc_1", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings"} {
 		if _, err := localReturnPath(path); err != nil {
 			t.Errorf("valid path %q was rejected", path)
 		}
@@ -39,6 +39,10 @@ func TestReturnPathStaysOnWorkbench(t *testing.T) {
 		if !(WorkbenchAccess{Admin: map[string]bool{"settings": true, "feishu_bot": true}}).canReturnTo(path) {
 			t.Errorf("system access did not authorize alias %q", alias)
 		}
+	}
+	if (WorkbenchAccess{Navigation: map[string]bool{"workbench": true}}).canReturnTo("/#/feishu/drive") ||
+		!(WorkbenchAccess{Navigation: map[string]bool{"bot_chats": true}}).canReturnTo("/#/feishu/drive") {
+		t.Fatal("网盘回跳授权不符")
 	}
 	for _, suffix := range []string{"", "/oc_example", "/oc_example/om_example"} {
 		target := "/#/feishu/bot-chats" + suffix

@@ -41,6 +41,9 @@ func (s *testSource) ReadFile(_ context.Context, r Ref, probe bool) (Snapshot, e
 		}
 		return Snapshot{Name: r.Name, Content: []byte{}}, nil
 	}
+	if r.Kind == "file" {
+		return Snapshot{Name: "会议附件.xlsx", Content: []byte("表格")}, nil
+	}
 	return Snapshot{Name: "已同步文档", Content: []byte(s.text)}, nil
 }
 func TestFileArchiveAccess(t *testing.T) {
@@ -214,7 +217,23 @@ func TestFileArchiveAccess(t *testing.T) {
 	if get(object, 200) != payload {
 		t.Fatal("分块原件未完整恢复")
 	}
+	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+ VALUES('t','a','m4','g1',now(),now(),'{"text":"https://example.feishu.cn/file/Sheet"}','text')`)
+	if worked, err := s.index(ctx); err != nil || !worked {
+		t.Fatal(worked, err)
+	}
+	refresh(1)
+	actor := identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}
+	if got := s.CloudFormats(ctx, actor, []string{"Sheet"})["Sheet"].Key; got != "excel" {
+		t.Fatal("云附件格式", got)
+	}
 	exec("DELETE FROM feishu_file_projects")
+	if got := s.CloudFormats(ctx, actor, []string{"Sheet"}); len(got) != 0 {
+		t.Fatal("撤权后仍可见格式", got)
+	}
+	if body := get("?project_id=p", 200); !strings.Contains(body, `"projects":{}`) {
+		t.Fatal("撤权后仍可见项目选项", body)
+	}
 	get(object, 404)
 	if total, _ := page(""); total != 0 {
 		t.Fatal(total)
