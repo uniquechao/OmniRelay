@@ -65,14 +65,14 @@ const authorizedSources = ` FROM feishu_file_sources x
  AND pm.account_id=$4 AND a.open_id=$5 AND a.active AND pm.role<>'revoked'
  AND x.chat_kind='group' AND x.state<>'revoked' AND ($6::bigint=0 OR x.file_id=$6)`
 
-func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]candidate, error) {
+func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string, project string) ([]candidate, error) {
 	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,l.project_id,
  x.file_id,x.kind,x.token,x.name,x.state,x.version_id,CASE WHEN x.kind IN ('attachment','file') THEN coalesce(v.byte_size,x.declared_size) END,
  x.synced_at, (SELECT version FROM feishu_file_project_revisions r WHERE
  (r.tenant_key,r.app_id,r.file_id)=(x.tenant_key,x.app_id,x.file_id)),
  ARRAY(SELECT t.project_id FROM feishu_file_projects t JOIN project_members member USING(tenant_key,app_id,project_id)
  WHERE (t.tenant_key,t.app_id,t.file_id)=(x.tenant_key,x.app_id,x.file_id) AND member.account_id=$4
- AND member.role<>'revoked' ORDER BY t.project_id)`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens)
+ AND member.role<>'revoked' ORDER BY t.project_id)`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) AND ($8='' OR l.project_id=$8) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens, project)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,11 @@ type sourceKey struct {
 }
 
 func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]item, error) {
-	initial, err := s.candidates(ctx, p, id, cloudTokens)
+	return s.visibleInProject(ctx, p, id, cloudTokens, "")
+}
+
+func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id int64, cloudTokens []string, project string) ([]item, error) {
+	initial, err := s.candidates(ctx, p, id, cloudTokens, project)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +137,7 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, c
 			keys[sourceKey{c.ID, c.MessageID, c.ProjectID}] = true
 		}
 	}
-	current, err := s.candidates(ctx, p, id, cloudTokens)
+	current, err := s.candidates(ctx, p, id, cloudTokens, project)
 	if err != nil {
 		return nil, err
 	}

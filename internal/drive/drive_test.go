@@ -330,9 +330,20 @@ func TestFileArchiveAccess(t *testing.T) {
 	if len(docs) != 1 || len(docs[0].Sources) != 1 || docs[0].Sources[0].MessageID != "m1" {
 		t.Fatal(docs)
 	}
+	alice := identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}
+	if sources, err := s.ProjectSources(ctx, alice, "p"); err != nil || len(sources) != 2 ||
+		slices.ContainsFunc(sources, func(src ProjectSource) bool { return src.ChatID != "g1" }) {
+		t.Fatal(sources, err)
+	}
+	if sources, err := s.ProjectSources(ctx, alice, "q"); err != nil || len(sources) != 0 {
+		t.Fatal(sources, err)
+	}
 	exec("UPDATE project_members SET role='revoked'")
 	if total, _ := page(""); total != 0 {
 		t.Fatal(total)
+	}
+	if sources, err := s.ProjectSources(ctx, alice, "p"); err != nil || len(sources) != 0 {
+		t.Fatal(sources, err)
 	}
 	get(taskPath+"/result", 403)
 	get(history, 404)

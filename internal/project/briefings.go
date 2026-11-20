@@ -2,10 +2,9 @@ package project
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,26 +18,13 @@ type briefing struct {
 	ID           string     `json:"id"`
 	Date         string     `json:"business_date"`
 	Target       string     `json:"target_chat_id,omitempty"`
-	VisibleCount int        `json:"visible_submissions"`
+	VisibleCount int        `json:"visible_submissions,omitempty"`
+	SourceState  string     `json:"source_state,omitempty"`
 	GeneratedAt  time.Time  `json:"generated_at"`
 	Delivery     string     `json:"delivery_state"`
 	ConfirmedAt  *time.Time `json:"delivery_confirmed_at,omitempty"`
 	version      int64
 	revision     string
-}
-
-func (s *Service) submissionCount(ctx context.Context, actor identity.Principal, id, date string) (int, string, error) {
-	view, err := s.grid.view(ctx, actor, id, "reports", url.Values{
-		"source": {"member"}, "submission_state": {"submitted"}, "date_from": {date}, "date_to": {date}, "page_size": {"1"},
-	})
-	if err != nil {
-		return 0, "", err
-	}
-	var payload struct{ Revision string }
-	if json.Unmarshal(view.Data, &payload) != nil || payload.Revision == "" || view.Total == nil {
-		return 0, "", errUnavailable
-	}
-	return *view.Total, payload.Revision, nil
 }
 
 func (s *Service) generate(ctx context.Context, actor identity.Principal, id, date string) (briefing, error) {
@@ -113,14 +99,24 @@ func (s *Service) authorizedRun(ctx context.Context, actor identity.Principal, p
 	if err != nil {
 		return briefing{}, err
 	}
+	return run, s.checkRunSource(ctx, actor, projectID, run)
+}
+
+func (s *Service) checkRunSource(ctx context.Context, actor identity.Principal, projectID string, run briefing) error {
+	if !strings.HasPrefix(run.revision, "local:") {
+		return errConflict
+	}
 	count, revision, err := s.submissionCount(ctx, actor, projectID, run.Date)
+	if errors.Is(err, errUnavailable) {
+		return errConflict
+	}
 	if err != nil {
-		return briefing{}, err
+		return err
 	}
 	if revision != run.revision || count != run.VisibleCount {
-		return briefing{}, errConflict
+		return errConflict
 	}
-	return run, nil
+	return nil
 }
 
 func (run briefing) receipt(projectID string) chat.BusinessReceiptKey {

@@ -21,7 +21,6 @@ type configuration struct {
 	botLeaseNamespace, botPodUID           string
 	setupKey                               []byte
 	oauthProxyToken                        string
-	gridOrigin, gridIdentitiesFile         string
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
@@ -104,11 +103,6 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 	}
 	cfg.botLeaseNamespace = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_LEASE_NAMESPACE"))
 	cfg.botSendEnabled = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_SEND_ENABLED")) == "true"
-	cfg.gridOrigin = strings.TrimSpace(getenv("OMNIRELAY_OMNIGRID_ORIGIN"))
-	cfg.gridIdentitiesFile = strings.TrimSpace(getenv("OMNIRELAY_OMNIGRID_IDENTITIES_FILE"))
-	if (cfg.gridOrigin == "") != (cfg.gridIdentitiesFile == "") {
-		return configuration{}, errors.New("OmniGrid origin and identity mappings must be configured together")
-	}
 	cfg.botPodUID = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_POD_UID"))
 	if (cfg.botLeaseNamespace == "") != (cfg.botPodUID == "") {
 		return configuration{}, errors.New("Feishu Bot Lease namespace and Pod UID must be configured together")

@@ -71,7 +71,7 @@ func TestConnectionSettingsContract(t *testing.T) {
 	permissionErr = nil
 	allowed = true
 	if res := get(path, true); res.Code != http.StatusOK || strings.TrimSpace(res.Body.String()) !=
-		`{"items":[{"id":"omnigrid","state":"not_configured"},{"id":"deepseek_harness","state":"not_configured"}]}` {
+		`{"items":[{"id":"omnirelay","state":"local"},{"id":"deepseek_harness","state":"not_configured"}]}` {
 		t.Fatalf("unconfigured response: %d %s", res.Code, res.Body)
 	}
 	if res := get(path+"/unknown", true); res.Code != http.StatusNotFound {

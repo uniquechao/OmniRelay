@@ -173,28 +173,28 @@ result, err := inbox.AcceptInbound(ctx, event)
 
 ## 项目权威接口和八栏（F1）
 
-OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署方通过 `OMNIRELAY_OMNIGRID_ORIGIN` 和 `OMNIRELAY_OMNIGRID_IDENTITIES_FILE` 提供 HTTPS 权威源和只读挂载的映射文件。映射文件为 JSON 数组，每项包含 `account_id`、`open_id`、`user_id` 和该用户本人委托的 OmniGrid API `token`。适配器通过 `/api/v1/auth/me` 核对凭据主体和非服务账号身份。映射加载于启动时，撤销令牌后后续请求立即失效。个人令牌仅用于固定的读取接口。接口配置缺失时项目接口返回 503。
+OmniRelay 使用本地 PostgreSQL 管理项目资料与业务权限。项目目录从当前租户、应用和账号的有效成员记录读取。名称及阶段筛选、分页和总数基于同一快照。已有项目 ID、任务和群关联继续可用。档案未补全时，兼容展示项目 ID 和默认阶段。
 
-`ProjectAccessResolver` 要求正式、有效的成员绑定和当前 `read` 动作。分派核对 `confirm_tasks`，原生项目管理核对 `manage_access`。本地接入管理委派绑定成员 ID 与 OmniGrid 的不透明权限版本。权限版本变动时委派重新核发，此版本也可能随业务日变化。项目目录按 `q`、`status` 筛选，先过滤成员和项目动作，再按 `page`、`page_size` 分页并返回同一集合的 `total`。
-
-栏目路径使用 `/api/v1/projects/{projectID}/` 前缀。OmniGrid 使用真实读取者裁剪来源、列表总数和衍生条目。OmniRelay 在回传前复核项目及栏目版本，过程中授权或来源变化返回 409。
+栏目路径使用 `/api/v1/projects/{projectID}/` 前缀。项目读取前后复核有效成员权限。资料额外校验本地来源读权或飞书分享与群权限。飞书资料暂时不可核验时，回传授权的本地记录并标明部分可用。
 
 | 栏目 | 路径 | 权威边界 |
 | --- | --- | --- |
-| 概览 | `overview` | 项目工作台档案、进展和关注项；关键节点及关联任务读取 OmniRelay 本地里程碑和任务 |
-| 成员 | `members` | OmniGrid 项目名单 |
-| 群聊 | `chats` | OmniRelay 的项目群关联与飞书按读取者核验的群源，消息沿用机器人记录接口 |
-| 会议纪要 | `meetings` | OmniGrid 本人授权的纪要投影 |
-| 文档 | `docs` | OmniGrid 本人授权的飞书资料投影 |
-| 日报 | `reports`、`reports/briefings` | OmniGrid 正式成员提交和覆盖范围，OmniRelay 简报生成与 E1 投递 |
-| 任务 | `tasks` | OmniRelay PostgreSQL 中的正式任务与看板 |
-| 飞书 Bot | `feishu` | OmniRelay 项目接入、目标群、版本化计划及可见的最近简报回执 |
+| 概览 | `overview` | 本地项目档案、里程碑与正式任务 |
+| 成员 | `members` | 本地启用账号和有效成员关系 |
+| 群聊 | `chats` | 本地群关联与飞书核验的读取权 |
+| 会议纪要 | `meetings` | 已授权的本地纪要与该项目群中已核验的飞书纪要 |
+| 文档 | `docs` | 已授权的本地项目资料与该项目群中已核验的飞书分享资料 |
+| 日报 | `reports`、`reports/briefings` | 本地成员提交、简报记录与 E1 投递回执 |
+| 任务 | `tasks` | 本地正式任务、看板、里程碑关联和活动 |
+| 飞书 Bot | `feishu` | 本地接入配置和简报回执，使用飞书校验群与 Bot 状态 |
+
+`PUT profile` 要求 `project.settings`，支持 `name`、`status`、`project_type`、`background` 与 `expected_version`。`PUT reports/mine/{date}` 要求 `project.comment`，支持 `note` 与 `expected_version`，仅写发起人的日报。两个写入均要求会话 CSRF，首次版本为 0，冲突返回 409。日报列表默认仅展示本人记录，项目设置管理员可查看同项目有效成员的提交。
 
 群关联和目标群按租户及应用区分。选择目标群会建立关联，换目标群保留原群的关联。接入设置要求 `project.settings`，写入携带原 `version`，首次使用 0。计划记录 IANA 时区、本地执行时间和启用状态。计划存储和手动发布是独立动作。
 
-`POST feishu/check` 要求 `project.settings`，检查其它账号还要求 `account.read`。输入包含 `account_id`（缺省为自己）、`action`（`project.read`、`project.assign`、`project.settings`）和 `public_scope`（`project_only` 或 `submission_count`）。结果独立报告 Bot、群成员、账号、项目动作和公开范围。校验保持只读，飞书探测采用读取接口，OmniGrid 按原行为维护 API 令牌使用时间。
+`POST feishu/check` 要求 `project.settings`，检查其它账号还要求 `account.read`。输入包含 `account_id`（缺省为自己）、`action`（`project.read`、`project.assign`、`project.settings`）和 `public_scope`（`project_only` 或 `submission_count`）。结果独立报告 Bot、群成员、账号、项目动作和公开范围。校验保持只读，账号和项目动作读取 OmniRelay，飞书探测采用读取接口。
 
-成员日报缺少来源覆盖时沿用上游的未知状态。简报每项目每业务日生成一条记录，固定生成者、数据版本、可见提交数和当时目标。默认仅预览。启用 E1 且项目管理者明确配置 `public_submission_count` 后，手动发布可向当前目标群发送业务日期和经批准的提交数。E1 发出前复核当前账号、项目动作、日报来源版本、目标群及内容。计划版本或目标变更后旧简报不会改投。投递与生成独立，未知回执通过 `POST reports/briefings/{runID}/reconcile` 查询原操作。
+当前业务日没有可核验提交时，简报生成返回来源暂不可用。历史简报保留原生成时间和有权查看的投递回执，旧汇总无法核验时隐藏计数并阻止重新发布。简报每项目每业务日生成一条记录，固定生成者、数据版本、可见提交数和当时目标。默认仅预览。启用 E1 且项目管理者明确配置 `public_submission_count` 后，手动发布可向当前目标群发送业务日期和经批准的提交数。E1 发出前复核当前账号、项目动作、日报来源版本、目标群及内容。计划版本或目标变更后旧简报不会改投。投递与生成独立，未知回执通过 `POST reports/briefings/{runID}/reconcile` 查询原操作。
 
 ## 群归属和项目主群（D1）
 

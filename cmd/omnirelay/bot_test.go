@@ -131,7 +131,7 @@ func TestFeishuBotManagement(t *testing.T) {
 	request("GET", connectionsPath, "", botSession{}, nil, 401)
 	for _, session := range []botSession{admin, operator} {
 		res := request("GET", connectionsPath, "", session, nil, 200)
-		if strings.TrimSpace(res.Body.String()) != `{"items":[{"id":"omnigrid","state":"not_configured"},{"id":"deepseek_harness","state":"not_configured"}]}` {
+		if strings.TrimSpace(res.Body.String()) != `{"items":[{"id":"omnirelay","state":"local"},{"id":"deepseek_harness","state":"not_configured"}]}` {
 			t.Fatalf("unexpected connection settings: %s", res.Body)
 		}
 	}

@@ -12,6 +12,7 @@ const tabs = {
 };
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
 const sourceKinds = ['minutes', 'document', 'sheets', 'bitable', 'file', 'message'];
+const memberRoles = { manager: '项目负责人', editor: '编辑者', member: '成员', reader: '只读成员' };
 const states = {
   planned: '规划中',
   active: '进行中',
@@ -425,11 +426,11 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
           ['成员', '角色', '职责'],
           data.members
             .filter((row) =>
-              [row.display_name, row.role_title, row.responsibility].some((value) =>
+              [row.display_name, row.role_title || memberRoles[row.role], row.responsibility].some((value) =>
                 String(value ?? '').includes(route.params.get('q') || ''),
               ),
             )
-            .map((row) => [esc(row.display_name), esc(row.role_title), esc(row.responsibility)]),
+            .map((row) => [esc(row.display_name), esc(row.role_title || memberRoles[row.role]), esc(row.responsibility)]),
           '暂无项目成员。',
         ),
     );
@@ -469,7 +470,7 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
           briefings(base, data.items) +
             (row
               ? facts([
-                  ['可见提交数', row.visible_submissions],
+                  ['可见提交数', row.visible_submissions ?? (row.source_state === 'unavailable' ? '来源暂不可核验' : '—')],
                   ['生成时间', row.generated_at],
                   ['目标群', row.target_chat_id],
                 ])
@@ -517,11 +518,13 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
         ${c.items.length ? '' : '<p class="pr-lane-empty">暂无任务</p>'}${columnNext(route, c)}</section>`).join('') + '</div>';
   }
   const rows = data.items.map((row) => {
-    const kind = row.ref?.kind || row.resource_type,
+    const kind = row.ref?.kind || row.resource_type || row.kind,
       id = row.ref?.source_id || row.resource_token;
     return [
       esc(row.title || '未命名'),
-      esc(row.editor || row.created_at || '—'),
+      identifier.test(row.chat_id || '') && identifier.test(row.message_id || '')
+        ? link('#/feishu/bot-chats/' + row.chat_id + '/' + row.message_id, '查看分享消息')
+        : esc(row.editor || row.created_at || '—'),
       sourceKinds.includes(kind) && identifier.test(id || '')
         ? link(base + '/tasks/source/' + kind + '/' + id, '查看关联任务')
         : '—',
@@ -589,7 +592,6 @@ function partial(data) {
   );
 }
 function failure(error) {
-  if (error.data?.error === 'project_source_not_connected') return '当前栏目尚未接通数据源。';
   if ([403, 404].includes(error.status)) return '当前项目或来源已不可访问。';
   if (error.status === 409) return '数据或权限已变化，请重新加载。';
   return '暂时无法加载，请重试。';
@@ -758,7 +760,6 @@ export async function mountProjects(host, route, request, { signal, memory, scop
           project_only: '仅项目内',
           account_source_denied: '账号无群访问权',
           inactive_or_missing: '账号未启用',
-          identity_unavailable: '账号未关联',
           not_checked: '未验证',
         };
         try {

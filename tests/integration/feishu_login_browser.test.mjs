@@ -446,7 +446,7 @@ test('Bot 版本复核、检测重试与跨页轮询', {skip:!!goOrigin || !proc
     assert.equal(route.request().headers()['x-omnirelay-activity'],'poll');
     return route.fulfill({json:{...tasks.find(task=>task.name===state).body,id:'check-1'}});
   });
-  await page.route('**/api/v1/system/connections',r=>r.fulfill({json:{items:[{id:'omnigrid',state:'not_configured'},{id:'deepseek_harness',state:'other'}]}}));
+  await page.route('**/api/v1/system/connections',r=>r.fulfill({json:{items:[{id:'omnirelay',state:'local'},{id:'deepseek_harness',state:'other'}]}}));
   await page.goto(origin+'/#/system/bot');
   const toggle=page.locator('#bot-enabled'),save=page.locator('#bot-save'),check=page.locator('#bot-test');
   await toggle.check();
@@ -478,7 +478,7 @@ test('Bot 版本复核、检测重试与跨页轮询', {skip:!!goOrigin || !proc
   await page.getByText('正在检测飞书应用…').waitFor();
   assert.equal(await check.getAttribute('aria-busy'),'true');
   await page.getByRole('link',{name:'连接设置',exact:true}).click();
-  await page.getByText('未接入',{exact:true}).waitFor();
+  await page.getByText('本地管理',{exact:true}).waitFor();
   await page.getByText('状态未知',{exact:true}).waitFor();
   const left=polls;
   await new Promise(resolve=>setTimeout(resolve,2100));

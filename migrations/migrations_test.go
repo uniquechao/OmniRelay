@@ -11,13 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const latestMigration = 21
+
 func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	versions, err := readMigrations()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != 20 {
-		t.Fatalf("预期 20 项迁移，实际 %d", len(versions))
+	if len(versions) != latestMigration {
+		t.Fatalf("预期 %d 项迁移，实际 %d", latestMigration, len(versions))
 	}
 	for i, change := range versions {
 		if change.version != i+1 || len(change.digest) != 64 || change.sql == "" {
@@ -69,8 +71,8 @@ func TestApplyAndCheckPostgreSQL(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM omnirelay_schema_migrations").Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 20 {
-		t.Fatalf("预期已应用 20 项迁移，实际 %d", n)
+	if n != latestMigration {
+		t.Fatalf("预期已应用 %d 项迁移，实际 %d", latestMigration, n)
 	}
 }
 

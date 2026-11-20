@@ -3,14 +3,11 @@ package project
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -23,185 +20,6 @@ import (
 )
 
 var testActor = identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "relay-user", OpenID: "ou_reader"}
-
-type gridFixture struct {
-	identityLost     atomic.Bool
-	reportChanged    atomic.Bool
-	reportOffline    atomic.Bool
-	projectLost      atomic.Bool
-	secondDenied     atomic.Bool
-	readOnlyProject  atomic.Pointer[string]
-	secondRenamed    atomic.Bool
-	sourceLost       atomic.Bool
-	changeDuringRead atomic.Bool
-	changed          atomic.Bool
-}
-
-func (f *gridFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" || r.Header.Get("Authorization") != "Bearer ogt_test_reader" {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	var body string
-	switch r.URL.Path {
-	case "/api/v1/auth/me":
-		body = `{"id":"grid-user","role":"member"}`
-		if f.identityLost.Load() {
-			body = `{"id":"different-user","role":"member"}`
-		}
-	case "/api/v1/projects":
-		body = `{"items":[{"id":"allowed","name":"可读"},{"id":"organization","name":"不可读"}],"total":2}`
-		if f.secondRenamed.Load() {
-			body = `{"items":[{"id":"second","name":"已更名"}],"total":1}`
-		}
-	case "/api/v1/projects/second/state":
-		if f.secondDenied.Load() {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		body = `{"project_id":"second","current_member_id":"member2","actions":["read","manage_access"],"versions":{"access":"v1"}}`
-	case "/api/v1/projects/second/members":
-		body = `{"project_id":"second","members":[{"id":"member2","project_id":"second","active":true,"roster_status":"formal"}]}`
-	case "/api/v1/projects/organization/state":
-		body = `{"project_id":"organization","actions":["read"],"versions":{"access":"v1"}}`
-	case "/api/v1/projects/allowed/state":
-		if f.projectLost.Load() {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		version := "v1"
-		if f.changed.Load() {
-			version = "v2"
-		}
-		body = fmt.Sprintf(`{"project_id":"allowed","current_member_id":"member","business_date":"2026-11-19","actions":["read","manage_access"],"versions":{"access":"v1","docs":%q,"reports":"r1","members":"m1","minutes":"mi1","tasks":"t1","header":"h1","progress":"p1"}}`, version)
-	case "/api/v1/projects/allowed/members":
-		body = `{"project_id":"allowed","members":[{"id":"member","project_id":"allowed","active":true,"roster_status":"formal"}]}`
-	case "/api/v1/projects/allowed/workspace":
-		body = `{"project":{"id":"allowed","name":"可读"},"has_linked_chats":true}`
-	case "/api/v1/projects/allowed/milestones":
-		body = `{"items":[],"progress":{"state":"missing"}}`
-	case "/api/v1/projects/allowed/minutes":
-		body = `{"items":[],"total":0}`
-	case "/api/v1/projects/allowed/documents":
-		body = `{"items":[{"id":"visible-doc"}],"total":1}`
-		if f.sourceLost.Load() {
-			body = `{"items":[],"total":0}`
-		}
-		if f.changeDuringRead.Load() {
-			f.changed.Store(true)
-		}
-	case "/api/v1/projects/allowed/daily-reports/unified":
-		if f.reportOffline.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		if r.URL.Query().Get("source") != "member" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		body = `{"items":[{"record_id":"submitted-1","submission_state":"submitted"}],"total":1,"revision":"report-rev","coverage":{"state":"complete"}}`
-		if f.reportChanged.Load() {
-			body = strings.Replace(body, "report-rev", "report-new-rev", 1)
-		}
-	case "/api/v1/projects/allowed/tasks/task_late":
-		body = `{"id":"task_late","project_id":"allowed","title":"联调任务"}`
-	case "/api/v1/projects/allowed/source-content":
-		body = `{"items":[{"ref":{"kind":"document","source_id":"minute1"},"status":"succeeded"}]}`
-	case "/api/v1/projects/allowed/task-candidates":
-		if r.URL.Query().Get("status") == "confirmed" && r.URL.Query().Get("cursor") == "" {
-			body = `{"items":[],"next_cursor":"next"}`
-		} else {
-			body = `{"items":[{"project_id":"allowed","task_id":"task_late","evidence":[{"resource_type":"minutes","resource_token":"minute1"}]}]}`
-		}
-	case "/api/v1/projects/allowed/board":
-		body = `{"project_id":"allowed","columns":[],"total":0}`
-	default:
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if project := f.readOnlyProject.Load(); project != nil && r.URL.Path == "/api/v1/projects/"+*project+"/state" {
-		body = strings.Replace(body, `"read","manage_access"`, `"read"`, 1)
-		body = strings.Replace(body, `"access":"v1"`, `"access":"v2"`, 1)
-	}
-	_, _ = w.Write([]byte(body))
-}
-
-func testGrid(t *testing.T) (*Grid, *gridFixture) {
-	t.Helper()
-	fixture := &gridFixture{}
-	upstream := httptest.NewTLSServer(fixture)
-	t.Cleanup(upstream.Close)
-	file := filepath.Join(t.TempDir(), "identities.json")
-	if err := os.WriteFile(file, []byte(`[{"account_id":"relay-user","open_id":"ou_reader","user_id":"grid-user","token":"ogt_test_reader"}]`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	grid, err := NewGrid(upstream.URL, file, "tenant", "app", *upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return grid, fixture
-}
-
-func TestProjectRecordLinks(t *testing.T) {
-	grid, f := testGrid(t)
-	ctx := t.Context()
-	lookup := func(id string) (storedTask, error) { return storedTask{ID: id, Project: "allowed"}, nil }
-	v, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "", lookup)
-	if err != nil || v.(storedTask).ID != "task_late" {
-		t.Fatalf("任务定位失败 %v %v", v, err)
-	}
-	for _, tc := range []struct {
-		kind string
-		want int
-	}{{"minutes", 1}, {"document", 0}} {
-		v, err := grid.record(ctx, testActor, "allowed", tc.kind, "minute1", "", lookup)
-		if err != nil || v.(map[string]any)["total"] != tc.want {
-			t.Fatalf("关联任务不符 %v %v", v, err)
-		}
-	}
-	if _, err := grid.record(ctx, testActor, "allowed", "document", "revoked", "", lookup); !errors.Is(err, errDenied) {
-		t.Fatalf("失权来源未识别 %v", err)
-	}
-	f.projectLost.Store(true)
-	if _, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "", lookup); !errors.Is(err, errDenied) {
-		t.Fatalf("失权后仍可读取 %v", err)
-	}
-}
-
-func TestProjectGridFiltersProjectsAndRechecksSources(t *testing.T) {
-	grid, fixture := testGrid(t)
-	ctx := context.Background()
-	page, err := grid.directory(ctx, testActor, nil)
-	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != "allowed" {
-		t.Fatalf("directory: %#v, %v", page, err)
-	}
-	grant, err := grid.ResolveProjectAccess(ctx, testActor, "allowed")
-	if err != nil || !grant.Member || !grant.Manager || grant.CanAssign || grant.MembershipGeneration == "" {
-		t.Fatalf("grant: %#v, %v", grant, err)
-	}
-	docs, err := grid.view(ctx, testActor, "allowed", "docs", nil)
-	if err != nil || docs.Total == nil || *docs.Total != 1 {
-		t.Fatalf("documents: %#v, %v", docs, err)
-	}
-	fixture.sourceLost.Store(true)
-	docs, err = grid.view(ctx, testActor, "allowed", "docs", nil)
-	if err != nil || docs.Total == nil || *docs.Total != 0 || strings.Contains(string(docs.Data), "visible-doc") {
-		t.Fatalf("revoked source: %#v, %v", docs, err)
-	}
-	fixture.changeDuringRead.Store(true)
-	if _, err := grid.view(ctx, testActor, "allowed", "docs", nil); err != errConflict {
-		t.Fatalf("concurrent revocation: %v", err)
-	}
-	fixture.projectLost.Store(true)
-	page, err = grid.directory(ctx, testActor, nil)
-	if err != nil || page.Total != 0 {
-		t.Fatalf("revoked project: %#v, %v", page, err)
-	}
-	fixture.identityLost.Store(true)
-	if _, err := grid.directory(ctx, testActor, nil); err != errUnmapped {
-		t.Fatalf("identity mismatch: %v", err)
-	}
-}
 
 type projectBot struct{ inGroup bool }
 
@@ -291,19 +109,20 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO accounts (id,tenant_key,app_id,open_id,active)
-		VALUES ('relay-user','tenant','app','ou_reader',true),('inactive','tenant','app','ou_inactive',false)`)
+		VALUES ('relay-user','tenant','app','ou_reader',true),('inactive','tenant','app','ou_inactive',false),('viewer','tenant','app','ou_viewer',true)`)
 	exec(`INSERT INTO role_grants (tenant_key,app_id,account_id,role,source)
 		VALUES ('tenant','app','relay-user','system_admin','bootstrap')`)
 	exec(`INSERT INTO feishu_bot_configs (tenant_key,app_id,credentials_generation) VALUES ('tenant','app',1)`)
 	exec(`INSERT INTO feishu_chat_conversations (tenant_key,app_id,chat_id,kind)
 		VALUES ('tenant','app','oc_primary','group'),('tenant','app','oc_hidden','group'),('tenant','app','oc_second','group')`)
-	grid, fixture := testGrid(t)
+	exec(`INSERT INTO project_members (tenant_key,app_id,project_id,account_id,member_id,role)
+		VALUES ('tenant','app','allowed','relay-user','member','manager'),('tenant','app','allowed','viewer','viewer','reader')`)
 	roles := access.New(pool, "tenant", "app")
-	roles.ProjectAccess = grid
+	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	chats := &projectChat{hidden: "oc_hidden"}
 	bot := &projectBot{inGroup: true}
 	active := true
-	service := New(grid, pool, roles, func(context.Context) (system.Status, error) {
+	service := New(pool, roles, func(context.Context) (system.Status, error) {
 		return system.Status{Config: system.Config{CredentialsConfigured: true}, Enabled: active}, nil
 	}, bot, chats, true)
 	mux := http.NewServeMux()
@@ -337,6 +156,19 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 			t.Fatalf("group count: %s", body)
 		}
 	}
+	for _, source := range []struct{ kind, panel string }{{"document", "docs"}, {"minutes", "meetings"}} {
+		path := "/allowed/sources/" + source.kind + "/local-note"
+		request("PUT", path, `{"title":"本地资料","body":"受限正文","reader_account_ids":["relay-user"]}`, 200)
+		if body := request("GET", "/allowed/"+source.panel+"?q=本地", "", 200); !strings.Contains(body, "本地资料") || strings.Contains(body, "受限正文") {
+			t.Fatal(body)
+		}
+		request("GET", path+"/tasks", "", 200)
+		request("PUT", path+"/readers", `{"reader_account_ids":[]}`, 200)
+		if body := request("GET", "/allowed/"+source.panel, "", 200); strings.Contains(body, "本地资料") {
+			t.Fatal(body)
+		}
+		request("GET", path+"/tasks", "", 404)
+	}
 	const checkPath = "/allowed/feishu/check"
 	check := func(account, action, scope string) checkResult {
 		t.Helper()
@@ -358,6 +190,16 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		}
 		return counts
 	}
+	request("PUT", "/allowed/profile", `{"name":"可读","status":"active","expected_version":0}`, 200)
+	request("PUT", "/allowed/profile", `{"name":"禁止覆盖","status":"active","expected_version":0}`, 409)
+	request("PUT", "/allowed/reports/mine/2026-11-19", `{"note":"原始日报","expected_version":0}`, 200)
+	request("PUT", "/allowed/reports/mine/2026-11-19", `{"note":"禁止覆盖","expected_version":0}`, 409)
+	if body := request("GET", "?q=可读&status=active", "", 200); !strings.Contains(body, `"name":"可读"`) {
+		t.Fatal(body)
+	}
+	if body := request("GET", "/allowed/reports?date_from=2026-11-19&date_to=2026-11-19", "", 200); !strings.Contains(body, "原始日报") {
+		t.Fatal(body)
+	}
 	before := countWrites()
 	if r := check("", "project.read", "submission_count"); !r.Passed {
 		t.Fatalf("check: %#v", r)
@@ -365,7 +207,7 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 	if r := check("inactive", "project.read", "submission_count"); r.Account != "inactive_or_missing" || r.Passed {
 		t.Fatalf("inactive: %#v", r)
 	}
-	if r := check("", "project.assign", "submission_count"); r.Action != "denied" || r.Passed {
+	if r := check("viewer", "project.assign", "submission_count"); r.Action != "denied" || r.Passed {
 		t.Fatalf("action: %#v", r)
 	}
 	bot.inGroup = false
@@ -403,14 +245,14 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		VALUES ('tenant','app',$1,'relay-user','oc_primary',1,'test','{}')`, chats.operation)
 	exec(`INSERT INTO feishu_send_parts (tenant_key,app_id,operation_key,position,kind,state,attempted)
 		VALUES ('tenant','app',$1,0,'text','unknown',true)`, chats.operation)
-	fixture.reportChanged.Store(true)
+	request("PUT", "/allowed/reports/mine/2026-11-19", `{"note":"更新后的日报","expected_version":1}`, 200)
+	request("POST", path+"/publish", "", 409)
 	key := run.receipt("allowed")
 	receipts, err := service.LookupAuthorizedReceipts(ctx, testActor, []chat.BusinessReceiptKey{key})
 	if err != nil || len(receipts) != 1 || receipts[0] != key {
 		t.Fatalf("receipt after report change: %#v, %v", receipts, err)
 	}
 	request("POST", path+"/reconcile", "", 200)
-	fixture.reportChanged.Store(false)
 	if chats.reconciled != chats.operation || chats.sends != 1 {
 		t.Fatalf("reconciliation: %s, sends=%d", chats.reconciled, chats.sends)
 	}
@@ -418,10 +260,10 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 	if r := check("", "project.read", "submission_count"); r.Scope != "denied" || r.Passed {
 		t.Fatalf("scope: %#v", r)
 	}
-	request("POST", path+"/publish", "", 404)
+	request("POST", path+"/publish", "", 409)
 	if chats.sends != 1 {
 		t.Fatal("changed target was sent")
 	}
-	fixture.projectLost.Store(true)
+	exec(`UPDATE project_members SET role='revoked' WHERE project_id='allowed' AND account_id='relay-user'`)
 	request("GET", "/allowed/docs", "", 404)
 }

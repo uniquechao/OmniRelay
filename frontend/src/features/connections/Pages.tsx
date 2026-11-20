@@ -29,9 +29,9 @@ export function ConnectionSettings({locked}:{locked:boolean}){
     }).catch(error=>{if(!controller.signal.aborted)setError(errorStatus(error) || 503);});
     return ()=>controller.abort();
   },[attempt,locked]);
-  const service=(id:string,name:string)=><><span translate="no">{name}</span> · <span data-connection={id}>{states?.get(id)==='not_configured'?'未接入':'状态未知'}</span></>;
+  const service=(id:string,name:string)=><><span translate="no">{name}</span> · <span data-connection={id}>{({local:'本地管理',not_configured:'未接入'} as Record<string,string>)[states?.get(id) ?? ''] ?? '状态未知'}</span></>;
   return <Page title="连接设置"><section className="panel"><header className="section-head"><h2>服务连接</h2></header>
-    {states?<Facts items={[{label:'业务数据源',value:service('omnigrid','OmniGrid Business API')},{label:'Agent 运行环境',value:service('deepseek_harness','DeepSeek Harness')}]}/>:
+    {states?<Facts items={[{label:'业务数据源',value:service('omnirelay','OmniRelay')},{label:'Agent 运行环境',value:service('deepseek_harness','DeepSeek Harness')}]}/>:
       error?<><p role="alert">{error===403?'当前账号没有查看连接设置的权限。':'暂时无法读取连接设置，请重试。'}</p>
         {error!==403 && <Button onClick={()=>retry(n=>n+1)}>重试</Button>}</>:!locked && <Loading label="正在读取连接设置…"/>}
   </section></Page>;

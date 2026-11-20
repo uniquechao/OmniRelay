@@ -44,24 +44,15 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 	handle("GET /api/v1/system/connections", "system.read", identity.ValidateSession, s.getConnections)
 }
 
-// ConfigureOmniGrid marks the Business API adapter as configured at startup.
-func (s *Service) ConfigureOmniGrid(configured bool) {
-	s.omniGridConfigured = configured
-}
-
 func (s *Service) getConnections(w http.ResponseWriter, _ *http.Request, _ identity.Principal) {
 	type connectionSetting struct {
 		ID    string `json:"id"`
 		State string `json:"state"`
 	}
-	grid := "not_configured"
-	if s.omniGridConfigured {
-		grid = "configured"
-	}
 	respond(w, http.StatusOK, struct {
 		Items []connectionSetting `json:"items"`
 	}{Items: []connectionSetting{
-		{ID: "omnigrid", State: grid},
+		{ID: "omnirelay", State: "local"},
 		{ID: "deepseek_harness", State: "not_configured"},
 	}})
 }

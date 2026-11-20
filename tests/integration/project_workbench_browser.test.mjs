@@ -599,7 +599,7 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
       case 'reports/briefings/r-1':
         return send({ error: 'project_access_denied' }, 404);
       case 'docs':
-        return send({ error: 'project_source_not_connected' }, 503);
+        return send({ project_id: other.id, data: { ...list([{ kind: 'document', title: '启明项目档案' }]), coverage: { state: 'partial' } } });
       default:
         throw Error('意外的项目请求 ' + section);
     }
@@ -645,7 +645,8 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   await go(base + '/brief/r-1');
   await visible('当前项目或来源已不可访问。');
   await page.getByRole('tab', { name: '文档' }).click();
-  await visible('当前栏目尚未接通数据源。');
+  await visible('部分数据暂不可用。');
+  await visible('启明项目档案');
   assert.doesNotMatch(await page.locator('#page').innerText(), /暂无记录|交付文档|启明群|已送达/);
   assert.deepEqual(writes, []);
   assert.deepEqual(first.errors, []);

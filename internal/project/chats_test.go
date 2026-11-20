@@ -47,6 +47,8 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 	}
 	exec(`INSERT INTO accounts (id,tenant_key,app_id,open_id,active)
 		VALUES ('relay-user','tenant','app','ou_reader',true);
+		INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES
+		('tenant','app','allowed','relay-user','member','manager'),('tenant','app','second','relay-user','member2','manager');
 		INSERT INTO feishu_bot_configs (tenant_key,app_id,credentials_generation,enabled)
 		VALUES ('tenant','app',1,true),('other','app',1,true);
 		INSERT INTO feishu_chat_conversations (tenant_key,app_id,chat_id,kind,peer_open_id)
@@ -56,12 +58,11 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 		VALUES ('other','app','oc_one','allowed');
 		INSERT INTO project_chat_primary (tenant_key,app_id,project_id,chat_id,version)
 		VALUES ('other','app','allowed','oc_one',1)`)
-	grid, fixture := testGrid(t)
 	roles := access.New(pool, testActor.TenantKey, testActor.AppID)
-	roles.ProjectAccess = grid
+	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	source := &assignmentSource{}
 	chats := chat.New(pool, testActor.TenantKey, testActor.AppID, 1, source, nil, roles.Check, chat.ReceiptSources{})
-	service := New(grid, pool, roles, nil, nil, chats, false)
+	service := New(pool, roles, nil, nil, chats, false)
 	mux := http.NewServeMux()
 	auth := func(_ http.ResponseWriter, r *http.Request, policy identity.SessionPolicy) (identity.Principal, bool) {
 		if r.Method == http.MethodPut && policy != identity.RefreshSessionWithCSRF {
@@ -145,7 +146,7 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 	// The transaction must preserve the existing link, primary and plan on failure.
 	exec(fmt.Sprintf(`INSERT INTO project_relay_settings VALUES ('tenant','app','allowed','%s','UTC','18:00',true,true,1)`, replacement.ID))
 	for _, readOnlyID := range []string{"allowed", "second"} {
-		fixture.readOnlyProject.Store(&readOnlyID)
+		exec(fmt.Sprintf(`UPDATE project_members SET role='reader' WHERE tenant_key='tenant' AND project_id='%s'`, readOnlyID))
 		list(readOnlyID)
 		expect(call("GET", "/projects/allowed/chat-reader/"+replacement.ID, ""), 200)
 		expect(move(replacement.ID, "second", version), 404)
@@ -153,18 +154,18 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 			expect(primary(old.ID, global(old.ID).Version, 2), 404)
 			expect(move(replacement.ID, "", version), 404)
 		}
+		exec(fmt.Sprintf(`UPDATE project_members SET role='manager' WHERE tenant_key='tenant' AND project_id='%s'`, readOnlyID))
 	}
-	fixture.readOnlyProject.Store(nil)
-	fixture.secondDenied.Store(true)
+	exec(`UPDATE project_members SET role='revoked' WHERE tenant_key='tenant' AND project_id='second'`)
 	expect(move(replacement.ID, "second", version), 404)
-	fixture.secondDenied.Store(false)
-	fixture.projectLost.Store(true)
+	exec(`UPDATE project_members SET role='manager' WHERE tenant_key='tenant' AND project_id='second'`)
+	exec(`UPDATE project_members SET role='revoked' WHERE tenant_key='tenant' AND project_id='allowed'`)
 	expect(call("GET", "/projects/allowed/chat-reader/"+replacement.ID, ""), 404)
 	expect(move(replacement.ID, "second", version), 404)
 	if got := global(replacement.ID); got != nil {
 		t.Fatalf("revoked project metadata leaked: %+v", got)
 	}
-	fixture.projectLost.Store(false)
+	exec(`UPDATE project_members SET role='manager' WHERE tenant_key='tenant' AND project_id='allowed'`)
 	source.denied.Store(true)
 	expect(move(replacement.ID, "second", version), 404)
 	expect(primary(replacement.ID, version, 2), 404)
@@ -206,7 +207,7 @@ func TestProjectChatAssignmentTransactions(t *testing.T) {
 		t.Fatalf("departed target still configured: %+v (%v)", cfg, err)
 	}
 
-	fixture.secondRenamed.Store(true)
+	expect(call("PUT", "/projects/second/profile", `{"name":"已更名","status":"active","expected_version":0}`), 200)
 	catalogue := expect(call("GET", "/projects", ""), 200)
 	if !strings.Contains(catalogue, `"id":"second","name":"已更名"`) || *global(replacement.ID) != *state {
 		t.Fatalf("rename changed association: %s", catalogue)

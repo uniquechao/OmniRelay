@@ -49,12 +49,11 @@ func TestProjectBriefingFailuresAndIsolation(t *testing.T) {
 		INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES ('tenant','app','oc_alpha','group')`)
 	roles := access.New(pool, "tenant", "app")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
-	grid, upstream := testGrid(t)
 	delivery := &rejectedDelivery{}
 	chats := chat.New(pool, "tenant", "app", 1, &briefingGroup{}, nil, roles.Check, chat.ReceiptSources{})
 	chats.ConfigureDelivery(delivery, true)
 	configured := true
-	svc := New(grid, pool, roles, func(context.Context) (system.Status, error) {
+	svc := New(pool, roles, func(context.Context) (system.Status, error) {
 		return system.Status{Config: system.Config{CredentialsConfigured: configured}, Enabled: true}, nil
 	}, &projectBot{inGroup: true}, chats, true)
 	chats.ConfigureBusinessReceipts(svc)
@@ -105,7 +104,6 @@ func TestProjectBriefingFailuresAndIsolation(t *testing.T) {
 		request("GET", "second/"+panel, "", 404)
 	}
 	actor = manager
-	upstream.reportOffline.Store(true)
 	if r := request("POST", briefs, date, 503); r["error"] != "briefing_generation_unavailable" {
 		t.Fatal(r)
 	}
@@ -114,7 +112,13 @@ func TestProjectBriefingFailuresAndIsolation(t *testing.T) {
 		(SELECT count(*) FROM feishu_send_operations)`).Scan(&runs, &sends); err != nil || runs != 0 || sends != 0 || len(delivery.targets) != 0 {
 		t.Fatalf("生成失败后简报 %d、投递 %d、平台调用 %v：%v", runs, sends, delivery.targets, err)
 	}
-	upstream.reportOffline.Store(false)
+	request("PUT", "allowed/reports/mine/2026-11-19", `{"note":"本地日报","expected_version":0}`, 200)
+	actor = viewer
+	if r := request("GET", "allowed/reports", "", 200); r["total"] != float64(0) {
+		t.Fatal(r)
+	}
+	request("PUT", "allowed/reports/mine/2026-11-19", `{"note":"只读成员","expected_version":0}`, 404)
+	actor = manager
 	run := request("POST", briefs, date, 200)
 	runID := run["id"].(string)
 	path := briefs + "/" + runID
@@ -157,11 +161,15 @@ func TestProjectBriefingFailuresAndIsolation(t *testing.T) {
 	if len(delivery.targets) != 1 {
 		t.Fatalf("撤权后发生投递 %v", delivery.targets)
 	}
-	svc.grid = nil
+	exec(`INSERT INTO project_briefing_runs
+		(tenant_key,app_id,project_id,business_date,account_id,settings_version,source_revision,visible_submissions)
+		VALUES ('tenant','app','allowed','2026-11-20','relay-user',1,'legacy-snapshot',999)`)
 	for _, panel := range []string{"docs", "meetings", "reports", "feishu"} {
-		if r := request("GET", "allowed/"+panel, "", 503); r["error"] != "project_source_not_connected" {
-			t.Fatal(r)
-		}
+		request("GET", "allowed/"+panel, "", 200)
+	}
+	legacy := request("GET", briefs, "", 200)["items"].([]any)[0].(map[string]any)
+	if legacy["source_state"] != "unavailable" || legacy["visible_submissions"] != nil {
+		t.Fatal(legacy)
 	}
 	actor = viewer
 	request("GET", "second/docs", "", 404)

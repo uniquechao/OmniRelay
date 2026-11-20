@@ -27,17 +27,17 @@ type Chat interface {
 }
 
 type Service struct {
-	grid        *Grid
 	pool        *pgxpool.Pool
 	roles       *access.Service
 	botStatus   func(context.Context) (system.Status, error)
 	bot         Bot
 	chat        Chat
+	files       ProjectFiles
 	sendEnabled bool
 }
 
-func New(grid *Grid, pool *pgxpool.Pool, roles *access.Service, status func(context.Context) (system.Status, error), bot Bot, chats Chat, sendEnabled bool) *Service {
-	return &Service{grid, pool, roles, status, bot, chats, sendEnabled}
+func New(pool *pgxpool.Pool, roles *access.Service, status func(context.Context) (system.Status, error), bot Bot, chats Chat, sendEnabled bool) *Service {
+	return &Service{pool: pool, roles: roles, botStatus: status, bot: bot, chat: chats, sendEnabled: sendEnabled}
 }
 
 func (s *Service) require(ctx context.Context, actor identity.Principal, action, id string) error {
@@ -207,21 +207,13 @@ func (s *Service) check(ctx context.Context, actor identity.Principal, id string
 		return result, err
 	default:
 		result.Account = "active"
-		_, err = s.grid.credential(ctx, subject)
-		switch {
-		case errors.Is(err, errUnmapped):
-			result.Account = "identity_unavailable"
-		case err != nil:
-			result.Account = "unavailable"
+		switch err := s.require(ctx, subject, input.Action, id); {
+		case err == nil:
+			result.Action = "allowed"
+		case errors.Is(err, errDenied):
+			result.Action = "denied"
 		default:
-			switch err := s.require(ctx, subject, input.Action, id); {
-			case err == nil:
-				result.Action = "allowed"
-			case errors.Is(err, errDenied):
-				result.Action = "denied"
-			default:
-				result.Action = "unavailable"
-			}
+			result.Action = "unavailable"
 		}
 	}
 	if result.Group == "bot_member" && result.Account == "active" {

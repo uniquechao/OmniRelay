@@ -5,34 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
-func (s *Service) localAuthority() bool {
-	_, ok := s.roles.ProjectAccess.(access.LocalProjects)
-	return ok
-}
-
-func (s *Service) localDirectory(ctx context.Context, a identity.Principal, f url.Values) (ProjectPage, error) {
-	rows, err := s.pool.Query(ctx, `SELECT m.project_id FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
- WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.account_id=$3 AND a.open_id=$4 AND a.active AND m.role!='revoked' AND strpos(lower(m.project_id),lower($5))>0 AND $6 IN ('','active') ORDER BY m.project_id`, a.TenantKey, a.AppID, a.AccountID, a.OpenID, f.Get("q"), f.Get("status"))
-	if err != nil {
-		return ProjectPage{}, err
-	}
-	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Project, error) {
-		var p Project
-		err := row.Scan(&p.ID)
-		p.Name = p.ID
-		p.Status = "active"
-		return p, err
-	})
-	return ProjectPage{Items: items, Total: len(items)}, err
-}
 func (s *Service) localMembers(ctx context.Context, k taskScope) (any, error) {
 	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,'project_id',m.project_id,'display_name',coalesce(nullif(a.name,''),m.member_id),'role',m.role,'active',true,'roster_status','formal') FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
  WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role!='revoked' AND a.active ORDER BY m.member_id`, k.args()...)

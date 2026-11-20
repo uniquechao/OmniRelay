@@ -35,15 +35,6 @@ func newBackendWithAccess(ctx context.Context, pool *pgxpool.Pool, cfg configura
 func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper,
 	roles *access.Service, receipts chat.ReceiptSources,
 ) (http.Handler, *backendWorkers, error) {
-	var grid *project.Grid
-	if cfg.gridOrigin != "" {
-		var err error
-		grid, err = project.NewGrid(cfg.gridOrigin, cfg.gridIdentitiesFile, cfg.tenantKey, cfg.appID,
-			http.Client{Transport: transport, Timeout: 5 * time.Second})
-		if err != nil {
-			return nil, nil, err
-		}
-	}
 	if roles.ProjectAccess == nil {
 		roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	}
@@ -90,13 +81,11 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles)
 	chatService.ConfigureFiles(fileService)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
-	projectService := project.New(grid, pool, roles, botStore.Status, chatSource, chatService,
+	projectService := project.New(pool, roles, botStore.Status, chatSource, chatService,
 		cfg.botSendEnabled && cfg.appSecret != "")
-	if grid != nil {
-		chatService.ConfigureBusinessReceipts(projectService)
-	}
+	chatService.ConfigureBusinessReceipts(projectService)
+	projectService.ConfigureFiles(fileService)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
-	workers.bot.ConfigureOmniGrid(grid != nil)
 	if cfg.appSecret != "" {
 		workers.chat = chatService
 		workers.files = fileService

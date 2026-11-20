@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,20 +41,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return nil, errInput
 			}
 		}
-		var result ProjectPage
-		var err error
-		if s.localAuthority() {
-			result, err = s.localDirectory(r.Context(), actor, filter)
-		} else {
-			result, err = s.grid.directory(r.Context(), actor, filter)
-		}
-		if err != nil {
-			return nil, err
-		}
-		start := min((page-1)*size, result.Total)
-		result.Items = result.Items[start:min(start+size, result.Total)]
-		result.Page, result.PageSize = page, size
-		return result, nil
+		return s.directory(r.Context(), actor, filter, page, size)
 	}
 	handle := func(pattern, action string, next func(http.ResponseWriter, *http.Request, identity.Principal) (any, error)) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -72,9 +58,6 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			defer cancel()
 			r = r.WithContext(ctx)
 			id := r.PathValue("projectID")
-			section, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"+id+"/"), "/")
-			localSection := section == "tasks" || section == "milestones" || section == "overview" || section == "task-update-suggestions"
-			localDirectory := s.localAuthority() && (r.Pattern == "GET /api/v1/projects" || section == "members" || section == "sources" || section == "task-tags")
 			if id != "" {
 				if !identity.ValidProjectID(id) {
 					failure(w, errDenied)
@@ -86,10 +69,6 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 						return
 					}
 				}
-			}
-			if s.grid == nil && !localSection && !localDirectory {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "project_source_not_connected"})
-				return
 			}
 			value, err := next(w, r, actor)
 			if err != nil {
@@ -114,34 +93,17 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PUT "+project+"/task-tags/{tagID}", "project.assign", s.setTag)
 	handle("PUT "+project+"/sources/{kind}/{sourceID}", "project.delegate", s.setSource)
 	handle("PUT "+project+"/tasks/{taskID}/evidence/{kind}/{sourceID}", "project.assign", s.linkEvidence)
-	for panel := range endpoints {
+	for _, panel := range []string{"overview", "members", "meetings", "docs", "reports"} {
 		handle("GET "+project+"/"+panel, "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 			query, err := viewQuery(panel, r.URL.Query())
 			if err != nil {
 				return nil, err
 			}
-			id := r.PathValue("projectID")
-			if panel == "members" && s.localAuthority() {
-				return s.localMembers(r.Context(), scope(actor, id))
-			}
-			if panel != "overview" {
-				return s.grid.view(r.Context(), actor, id, panel, query)
-			}
-			local, err := s.milestones(r.Context(), scope(actor, id), time.Now())
-			if err != nil {
-				return nil, err
-			}
-			if s.grid == nil || s.localAuthority() {
-				return map[string]any{"project_id": id, "panel": panel, "data": map[string]any{"workspace": map[string]any{"project": map[string]string{"id": id}}, "milestones": map[string]any{"items": local}, "coverage": map[string]string{"state": "partial"}}}, nil
-			}
-			view, err := s.grid.view(r.Context(), actor, id, panel, query)
-			if err != nil {
-				return nil, err
-			}
-			view.Data, err = overviewWithMilestones(view.Data, local)
-			return view, err
+			return s.readPanel(r.Context(), actor, r.PathValue("projectID"), panel, query)
 		})
 	}
+	handle("PUT "+project+"/profile", "project.settings", s.setProfile)
+	handle("PUT "+project+"/reports/mine/{date}", "project.comment", s.saveReport)
 	handle("GET "+project+"/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		query, err := viewQuery("tasks", r.URL.Query())
 		if err != nil {
@@ -204,43 +166,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		return scope(actor, r.PathValue("projectID")).task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
 	})
 	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		id, kind, chatID := r.PathValue("projectID"), r.PathValue("kind"), r.URL.Query().Get("chat_id")
-		if s.localAuthority() {
-			return s.localSourceTasks(r, actor)
-		}
-		if kind == "task" {
-			return nil, errInput
-		}
-		var groupVersion int64
-		if kind == "message" {
-			group, err := assignment(r.Context(), s.pool, actor, chatID)
-			if err != nil {
-				return nil, err
-			}
-			if group.ProjectID != id {
-				return nil, errDenied
-			}
-			groupVersion = group.Version
-			if _, err := s.chat.ProjectGroup(r.Context(), actor, chatID); err != nil {
-				return nil, err
-			}
-		}
-		value, err := s.grid.record(r.Context(), actor, id, kind, r.PathValue("sourceID"), chatID, func(taskID string) (storedTask, error) {
-			return scope(actor, id).task(r.Context(), s.pool, taskID, time.Now())
-		})
-		if err != nil {
-			return nil, err
-		}
-		if kind == "message" {
-			group, err := assignment(r.Context(), s.pool, actor, chatID)
-			if err != nil {
-				return nil, err
-			}
-			if group.ProjectID != id || group.Version != groupVersion {
-				return nil, errDenied
-			}
-		}
-		return value, nil
+		return s.localSourceTasks(r, actor)
 	})
 	handle("GET "+project+"/reports/briefings/{runID}", "project.read", s.latestBriefing)
 	handle("GET "+project+"/chats", "project.read", s.getChats)
@@ -361,8 +287,8 @@ func (s *Service) latestBriefing(_ http.ResponseWriter, r *http.Request, actor i
 	}
 	items := []briefing{}
 	if err == nil {
-		run, err := s.authorizedRun(ctx, actor, id, runID)
-		if r.PathValue("runID") == "" && (errors.Is(err, errConflict) || errors.Is(err, errDenied)) {
+		run, err := s.run(ctx, actor, id, runID)
+		if r.PathValue("runID") == "" && errors.Is(err, errDenied) {
 			return map[string]any{"items": items, "total": 0}, nil
 		}
 		if err != nil {
@@ -375,6 +301,12 @@ func (s *Service) latestBriefing(_ http.ResponseWriter, r *http.Request, actor i
 				}
 				run.Target, run.Delivery, run.ConfirmedAt = "", "withheld", nil
 			}
+		}
+		if err := s.checkRunSource(ctx, actor, id, run); err != nil {
+			if !errors.Is(err, errConflict) {
+				return nil, err
+			}
+			run.VisibleCount, run.SourceState = 0, "unavailable"
 		}
 		items = append(items, run)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -399,7 +331,7 @@ func failure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errBriefingSource):
 		code = "briefing_generation_unavailable"
-	case errors.Is(err, errDenied), errors.Is(err, errUnmapped), errors.Is(err, chat.ErrAccessLost):
+	case errors.Is(err, errDenied), errors.Is(err, chat.ErrAccessLost):
 		status, code = http.StatusNotFound, "project_access_denied"
 	case errors.Is(err, errInput):
 		status, code = http.StatusBadRequest, "invalid_project_request"
