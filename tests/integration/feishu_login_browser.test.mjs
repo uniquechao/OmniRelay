@@ -53,6 +53,7 @@ async function respond(request, response) {
   }
   if (path === '/api/v1/me') {
     fixture.meChecks++;
+    if (fixture.probeStatus) return json(response, fixture.probeStatus, {});
     return fixture.signedIn ? json(response, 200, {
       principal: { account_id: 1, name: '测试账号', auth_method: fixture.method },
       csrf_token: fixture.csrfMissing ? '' : mockCSRF,
@@ -183,6 +184,37 @@ test('缺省能力拒绝访问，项目导航和操作点独立于角色名', { 
   await page.reload();
   await page.waitForURL('**/' + botHash);
   assert.equal(await page.locator('#mobile-nav option[value=workbench]').evaluate(option => option.hidden), true);
+}));
+
+test('窗口聚焦复核失败后锁定表单，联网后恢复同账号草稿并清除密码', { skip: !!goOrigin }, () => withPage(async page => {
+  fixture.signedIn = true;
+  fixture.method = 'password';
+  fixture.access = { admin:{feishu_bot:true}, navigation:{system:true}, permissions:{'system.configure':true} };
+  await page.goto(origin + '/' + botHash);
+  const enabled = page.locator('#bot-enabled');
+  await enabled.waitFor();
+  const draft = !await enabled.isChecked();
+  await enabled.setChecked(draft);
+  await page.locator('.rail .account-trigger').click();
+  await page.locator('[data-account="password"]').click();
+  await page.locator('[name=currentPassword]').fill('测试密码');
+  fixture.probeStatus = 503;
+  await page.evaluate(() => dispatchEvent(new Event('focus')));
+  await page.locator('.session-lock[open]').waitFor();
+  assert.equal(await enabled.isVisible(), false);
+  assert.equal(await page.locator('[name=currentPassword]').count(), 0);
+  fixture.probeStatus = 0;
+  await page.evaluate(() => dispatchEvent(new Event('online')));
+  await enabled.waitFor();
+  assert.equal(await enabled.isChecked(), draft);
+  fixture.probeStatus = 503;
+  await page.evaluate(() => dispatchEvent(new Event('focus')));
+  await page.locator('.session-lock[open]').waitFor();
+  fixture.probeStatus = 0;
+  fixture.access.permissions['system.configure'] = false;
+  await page.locator('#session-status button').click();
+  await page.locator('#bot-content').waitFor();
+  assert.equal(await enabled.isVisible(), false);
 }));
 
 test('后退缓存页可重试且重新校验权限', { skip: !!goOrigin }, () => withPage(async page => {

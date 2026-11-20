@@ -29,6 +29,7 @@ test('飞书 Bot 客户端传递条件头、幂等键和 CSRF，并读取原始 
     assert.equal(request.signal, signal);
     assert.equal(request.credentials, 'same-origin');
     assert.equal(request.headers.get('X-CSRF-Token'), step.method === 'GET' ? null : 'fixture-csrf');
+    assert.equal(request.headers.get('X-OmniRelay-Activity'), step.path.endsWith('/check-queued') ? 'poll' : null);
     assert.equal(request.headers.get('If-Match'), step.ifMatch ?? null);
     assert.equal(request.headers.get('Idempotency-Key'), step.key ?? null);
     assert.equal(request.body, step.body === undefined ? undefined : JSON.stringify(step.body));

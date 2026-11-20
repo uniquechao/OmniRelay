@@ -8,12 +8,6 @@ const reasons = {
   invalid_delivery: '内容超出发送限制，请调整后重试。',
   operation_conflict: '操作键已绑定其他内容，请核对回执。'
 };
-const draftPrefix = 'omnirelay.chat-draft.';
-export function clearChatDrafts() {
-  try {
-    for (const key of Object.keys(sessionStorage)) if (key.startsWith(draftPrefix)) sessionStorage.removeItem(key);
-  } catch {}
-}
 const emptyDraft = () => ({ text: '', mentions: [], files: [], operation: null, notice: '' });
 
 // 仅成员选择器插入的区间能生成飞书提及。手动输入的同名文本保持原样。
@@ -71,17 +65,18 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   const get = selector => form.querySelector(selector);
   const editor = get('textarea'), send = get('[type=submit]'), chooser = get('[type=file]');
   const list = get('ul'), panel = get('[role=group]'), recover = get('[data-recover]');
-  const drafts = new Map();
+  const drafts = draftScope?.drafts ?? new Map();
   let active, menu, beforeEdit;
   let composing = false;
-  const storageKey = id => draftPrefix + JSON.stringify([draftScope, id]);
+  // 编辑器共享会话内存，整页刷新时从已核验的会话恢复。
+  const editorKey = id => 'chat.' + id;
   function save(d) {
     if (!draftScope || signal?.aborted) return;
     try {
-      if (!d.text && !d.files.length && !d.operation) sessionStorage.removeItem(storageKey(d.id));
-      else sessionStorage.setItem(storageKey(d.id), JSON.stringify(d, (key, value) =>
+      if (!d.operation && !d.text && !d.files.length) draftScope.store(editorKey(d.id), null);
+      else draftScope.store(editorKey(d.id), JSON.stringify(d, (key, value) =>
         ['blob', 'busy', 'uploading'].includes(key) ? undefined : value));
-    } catch { /* 当前页仍可切换会话并保留草稿。 */ }
+    } catch {}
   }
   function refresh(d) {
     if (d !== active?.draft || signal?.aborted) return;
@@ -142,7 +137,10 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     if (!d) {
       d = emptyDraft();
       if (draftScope) {
-        try { Object.assign(d, JSON.parse(sessionStorage.getItem(storageKey(record.id)))); } catch {}
+        try {
+          const saved = draftScope.read(editorKey(record.id));
+          if (saved) Object.assign(d, saved);
+        } catch {}
       }
       d.id = record.id;
       drafts.set(d.id, d);
