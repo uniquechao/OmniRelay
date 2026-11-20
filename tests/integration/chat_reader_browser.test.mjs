@@ -798,6 +798,15 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
       project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
         ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name}))};
+    const other = {...row, id:18, name:'会议安排.pdf', project_ids:['a'],
+      sources:[{...row.sources[0], message_id:recentMessage.id}]};
+    await page.route(origin + base + '/' + group.id + '/messages/' + task.id + '/context', route =>
+      route.fulfill({json:{items:[oldMessage,task],total:2,anchor_id:task.id}}));
+    const otherContext = base + '/' + group.id + '/messages/' + recentMessage.id + '/context';
+    let deleted = false;
+    await page.route(origin + otherContext, route => route.fulfill(deleted
+      ? {status:410,json:{error:'message_deleted'}}
+      : {json:{items:[recentMessage],total:1,anchor_id:recentMessage.id}}));
     const patches = [];
     await page.route(origin + '/api/v1/projects?**', route =>
       route.fulfill({json:{items:[{id:'a',name:'北辰'},{id:'b',name:second}],total:2}}));
@@ -813,12 +822,20 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
       }
       if (url.pathname.endsWith('/17')) return route.fulfill({json:row});
       const filter = url.searchParams.get('project_id');
-      const items = !filter || row.project_ids.includes(filter) ? [row] : [];
+      const items = [row,other].filter(file => !filter || file.project_ids.includes(filter));
       return route.fulfill({json:{items,total:items.length,projects:Object.fromEntries(row.project_ids.map(id => [id,id]))}});
     });
     await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
     await act(page.locator('[data-drive-category=files]'));
-    const edit = page.locator('tbody [data-drive-projects]');
+    const otherLink = page.locator('tbody [data-source-file="18"]');
+    await act(otherLink);
+    await page.locator('[data-source-message]:focus').getByText('会议安排').waitFor();
+    deleted = true;
+    await page.reload();
+    await page.getByText('这条消息已撤回。').waitFor();
+    assert.equal(await page.locator('[data-source-message]').getByText('会议安排').count(),0);
+    await page.goBack();
+    const edit = page.locator('tbody [data-drive-projects="17"]');
     await act(edit);
     const input = page.getByRole('combobox', {name:'所属项目'});
     await input.fill('启');
@@ -843,7 +860,11 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await links.first().and(page.locator(':focus')).waitFor();
     await act(edit);
     await act(page.getByRole('button',{name:'移除 ' + second}));
-    await act(page.getByRole('button',{name:'取消',exact:true}));
+    const cancel = page.getByRole('button',{name:'取消',exact:true});
+    await act(cancel);
+    await act(page.getByRole('button',{name:'继续编辑'}));
+    assert.equal(await page.locator('[data-remove=b]').count(),0);
+    await act(cancel);
     await act(page.getByRole('button',{name:'不保存'}));
     assert.equal(patches.length,1);
     await page.route(origin + '/api/v1/feishu/files/17/versions/1/previews**', route => {
@@ -853,7 +874,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
       return route.fulfill({json:{version_id:1, task_id:'pdf', stage:'ready',
         meta:{page:1,pages:1,total:1,first:1,last:1}}});
     });
-    await act(page.locator('.drive-file-name'));
+    await act(page.locator('.drive-file-name[data-drive-preview="17"]'));
     const pdf = page.getByRole('img',{name:'PDF 第 1 页'});
     await pdf.waitFor();
     const bounds = await page.locator('dialog[open]').boundingBox();
@@ -861,9 +882,17 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     assert.equal(await pdf.evaluate(node => node.closest('.dialog-body').scrollWidth <= node.closest('.dialog-body').clientWidth),true);
     await page.keyboard.press('Escape');
     await page.locator('.drive-file-name:focus').waitFor();
-    await act(page.locator('.drive-file-name'));
+    await act(page.locator('.drive-file-name[data-drive-preview="17"]'));
     const drawer = page.locator('[data-metadata]');
-    assert.equal(await drawer.locator('.drive-source').first().getAttribute('href'),await links.first().getAttribute('href'));
+    const routes = nodes => nodes.evaluateAll(anchors => anchors.map(link => link.hash));
+    const expected = [oldMessage,task].map(message => '#/feishu/bot-chats/' + group.id + '/' + message.id);
+    assert.deepEqual(await routes(links),expected);
+    assert.deepEqual(await routes(drawer.locator('.drive-source')),expected);
+    await act(drawer.locator('.drive-source').last());
+    await page.locator('[data-source-message]:focus').getByText('任务已分派').waitFor();
+    await page.goBack();
+    await links.last().and(page.locator(':focus')).waitFor();
+    await act(page.locator('.drive-file-name[data-drive-preview="17"]'));
     await act(drawer.locator('[data-drive-projects]'));
     await act(page.getByRole('button',{name:'移除 ' + second}));
     await act(save);
@@ -882,8 +911,18 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await edit.getByText('北辰').waitFor();
     await act(edit);
     assert.equal(await page.locator('[data-remove=b]').count(),0);
-    await act(page.getByRole('button',{name:'取消',exact:true}));
-    await act(page.locator('.drive-file-name'));
+    await act(page.getByRole('option',{name:second}));
+    await act(cancel);
+    await act(page.getByRole('button',{name:'保存并关闭'}));
+    await edit.getByText(second).waitFor();
+    assert.deepEqual(patches.slice(2), [
+      {project_version:5,add_project_ids:['b'],remove_project_ids:[]},
+      {project_version:6,add_project_ids:['b'],remove_project_ids:[]}
+    ]);
+    await page.reload();
+    await edit.getByText(second).waitFor();
+    assert.deepEqual(await routes(page.locator('tbody [data-source-file="17"]')),expected);
+    await act(page.locator('.drive-file-name[data-drive-preview="17"]'));
     fixture.revoke();
     await act(drawer.locator('.drive-source').first());
     await page.getByText('当前账号已无法访问此会话。').waitFor();

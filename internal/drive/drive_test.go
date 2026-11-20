@@ -197,7 +197,27 @@ func TestFileArchiveAccess(t *testing.T) {
 				t.Fatal(src)
 			}
 		}
-		if status := change(linked[0].ProjectVersion, nil, []string{first.project}); status != 200 {
+		// 冲突方重新读取当前版本，保留已经成功的并发修改。
+		if status := change(linked[0].ProjectVersion, []string{second.project}, nil); status != 200 {
+			t.Fatal(status)
+		}
+		_, retried := page("?project_id=" + second.project)
+		if len(retried) != 1 || !slices.Contains(retried[0].Projects, first.project) || !slices.Equal(retried[0].Sources, initial.Sources) {
+			t.Fatal(retried)
+		}
+		exec(`INSERT INTO accounts(id,tenant_key,app_id,open_id) VALUES('guest','t','a','ou_guest');
+		 INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role)
+		 VALUES('t','a','q','guest','gq','manager'),('t','a','r','guest','gr','manager')`)
+		func() {
+			account = "guest"
+			defer func() { account = "alice" }()
+			if total, rows := page("?project_id=" + second.project + "&q=已同步文档"); total != 0 || len(rows) != 0 {
+				t.Fatal(total, rows)
+			}
+			get(path, 404)
+			get(path+"/object", 404)
+		}()
+		if status := change(retried[0].ProjectVersion, nil, []string{first.project}); status != 200 {
 			t.Fatal(status)
 		}
 		if total, _ := page("?project_id=" + first.project); total != 0 {
