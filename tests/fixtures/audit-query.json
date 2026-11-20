@@ -1,0 +1,41 @@
+{
+  "query": { "q": "登录", "kind": "login", "result": "success", "sort": "time", "direction": "desc", "limit": 1 },
+  "response": {
+    "items": [{
+      "id": 9007199254740993,
+      "recordId": "9007199254740993",
+      "actorAccountId": "user-2",
+      "actorLabel": "user-2",
+      "action": "identity.login",
+      "actionLabel": "登录",
+      "kind": "login",
+      "resourceType": "account",
+      "resourceId": "user-2",
+      "result": "success",
+      "changeVersion": 1,
+      "createdAt": "2026-11-19T01:00:00Z",
+      "correlationId": "example-2"
+    }],
+    "total": 2,
+    "nextCursor": "v1.9007199254740993.9007199254740993.1822ee906b8dc58182767c6ab92334fc"
+  },
+  "last": {
+    "items": [{
+      "id": 9007199254740992,
+      "recordId": "9007199254740992",
+      "actorAccountId": "user-2",
+      "actorLabel": "user-2",
+      "action": "identity.login",
+      "actionLabel": "登录",
+      "kind": "login",
+      "resourceType": "account",
+      "resourceId": "user-2",
+      "result": "success",
+      "changeVersion": 1,
+      "createdAt": "2026-11-19T00:00:00Z",
+      "correlationId": "example-1"
+    }],
+    "total": 2
+  },
+  "empty": { "items": [], "total": 0 }
+}

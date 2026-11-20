@@ -180,9 +180,23 @@ func (s *Service) handleAuditEvents(w http.ResponseWriter, r *http.Request, acto
 		writeError(w, err)
 		return
 	}
+	query, err := parseAuditQuery(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	cursor, limit, err := readPage(r)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if query.extended {
+		page, err := s.queryAudit(r.Context(), query, cursor, limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
 		return
 	}
 	var before *int64

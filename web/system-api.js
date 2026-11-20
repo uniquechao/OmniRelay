@@ -115,32 +115,20 @@ async function listRoles(api, options) {
   }));
 }
 
-const auditActions = new Map([
-  ['identity.login', '登录'], ['identity.logout', '退出'], ['identity.password_change', '修改密码'],
-  ['account.preauthorize', '开通飞书账号'], ['account.enable', '启用账号'], ['account.disable', '停用账号'],
-  ['role.bootstrap', '初始化管理员'], ['role.grant', '授予角色'], ['role.revoke', '撤销角色'],
-  ['directory.sync', '同步组织和用户'], ['directory.resign', '确认人员离职'],
-  ['account.disable_protected', '保留最后一位管理员账号']
-]);
-const eventKinds = new Map([
-  ['identity', 'login'], ['account', 'account'], ['role', 'role'], ['directory', 'directory']
-]);
-
-async function listAudit(api, options) {
-  const events = await collectPages(api, system + '/audit-events', options);
-  return events.map(event => ({
-    id: String(event.id),
-    time: event.createdAt,
-    actor: event.directorySyncRunId ? '系统（飞书通讯录同步）' : event.actorAccountId,
-    directorySyncRunId: event.directorySyncRunId,
-    kind: eventKinds.get(event.action.split('.')[0]) ?? 'config',
-    action: auditActions.get(event.action) ?? event.action,
-    target: event.resourceId,
-    result: event.result,
-    before: '',
-    after: '',
-    source: event.correlationId
-  }));
+async function listAudit(api, query, signal) {
+  const params = new URLSearchParams({ sort: 'time', direction: 'desc', ...query });
+  const page = await api(system + '/audit-events?' + params, { signal });
+  if (!Array.isArray(page?.items) || !Number.isSafeInteger(page.total) || page.total < 0) {
+    throw new Error('审计分页响应无效。');
+  }
+  return {
+    ...page,
+    items: page.items.map(event => ({
+      id: event.recordId, time: event.createdAt, actor: event.actorLabel,
+      directorySyncRunId: event.directorySyncRunId, kind: event.kind, action: event.actionLabel,
+      target: event.resourceId, result: event.result, before: '', after: '', source: event.correlationId
+    }))
+  };
 }
 
 function directoryStatus(response) {
@@ -285,13 +273,13 @@ function provisionAccount(api, segment, signal) {
 // Normalizes the admin view's data at the HTTP boundary. Navigation and client
 // filtering never grant capabilities, which remain controlled by the API.
 export function systemAPI(api) {
-  return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion } = {}) => {
+  return async (path, { method = 'GET', body, signal, onSnapshot, snapshotVersion, query } = {}) => {
     if (method === 'GET') {
       switch (path) {
         case system + '/connections': return api(path, { signal });
         case system + '/role-catalog': return roleCatalog(api, { signal });
         case system + '/roles': return listRoles(api, { signal });
-        case system + '/audit': return listAudit(api, { signal });
+        case system + '/audit': return listAudit(api, query, signal);
         case directory + '/view': return directoryView(api, { signal, onSnapshot });
         case directory + '/sync-summary': return getSyncSummary(api, snapshotVersion, signal);
         case directory + '/sync': return getSync(api, { signal });

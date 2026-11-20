@@ -161,6 +161,21 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
   const focusAction = (key,id) => [...list.querySelectorAll('[data-admin-action]')].find(button =>
     button.dataset.adminAction === key && button.dataset.record === String(id)) ?? focusHeading();
 
+  const auditCursors = [];
+  async function loadAuditPage(state, pageSignal) {
+    const page = state.page;
+    const query = { limit: state.pageSize, q: state.query, kind: state.filters.kind || '',
+      result: state.filters.result || '', sort: state.sort.key, direction: state.sort.direction };
+    if (page) query.cursor = auditCursors[page];
+    const result = await request('/audit', { query, signal: pageSignal });
+    if (!pageSignal.aborted) {
+      auditCursors.length = page + 1;
+      if (result.nextCursor) auditCursors.push(result.nextCursor);
+      rows.splice(0, rows.length, ...result.items);
+    }
+    return { ...result, options: { kind: eventKinds, result: eventResults } };
+  }
+
   function configuration() {
     const shared = { key:'system-' + section, label:titles[section], selection:false, rows };
     if (section === 'users') return {
@@ -199,7 +214,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
       ]
     };
     return {
-      ...shared, itemLabel:'操作、操作者或编号', rowLabel:entry => entry.action,
+      ...shared, states:new Map(), signal:signal ?? new AbortController().signal, loadPage:loadAuditPage,
+      itemLabel:'操作、操作者或编号', rowLabel:entry => entry.action,
       search:entry => [entry.actor,entry.action,entry.target,entry.id].join(' '),
       filters:[{ key:'kind', label:'事件类型', options:eventKinds },{ key:'result', label:'结果', options:eventResults }],
       defaultSort:{ key:'time', direction:'desc' },
@@ -835,6 +851,8 @@ export async function mountAdmin(page, section, api, { user, signal } = {}) {
         replaceCatalog(await request('/role-catalog'));
         if (!inPage()) return;
         await refreshUsers();
+      } else if (section === 'audit') {
+        mounted = mountList(list, configuration());
       } else {
         const next = await request('/' + section);
         if (inPage()) replaceRows(next);
