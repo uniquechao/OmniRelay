@@ -46,7 +46,12 @@ export async function browserAsset(target, { setup = false } = {}) {
     file = resolve(process.env.OMNIRELAY_BROWSER_DIST, './' + name);
   } else {
     legacy ??= embeddedPaths();
-    file = legacy.get(name);
+    if (setup) {
+      if (path !== '/' && path !== '/setup' && !path.startsWith('/assets/')) return { status: 404 };
+      file = legacy.get('dist/' + name);
+    } else if (!name.startsWith('dist/')) {
+      file = legacy.get(name);
+    }
   }
   if (!file) return { status: 404 };
   try {

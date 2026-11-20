@@ -3,6 +3,7 @@ WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY frontend ./frontend
+COPY web ./web
 COPY design/prototype ./design/prototype
 COPY vite.config.mjs tsconfig.json ./
 RUN npm run typecheck && npm run build

@@ -35,7 +35,7 @@ test('预发布构建运行工作台和首次配置两个入口', { skip: !dist 
     await page.getByRole('heading', { name: '首次配置' }).waitFor();
     await page.getByText(setup + '/auth/feishu/callback', { exact: true }).waitFor();
     await page.goto(setup + '/?setup=complete');
-    await page.getByText('配置已保存。').waitFor();
+    await page.getByText('配置已保存，正在启动登录服务…').waitFor();
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

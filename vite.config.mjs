@@ -10,7 +10,7 @@ export default defineConfig({
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         const url = new URL(req.url, 'http://localhost');
-        if (req.method === 'GET' && (url.pathname === '/setup' ||
+        if (req.method === 'GET' && req.headers.accept?.includes('text/html') && (url.pathname === '/setup' ||
             (url.pathname === '/' && url.searchParams.get('setup') === 'complete'))) {
           req.url = '/setup.html' + url.search;
         }

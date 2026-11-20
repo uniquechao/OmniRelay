@@ -3,7 +3,6 @@ package web
 
 import (
 	"embed"
-	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -18,19 +17,14 @@ var frontend embed.FS
 const contentPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 func Register(mux *http.ServeMux) {
+	files := registerBuildAssets(mux)
 	if dir := os.Getenv("OMNIRELAY_PREVIEW_DIR"); dir != "" {
-		files := os.DirFS(dir)
 		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
-				servePreview(w, r, files, "index.html")
+				serveBuildFile(w, r, files, "index.html")
 				return
 			}
-			name := strings.TrimPrefix(r.URL.Path, "/")
-			if !strings.HasPrefix(name, "assets/") || !fs.ValidPath(name) {
-				http.NotFound(w, r)
-				return
-			}
-			servePreview(w, r, files, name)
+			http.NotFound(w, r)
 		})
 		return
 	}
@@ -61,22 +55,40 @@ func Register(mux *http.ServeMux) {
 	})
 }
 
-//go:embed setup.html
-var setupPage string
+//go:embed dist/setup.html dist/assets
+var setupBuild embed.FS
 
-// ServeSetup serves the initial configuration form while the backend is unconfigured.
-func ServeSetup(w http.ResponseWriter, r *http.Request) {
-	if dir := os.Getenv("OMNIRELAY_PREVIEW_DIR"); dir != "" {
-		servePreview(w, r, os.DirFS(dir), "setup.html")
-		return
+func registerBuildAssets(mux *http.ServeMux) fs.FS {
+	files, err := fs.Sub(setupBuild, "dist")
+	if err != nil {
+		panic(err)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", contentPolicy)
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, setupPage)
+	if dir := os.Getenv("OMNIRELAY_PREVIEW_DIR"); dir != "" {
+		files = os.DirFS(dir)
+	}
+	mux.HandleFunc("GET /assets/", func(w http.ResponseWriter, r *http.Request) {
+		serveBuildFile(w, r, files, strings.TrimPrefix(r.URL.Path, "/"))
+	})
+	return files
 }
 
-func servePreview(w http.ResponseWriter, r *http.Request, files fs.FS, name string) {
+// RegisterSetup 注册首次配置入口及其构建资源。
+func RegisterSetup(mux *http.ServeMux) {
+	files := registerBuildAssets(mux)
+	page := func(w http.ResponseWriter, r *http.Request) {
+		serveBuildFile(w, r, files, "setup.html")
+	}
+	mux.HandleFunc("GET /setup", page)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("setup") == "complete" {
+			page(w, r)
+			return
+		}
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+	})
+}
+
+func serveBuildFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string) {
 	w.Header().Set("Content-Security-Policy", contentPolicy)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
