@@ -82,6 +82,7 @@ func (s *Service) Register(mux *http.ServeMux,
 			handler(w, r.WithContext(ctx), p, scope)
 		}
 	}
+	mux.HandleFunc("GET "+route+"/messages/count", protect(s.getMessageCount))
 	for _, prefix := range []string{route, "/api/v1/projects/{projectID}/chat-reader"} {
 		mux.HandleFunc("GET "+prefix, protect(s.getConversations))
 		mux.HandleFunc("GET "+prefix+"/search", protect(s.getMessages))

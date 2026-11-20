@@ -139,6 +139,7 @@ td a:hover { text-decoration: underline; }
 <link rel="stylesheet" href="omni-relay-system.css">
 <link rel="stylesheet" href="omni-relay-bot-chat.css">
 <link rel="stylesheet" href="omni-relay-drive.css">
+<link rel="stylesheet" href="omni-relay-overview.css">
 </head>
 <body>
 <div id="workbench-loading" class="or-loading-splash"><p>正在打开工作台…</p></div>
@@ -571,16 +572,15 @@ function renderProject(id, tab, html) {
 const column = (key, label, render, sort, secondary = false) => ({ key, label, render, sort, secondary });
 const stageOptions = { progress:statuses.progress, pending:statuses.pending, success:statuses.success, danger:statuses.danger };
 
-function projectListConfig(area) {
+function projectListConfig() {
   const rows = Object.entries(projects).map(([id, project]) => ({ id, ...project }));
   return {
-    key: area, label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
+    key:'projects', label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
     search:row => [row.name, row.lead].join(' '),
     filters:[
       { key:'status', label:'项目阶段', options:stageOptions },
       { key:'lead', label:'负责人', options:Object.fromEntries([...new Set(rows.map(row => row.lead))].map(name => [name,name])) }
     ],
-    action:area === 'workbench' ? '<a class="button primary" href="#/projects">查看项目列表</a>' : '',
     columns:[
       column('name','项目名称', row => '<a href="' + projectUrl(row.id) + '">' + row.name + '</a>', row => row.name),
       column('status','阶段', row => chip(row.status), row => statuses[row.status]),
@@ -620,7 +620,40 @@ const tipExamples = {
 function showExampleTip(level) {
   OmniRelayUI.toast(level, tipExamples[level]);
 }
+function renderOverview() {
+  const icon = (name, className = 'icon') =>
+    '<svg class="' + className + '" aria-hidden="true"><use href="#' + name + '"/></svg>';
+  const chevron = icon('action-expand', 'icon overview-chevron');
+  const number = new Intl.NumberFormat('zh-CN');
+  const entries = Object.entries(projects);
+  const sample = [
+    ['#/projects', 'nav-projects', '项目总数', entries.length, '当前可访问的项目'],
+    ['#/feishu/bot-chats', 'nav-bot-chat', '归档消息', 1286, '可查看且未撤回的消息'],
+    ['#/feishu/drive', 'file-grid', '文件总数', 47, '当前可见的网盘文件'],
+    ['#/system/users', 'nav-team', '启用用户', 26, '已启用的工作台账号']
+  ];
+  const summary = sample.map(([href, symbol, label, count, detail]) =>
+    '<a class="overview-metric" href="' + href + '"><span class="overview-metric-label">' +
+    icon(symbol) + label + chevron + '</span><span class="overview-metric-value">' +
+    number.format(count) + '</span><span class="aux">' + detail + '</span></a>').join('');
+  const rows = entries.slice(0, 10).map(([id, project]) => [
+    '<a href="' + projectUrl(id) + '">' + project.name + '</a>', project.kind, chip(project.status)
+  ]);
+  const projectPanel = panel('项目速览',
+    '<div class="overview-project-table">' + table('项目速览', [['项目名称'], ['类型'], ['阶段']], rows) + '</div>' +
+    (entries.length > rows.length ? '<p class="aux overview-project-note">显示前 ' + rows.length + ' 个项目</p>' : ''),
+    '<a class="button primary" href="#/projects">查看项目列表</a>');
+  const shortcuts = [...systemNav.querySelectorAll('a[data-system]')].map(link =>
+    '<li><a href="' + link.hash + '">' + link.textContent + chevron + '</a></li>').join('');
+  return '<div class="overview"><header class="head overview-heading"><div class="overview-title">' + heading(labels.workbench) +
+    '<span class="sample">示例数据</span></div><button class="button neutral overview-refresh" type="button" data-overview-refresh>' +
+    icon('chat-refresh') + '刷新数据</button></header>' +
+    '<section class="overview-metrics" aria-label="工作台统计">' + summary + '</section>' +
+    '<div class="overview-content" data-has-shortcuts="true">' + projectPanel +
+    panel('系统管理', '<ul class="overview-shortcuts">' + shortcuts + '</ul>') + '</div></div>';
+}
 function renderGlobal(area) {
+  if (area === 'workbench') return renderOverview();
   return '<header class="head">' + heading(labels[area]) + '</header><section id="standard-list"></section>';
 }
 
@@ -705,7 +738,7 @@ function render() {
   const listLayout = list || (systemPage && !settingsView) || developerPage === 'list';
   page.dataset.layout = id ? 'project' : listLayout || feishuPage === 'drive' ? 'list' : feishuPage === 'bot-chats' ? 'bot-chat' : developerPage === 'colors' ? 'palette' : 'content';
   page.scrollTop = 0;
-  if (list) OmniRelayUI.mountList(list, area === 'runs' ? runListConfig() : projectListConfig(area));
+  if (list) OmniRelayUI.mountList(list, area === 'runs' ? runListConfig() : projectListConfig());
   if (developerPage) OmniRelayDeveloper.mount(page, developerPage);
   if (feishuPage === 'bot-chats') OmniRelayBotChat.mount(page,projects,undefined,chatGroup,chatMessage);
   if (feishuPage === 'drive') OmniRelayDrive.mount(page,projects);
@@ -742,6 +775,7 @@ document.addEventListener('click', event => {
   if (tab) selectTab(tab.dataset.tab);
   const tip = event.target.closest('[data-tip]');
   if (tip) showExampleTip(tip.dataset.tip);
+  if (event.target.closest('[data-overview-refresh]')) OmniRelayUI.toast('success', '示例数据已刷新。');
 });
 page.addEventListener('keydown', event => {
   const tab = event.target.closest('[data-tab]');

@@ -229,6 +229,27 @@ func parseCursor(encoded string) (*time.Time, string, bool) {
 	return &at, id, true
 }
 
+func (s *Service) getMessageCount(w http.ResponseWriter, r *http.Request, p identity.Principal, scope authorizedScope) {
+	ctx := r.Context()
+	tx, err := s.readTx(ctx, p)
+	if err != nil {
+		sourceError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var total int64
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM feishu_chat_messages m WHERE `+visibleMessages+
+		` AND NOT m.deleted`, s.tenant, s.app, scope.ids()).Scan(&total); err != nil {
+		sourceError(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		sourceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"total": total})
+}
+
 func (s *Service) getMessages(w http.ResponseWriter, r *http.Request, p identity.Principal, scope authorizedScope) {
 	q, ok := searchQuery(r)
 	search := strings.HasSuffix(r.URL.Path, "/search")

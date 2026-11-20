@@ -7,7 +7,7 @@
 | 模板 | 原型入口 | 统一结构 |
 | --- | --- | --- |
 | 标准列表页 | [项目列表](../prototype/omni-relay-workbench.html#/projects)、[运行记录](../prototype/omni-relay-workbench.html#/runs)、[开发者 · 列表页](../prototype/omni-relay-workbench.html#/developer/list) | 标题、独立工具栏、填满高度的表格区、分页区 |
-| 列表总览 | [工作台总览](../prototype/omni-relay-workbench.html#/workbench) | 标准列表页，可附跨页主操作 |
+| 工作台总览 | [工作台总览](../prototype/omni-relay-workbench.html#/workbench) | 可访问的项目、归档消息、网盘文件与启用用户数量，项目速览和系统管理入口 |
 | 项目工作台 | [项目概览](../prototype/omni-relay-workbench.html#/projects/beichen/overview) | 项目标识、标题、状态、页签、内容区 |
 | 项目内列表 | [任务](../prototype/omni-relay-workbench.html#/projects/beichen/tasks) | 在项目页签内复用标准列表 |
 | 标准表单页 | [开发者 · 表单页](../prototype/omni-relay-workbench.html#/developer/form) | 标题、按业务分组的字段、就近校验、底部操作 |

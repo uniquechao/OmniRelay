@@ -289,6 +289,12 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("alice", "GET", "/search?q=会议", 200), "total", "3")
 	expect(request("alice", "GET", "/search?q=会议&kind=p2p", 200), "total", "1")
 	expect(request("alice", "GET", "/search?q=会议&kind=group", 200), "total", "2")
+	count := request("alice", "GET", "/messages/count", 200)
+	expect(count, "total", "3")
+	if len(count) != 1 {
+		t.Fatalf("count returned other fields: %v", count)
+	}
+	expect(request("admin", "GET", "/messages/count", 200), "total", "5")
 	direct := request("alice", "GET", "/oc_private", 200)
 	expect(direct, "total", "1")
 	members := request("alice", "GET", "/oc_private/members", 200)
@@ -313,6 +319,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	}
 	src.unavailable["oc_group"] = true
 	expect(request("alice", "GET", "/oc_group/messages", 503), "error", `"chat_unavailable"`)
+	expect(request("alice", "GET", "/messages/count", 503), "error", `"chat_unavailable"`)
 	src.unavailable["oc_group"] = false
 	expect(request("alice", "POST", "/oc_group/sync", 202), "total", "1")
 	first := request("alice", "GET", "/oc_group/messages?limit=1", 200)
@@ -332,11 +339,13 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: "oc_group", Message: &deleted})
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 410), "error", `"message_deleted"`)
 	expect(request("alice", "GET", "/oc_group/search?q=会议", 200), "total", "1")
+	expect(request("alice", "GET", "/messages/count", 200), "total", "2")
 	src.members["oc_group"] = nil
 	expect(request("alice", "GET", "/oc_group", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/sync", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/search?q=会议", 200), "total", "1")
+	expect(request("alice", "GET", "/messages/count", 200), "total", "1")
 	expect(request("admin", "GET", "/oc_group/messages/om_b/context", 200), "anchor_id", `"om_b"`)
 	src.lost["oc_group"] = true
 	expect(request("admin", "GET", "/oc_group/messages/om_b/context", 404), "error", `"chat_access_lost"`)
