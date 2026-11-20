@@ -7,59 +7,22 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
-	"github.com/uniquechao/OmniRelay/design"
 )
-
-//go:embed index.html *.js *.css
-var frontend embed.FS
 
 const contentPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 func Register(mux *http.ServeMux) {
 	files := registerBuildAssets(mux)
-	if dir := os.Getenv("OMNIRELAY_PREVIEW_DIR"); dir != "" {
-		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/" {
-				serveBuildFile(w, r, files, "index.html")
-				return
-			}
-			http.NotFound(w, r)
-		})
-		return
-	}
-	shared := design.WorkbenchFiles()
-	workbench := http.FileServer(http.FS(frontend))
-	visuals := http.FileServer(http.FS(shared))
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", contentPolicy)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-cache")
-		if r.URL.Path == "/" {
-			workbench.ServeHTTP(w, r)
-			return
-		}
-		name := strings.TrimPrefix(r.URL.Path, "/")
-		for _, asset := range []struct {
-			fs      fs.FS
-			handler http.Handler
-		}{{frontend, workbench}, {shared, visuals}} {
-			info, err := fs.Stat(asset.fs, name)
-			if err == nil && !info.IsDir() {
-				asset.handler.ServeHTTP(w, r)
-				return
-			}
-		}
-		http.NotFound(w, r)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		serveBuildFile(w, r, files, "index.html")
 	})
 }
 
-//go:embed dist/setup.html dist/assets
-var setupBuild embed.FS
+//go:embed dist/index.html dist/setup.html dist/assets
+var build embed.FS
 
 func registerBuildAssets(mux *http.ServeMux) fs.FS {
-	files, err := fs.Sub(setupBuild, "dist")
+	files, err := fs.Sub(build, "dist")
 	if err != nil {
 		panic(err)
 	}

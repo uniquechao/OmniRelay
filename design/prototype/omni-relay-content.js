@@ -1,27 +1,6 @@
 /* Standard rich-text editing and read-only Markdown presentation. */
 window.OmniRelayContent = (() => {
   const { escape } = OmniRelayUI;
-  const sample = [
-    '## 交付准备',
-    '',
-    '> 周五核对验收清单，缺项由负责人补齐。',
-    '',
-    '- **负责人** 王宁',
-    '- **当前状态** 进行中',
-    '',
-    '```python',
-    'def pending_items(items):',
-    '    return [item for item in items',
-    '            if not item["done"]]',
-    '```',
-    '',
-    '```json',
-    '{',
-    '  "project": "北辰交付准备",',
-    '  "ready": false',
-    '}',
-    '```'
-  ].join('\n');
   const highlight = (text, lang) => lang && hljs.getLanguage(lang)
     ? hljs.highlight(text,{language:lang, ignoreIllegals:true}).value
     : escape(text);
@@ -79,14 +58,7 @@ window.OmniRelayContent = (() => {
     });
     const linkInput = root.querySelector('.ql-tooltip input');
     linkInput?.setAttribute('aria-label','链接地址');
-    if (root.hasAttribute('data-editor-example')) {
-      editor.setContents({ ops:[
-        {insert:'验收安排'}, {insert:'\n',attributes:{header:2}},
-        {insert:'负责人',attributes:{bold:true}}, {insert:' 王宁，周五确认验收清单。\n'},
-        {insert:'核对测试环境'}, {insert:'\n',attributes:{list:'bullet'}},
-        {insert:'确认回滚依据'}, {insert:'\n',attributes:{list:'bullet'}}
-      ] });
-    }
+    if (root.hasAttribute('data-editor-example')) window.OmniRelayExamples?.fillEditor(editor);
     if (initial) editor.setContents(initial);
     const sync = () => { value.value = JSON.stringify(editor.getContents()); onChange?.(value.value); };
     editor.on('text-change',sync);
@@ -109,7 +81,7 @@ window.OmniRelayContent = (() => {
     </div>`;
   }
 
-  function mountMarkdown(root, source = sample) {
+  function mountMarkdown(root, source = window.OmniRelayExamples?.markdown ?? '') {
     const rendered = root.querySelector('[data-markdown-rendered]');
     const original = root.querySelector('[data-markdown-source]');
     rendered.innerHTML = markdown.render(source);

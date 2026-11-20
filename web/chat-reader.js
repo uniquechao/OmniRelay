@@ -272,7 +272,8 @@ export function mountChatReader(host, api, {
   }
 
   const groupAvatar = () => `<span class="chat-avatar" aria-hidden="true">${icon('nav-team')}</span>`;
-  const botAvatar = '<span class="chat-avatar" data-kind="bot" aria-hidden="true"><img src="omni-relay-avatar.png" width="32" height="32" alt=""></span>';
+  const avatar = new URL('../design/prototype/omni-relay-avatar.png', import.meta.url).href;
+  const botAvatar = '<span class="chat-avatar" data-kind="bot" aria-hidden="true"><img src="' + esc(avatar) + '" width="32" height="32" alt=""></span>';
   const nameOf = record => record.person?.name || record.name || (record.kind === 'group' ? '未命名群聊' : '未知人员');
   const personOf = record => record.person ?? { name: nameOf(record) };
   const orgOf = person => person.organization_paths?.map(path => path.join(' / ')).join('；') ?? '';

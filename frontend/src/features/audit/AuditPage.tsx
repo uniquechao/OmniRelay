@@ -1,7 +1,8 @@
 import {useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {useQueryClient} from '@tanstack/react-query';
 import {client} from '../../api/session';
-import {DataList,Drawer,Status,type Column,type PageState,type RemotePage} from '../../ui/components';
+import {DataList, Drawer, type Column, type PageState, type RemotePage} from '../../ui/components/Widgets';
+import {Status} from '../../ui/components/Elements';
 import {eventKinds as kinds,eventResults as results,showTime} from '../../../../web/audit-display.js';
 import {listAudit} from '../../../../web/system-api.js';
 

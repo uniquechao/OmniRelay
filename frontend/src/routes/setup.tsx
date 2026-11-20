@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Button, Loading, TextField, ThemeToggle } from '../ui/components';
+import {Button, Loading, TextField, ThemeToggle} from '../ui/components/Elements';
 import logo from '../../../design/prototype/omni-relay-logo-bicolor.png';
 
 const messages: Record<string, string> = {

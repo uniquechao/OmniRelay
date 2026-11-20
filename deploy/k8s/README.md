@@ -52,7 +52,7 @@ deploy/k8s/scripts/configure-object-storage-access.sh "$context"
 
 应用授权脚本使用目标主机上的 `mcli`，可用 `MINIO_ADMIN_CLIENT` 指定可执行文件。它创建或复用 `omnirelay-files` 和该 bucket 专用的读写身份，验证写入、读回和禁止管理操作，并生成 `Secret/omnirelay-s3` 给 Go。管理凭据只用于初始化。应用权限包含对象读写和分段上传，普通应用请求没有删除权限。
 
-Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文只包含 Go 源码、Web 资源和模块清单，避免把目标主机的 `private/` 目录传给构建器。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
+Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文按 `.dockerignore` 清单提供 Go 源码、前端源码、原型共用资源、依赖锁和构建测试夹具。`private/` 留在目标主机。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
 
 ## 飞书 OAuth 入口来源
 
@@ -120,3 +120,11 @@ go test ./tests/contract -run 'TestFeishu(Inbox|Connection)' -count=1 -v
 3. 依次验证停用、滚动交接、Lease 丢失、持有者进程重启和断线重连。逐次记录两副本角色、Lease 持有者、接管前后的数据库代次及心跳，核对替换代次开始时清空旧收信时间。单独暂停持有者续租并保持候选者可访问 Kubernetes API，待接管后恢复旧进程。在可控的晚到回调实验中记录旧持有者提交失败和零新增事件/工作。候选者接管本身只证明选主，旧代次拒绝提交还须核对存储结果。
 4. 在隔离环境注入数据库提交失败和超过回调预算的等待，记录失败回执、飞书平台是否重投以及同一消息的工作记录数量。证据仅记录脱敏事件标识、版本、时间、响应状态和耗时。
 5. 在维护窗口轮换预发布 App Secret。保持 App ID、租户、回调地址一致，退出旧副本并将新 Secret 与递增的 `OMNIRELAY_FEISHU_CREDENTIALS_GENERATION` 一并下发后，再恢复双副本和流量。旧代次副本不能用来回滚。需要恢复旧二进制时，先核实兼容性并继续使用当前有效 Secret 及代次。恢复服务后用新幂等键做一次检测，重新走 OAuth 换码、通讯录同步和 Bot 入站。
+
+### 工作台升级与恢复
+
+1. 在目标主机从干净的发布提交执行 `docker build -f deploy/k8s/base/go/image.Dockerfile -t "$IMAGE" .`。按既有流程将镜像放入目标仓库，记录完整的 `仓库@sha256:摘要`。镜像编译双入口并内嵌到 Go 中，运行镜像的 `/opt/omnirelay/ui/assets` 供同源入口提取。
+2. 首次从旧 DOM 版本切换时，先对仍提供旧工作台的入口运行 `python3 deploy/k8s/scripts/publish-ui.py legacy "$OMNI_PUBLIC_ORIGIN"`。它只复制上一版公开的脚本、样式和图片。将目标主机的 `/var/lib/omnirelay/ui` 以只读方式提供给每个入口 Nginx，在原有 HTTPS server 引用 `base/go/nginx/ui.conf`，检查配置并平滑重载。域名、证书、API、OAuth、HTML 和初始化请求沿用原有转发。首次安装可直接启用同源配置。
+3. 在可写入该归档且可访问镜像仓库的部署主机运行 `deploy/k8s/scripts/apply-go.sh "$CONTEXT" "$IMAGE_DIGEST"`。脚本先发布上一版与本版哈希资源，逐文件校验同源响应和归档标记，随后执行迁移、记录上一镜像摘要并滚动升级。多个入口须共享同一归档。保留两个版本及仍可能由打开页面引用的更早资源；归档独立于 Pod 和发布工作目录。
+4. 使用候选版本的测试账号核对深链、OAuth 回跳、权限变化和首次配置。在旧页面保持打开时加载任务详情，再从新页面触发延迟加载，对照两次网络响应的内容和 MIME。暂时拦截任务详情脚本，确认出现刷新提示，解除拦截并刷新后可恢复。
+5. 在确认当前数据库结构与上一镜像兼容后，运行 `deploy/k8s/scripts/rollback-go.sh "$CONTEXT"`。脚本用 Deployment 记录的上一镜像摘要恢复应用容器并等待就绪，沿用当前凭据代次。核对 `/readyz`、登录和已打开新页面的延迟加载。数据库和静态归档无需回退。

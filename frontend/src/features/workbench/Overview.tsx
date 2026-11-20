@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef} from 'react';
-import {Panel,Loading} from '../../ui/components';
+import {Panel, Loading} from '../../ui/components/Elements';
 import {client} from '../../api/session';
 import {useQuery} from '@tanstack/react-query';
 import type {Route} from '../../routes/targets';

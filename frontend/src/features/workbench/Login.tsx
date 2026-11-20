@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef,useState,type FormEvent} from 'react';
-import {BrandMotion,Button,TextField,ThemeToggle} from '../../ui/components';
+import {BrandMotion, Button, TextField, ThemeToggle} from '../../ui/components/Elements';
 import {ApiError,hasHTTPS} from '../../../../web/session-client.js';
 import {client} from '../../api/session';
 import {returnPath} from '../../routes/targets';

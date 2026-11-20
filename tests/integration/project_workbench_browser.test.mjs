@@ -434,7 +434,13 @@ test('任务字段、条件校验、草稿、冲突及活动', {skip: !moduleNam
     suggestions[0].status='rejected';suggestions[0].reason=body.reason;
     await r.fulfill({json:suggestions[0]});
   });
+  const chunk = '**/assets/task-detail-*.js';
+  await page.route(chunk, route => route.fulfill({status:404}));
   await page.goto(origin+'/'+detail);
+  const reload = page.getByRole('button',{name:'刷新页面'});
+  await reload.waitFor();
+  await page.unroute(chunk);
+  await reload.click();
   const byName=k=>page.locator('[name="'+k+'"]'), save=page.getByRole('button',{name:'保存任务'});
   await save.waitFor();
   assert.ok(await save.isDisabled());

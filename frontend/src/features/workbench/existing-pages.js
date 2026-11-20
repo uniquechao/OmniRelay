@@ -1,6 +1,4 @@
 import {client} from '../../api/session';
-import {mountAdmin} from '../../../../web/admin.js';
-import {systemAPI} from '../../../../web/system-api.js';
 import {projectRoute,mountProjects} from '../../../../web/projects.js';
 import {chatRoute,chatAPI,mountChatReader} from '../../../../web/chat-reader.js';
 import {mountDrive} from '../../../../web/drive.js';
@@ -14,7 +12,6 @@ import '../../../../design/prototype/omni-relay-task-editor.css';
 export async function mountExistingPage(host,target,user,guard,signal){
   const api=client.bind();
   const scope=client.scope;
-  const admin=systemAPI(api);
   const hash=target.path.slice(1);
   switch(target.route.id){
     case 'projects':
@@ -32,9 +29,6 @@ export async function mountExistingPage(host,target,user,guard,signal){
       }});
       break;
     }
-    default: {
-      const view=await mountAdmin(host,target.route.id,admin,{user,signal});
-      if(!signal.aborted)guard.current=view ?? {};
-    }
+    default: throw new Error('页面未注册。');
   }
 }

@@ -356,8 +356,14 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   const first = { ...group, id: 'project_first' };
   const second = { ...group, id: 'project_second', name: '第二个关联群' };
   await page.getByRole('heading', { name: '工作台总览' }).waitFor();
+  // 适配器单测按测试专用地址注入，工作台仍从实际构建加载。
+  const adapters = ['chat-reader', 'chat-assignment', 'chat-composer', 'file-format'];
+  for (const name of adapters) {
+    await page.route(origin + '/fixture/' + name + '.js', route =>
+      route.fulfill({path:'web/' + name + '.js',contentType:'text/javascript'}));
+  }
   await page.evaluate(async ({ first, second, task }) => {
-    const { mountChatReader } = await import('/chat-reader.js');
+    const { mountChatReader } = await import('/fixture/chat-reader.js');
     const host = document.createElement('div');
     host.style.cssText = 'display:flex; inline-size:760px; block-size:430px';
     document.getElementById('page').append(host);

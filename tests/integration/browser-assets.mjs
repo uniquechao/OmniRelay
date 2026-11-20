@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,20 +5,6 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 const policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-let legacy;
-
-function embeddedPaths() {
-  const paths = new Map();
-  for (const [pkg, prefix] of [['design', 'prototype/'], ['web', '']]) {
-    const files = execFileSync('go', ['list', '-f', '{{range .EmbedFiles}}{{println .}}{{end}}', './' + pkg], { cwd: root, encoding: 'utf8' });
-    for (const file of files.trim().split(/\s+/)) {
-      paths.set(file.slice(prefix.length), resolve(root, pkg, file));
-    }
-  }
-  paths.delete('setup.html');
-  return paths;
-}
-
 export async function browserAsset(target, { setup = false } = {}) {
   const [path] = target.split('?');
   if (!path.startsWith('/') || /[%\\\x00]/.test(path) || path.split('/').some(part => part === '..' || part === '.')) {
@@ -41,19 +26,10 @@ export async function browserAsset(target, { setup = false } = {}) {
   const name = setup && (path === '/setup' || path === '/') ? 'setup.html' : path.slice(1) || 'index.html';
   let file;
   if (prototype) file = resolve(root, 'design', '.' + path);
-  else if (process.env.OMNIRELAY_BROWSER_DIST) {
+  else {
     if (path !== '/' && !(setup && path === '/setup') && !path.startsWith('/assets/')) return { status: 404 };
-    file = resolve(process.env.OMNIRELAY_BROWSER_DIST, './' + name);
-  } else {
-    legacy ??= embeddedPaths();
-    if (setup) {
-      if (path !== '/' && path !== '/setup' && !path.startsWith('/assets/')) return { status: 404 };
-      file = legacy.get('dist/' + name);
-    } else if (!name.startsWith('dist/')) {
-      file = legacy.get(name);
-    }
+    file = resolve(process.env.OMNIRELAY_BROWSER_DIST || resolve(root, 'web/dist'), './' + name);
   }
-  if (!file) return { status: 404 };
   try {
     return { status: 200, body: await readFile(file), headers: {
       'content-type': types[extname(file)] || 'application/octet-stream',

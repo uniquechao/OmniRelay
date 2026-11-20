@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState,type RefObject} from 'react';
-import {Dialog,Facts,TextField,notify} from '../../ui/components';
+import {Dialog} from '../../ui/components/Widgets';
+import {Facts, TextField, notify} from '../../ui/components/Elements';
 import {client} from '../../api/session';
 
 export type User=NonNullable<typeof client.session>['user'] & {

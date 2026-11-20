@@ -1,6 +1,6 @@
 import {useLayoutEffect,useMemo,useRef,useState,type ReactNode,type RefObject} from 'react';
 import {client} from '../../api/session';
-import {Button,Facts,Loading,notify} from '../../ui/components';
+import {Button, Facts, Loading, notify} from '../../ui/components/Elements';
 import type {Guard,User} from '../workbench/Account';
 import {feishuBotAPI} from '../../../../web/system-api.js';
 import {connectionStates,checkStates,checkErrors,time} from '../../../../web/feishu-bot.js';

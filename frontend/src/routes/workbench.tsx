@@ -4,8 +4,22 @@ import {QueryClientProvider} from '@tanstack/react-query';
 import {client,useSession} from '../api/session';
 import {Workbench,isLogin} from '../features/workbench/Workbench';
 import {Login} from '../features/workbench/Login';
-import {Button,Loading} from '../ui/components';
+import {Button, Loading} from '../ui/components/Elements';
 import {remember} from './targets';
+
+window.addEventListener('vite:preloadError', () => {
+  if (document.getElementById('chunk-recovery')) return;
+  const notice = document.createElement('aside');
+  notice.id = 'chunk-recovery';
+  notice.setAttribute('role', 'alert');
+  notice.textContent = '页面资源加载失败。请保留未保存的内容后刷新。';
+  const retry = document.createElement('button');
+  retry.textContent = '刷新页面';
+  retry.onclick = () => location.reload();
+  notice.append(retry);
+  document.body.prepend(notice);
+  retry.focus();
+});
 
 function SessionLock({revoked}:{revoked:boolean}){
   const ref=useRef<HTMLDialogElement>(null);

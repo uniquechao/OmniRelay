@@ -11,7 +11,7 @@ export function BusinessPage({target,user,guard,layout}:{target:Target;user:User
     const lifetime=new AbortController();
     const {signal}=lifetime;
     void mountExistingPage(host,target,userRef.current,guard,signal).then(()=>{
-      if(!signal.aborted)host.querySelector<HTMLElement>('#page-heading')?.focus({preventScroll:true});
+      if(!signal.aborted && !host.contains(document.activeElement))host.querySelector<HTMLElement>('#page-heading')?.focus({preventScroll:true});
     }).catch(()=>{
       if(!signal.aborted)host.textContent='页面暂时无法加载，请刷新后重试。';
     });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { api, ApiError, setSession } from '../../web/login.js';
+import { api, ApiError, setSession } from '../../web/session-client.js';
 import { feishuBotAPI } from '../../web/system-api.js';
 
 const origin = 'https://relay.example.test';

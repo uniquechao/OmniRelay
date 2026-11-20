@@ -7,7 +7,7 @@ import {routes,destination,permitted,remember,returnPath,type Route} from '../..
 import {Account,AccountTrigger,type Guard,type User} from './Account';
 import {BusinessPage} from './BusinessPage';
 import {Overview} from './Overview';
-import {Breadcrumbs,Icon,ThemeToggle,WorkbenchLayout} from '../../ui/components';
+import {Breadcrumbs, Icon, ThemeToggle, WorkbenchLayout} from '../../ui/components/Elements';
 import logo from '../../../../design/prototype/omni-relay-logo-bicolor.png';
 import avatar from '../../../../design/prototype/omni-relay-avatar.png';
 export const isLogin=(hash:string)=>hash==='#/login' || hash.startsWith('#/login?');
@@ -52,19 +52,19 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
         if(typeof index==='number' && index!==position.current){
           restoring=previous;
           history.go(position.current-index);
-        }else history.replaceState({...history.state,workbenchIndex:position.current},'',previous);
+        }else history.replaceState({...history.state,workbenchIndex:position.current},'',previous.slice(1));
         return;
       }
       if(!stillCurrent())return;
       await client.verify();
       if(!stillCurrent())return;
       if(client.phase!=='active'){
-        history.replaceState({...history.state,workbenchIndex:position.current},'',current.current);
+        history.replaceState({...history.state,workbenchIndex:position.current},'',current.current.slice(1));
         return;
       }
       const next=destination(requested,client.session?.access)?.path ?? requested;
       position.current=history.state?.workbenchIndex ?? position.current+1;
-      history.replaceState({...history.state,workbenchIndex:position.current},'',next);
+      history.replaceState({...history.state,workbenchIndex:position.current},'',next.slice(1));
       current.current=next;
       setPath(next);
       setVisit(value=>value+1);

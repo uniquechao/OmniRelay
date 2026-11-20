@@ -404,9 +404,9 @@ test('后台轮询持续成功时，会话仍按空闲期限失效', { skip: !pr
     assert.ok(results[name].filter(status => status === 200).length >= 2, JSON.stringify(results));
     assert.equal(results[name].at(-1), 401, JSON.stringify(results));
   }
-  assert.equal(await users.locator('#page').textContent(), '');
+  assert.equal(await users.locator('#page').count(), 0);
   assert.equal(await users.locator('dialog[open]').count(), 0);
-  assert.equal(await detector.locator('#page').textContent(), '');
+  assert.equal(await detector.locator('#page').count(), 0);
 
   await login(users, 'auditor', 'system/audit');
   assert.deepEqual(await users.locator('#system-nav [data-system]:not([hidden])')

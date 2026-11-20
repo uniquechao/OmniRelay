@@ -31,7 +31,7 @@ test('首次配置、授权回跳和服务切换', { skip: !origin || !code }, a
     };
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: '切换深色主题' }).click();
-    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+    await page.locator('html[data-theme=dark]').waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await fill(page, 'invalid');
     await page.getByLabel('飞书 App ID').fill('invalid');

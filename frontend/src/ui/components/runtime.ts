@@ -6,8 +6,6 @@ import '../../../../design/prototype/omni-relay-colors.css';
 import '../../../../web/workbench.css';
 import '../../../../design/prototype/omni-relay-ui.css';
 import '../../../../design/prototype/omni-relay-loading.css';
-import '../../../../design/prototype/vendor/quill-snow-2.0.3.css';
-import '../../../../design/prototype/omni-relay-content.css';
 import '../../../../design/prototype/omni-relay-interactions.css';
 import '../../../../design/prototype/omni-relay-system.css';
 import {useLayoutEffect, useRef} from 'react';

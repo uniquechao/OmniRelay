@@ -1,3 +1,5 @@
+import '../../../../design/prototype/vendor/quill-snow-2.0.3.css';
+import '../../../../design/prototype/omni-relay-content.css';
 import {useId, useState} from 'react';
 import quill from '../../../../design/prototype/vendor/quill-2.0.3.js?url';
 import markdown from '../../../../design/prototype/vendor/markdown-it-15.0.3.min.js?url';

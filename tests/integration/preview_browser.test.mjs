@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readdir,readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { browserAsset } from './browser-assets.mjs';
@@ -7,6 +9,27 @@ const origin = process.env.OMNIRELAY_PREVIEW_ORIGIN;
 const setupOrigin = process.env.OMNIRELAY_SETUP_ORIGIN;
 const dist = process.env.OMNIRELAY_BROWSER_DIST;
 const require = createRequire(import.meta.url);
+
+test('生产资源均由工作台或初始化入口引用',async()=>{
+  const root=resolve(dist || 'web/dist');
+  assert.deepEqual((await readdir(root)).sort(),['assets','index.html','setup.html']);
+  const names=await readdir(resolve(root,'assets'));
+  const pending=['index.html','setup.html'];
+  const visited=new Set();
+  while(pending.length){
+    const path=pending.pop();
+    if(!/\.(html|js|css)$/.test(path))continue;
+    const source=await readFile(resolve(root,path),'utf8');
+    assert.doesNotMatch(source,/omni-relay-examples\.js|飞书 · 示例账号|北辰交付准备/);
+    for(const name of names){
+      if(!visited.has(name) && source.includes(name)){
+        visited.add(name);
+        pending.push('assets/'+name);
+      }
+    }
+  }
+  assert.deepEqual([...visited].sort(),names.sort());
+});
 
 test('预发布构建运行工作台和首次配置两个入口', { skip: !dist && !(origin && setupOrigin) }, async () => {
   const { chromium } = require(process.env.OMNIRELAY_PLAYWRIGHT_MODULE || 'playwright-core');

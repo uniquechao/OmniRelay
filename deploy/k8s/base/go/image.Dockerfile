@@ -16,7 +16,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
-COPY design ./design
+COPY tests/fixtures ./tests/fixtures
 COPY internal ./internal
 COPY migrations ./migrations
 COPY web ./web
@@ -24,6 +24,7 @@ COPY --from=frontend /src/web/dist ./web/dist
 RUN CGO_ENABLED=0 go test -mod=readonly ./... && \
     CGO_ENABLED=0 go build -mod=readonly -trimpath -o /out/omnirelay ./cmd/omnirelay
 FROM python:3.12-slim-bookworm
+LABEL io.omnirelay.ui.entry="react"
 COPY internal/drive/preview/requirements.txt /opt/preview/requirements.txt
 RUN pip install --no-cache-dir --only-binary=:all: -r /opt/preview/requirements.txt
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
