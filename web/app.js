@@ -1,9 +1,9 @@
-import { api, getSession, logout, mountLogin, setSession } from './login.js';
+import { mountLogin } from './login.js';
+import { client } from './session-client.js';
 import { mountAdmin } from './admin.js';
 import { feishuBotAPI, systemAPI } from './system-api.js';
 import { mountFeishuBot } from './feishu-bot.js';
 import { mountConnectionSettings } from './connection-settings.js';
-import { clearChatDrafts } from './chat-composer.js';
 import { chatAPI, chatRoute, mountChatReader } from './chat-reader.js';
 import { projectRoute, mountProjects, mountProjectSummary } from './projects.js';
 import { mountRail } from './rail.js';
@@ -21,7 +21,7 @@ const legacyRoutes = new Map([
 ]);
 const ui = window.OmniRelayUI;
 const shell = document.querySelector('.shell');
-const page = document.getElementById('page');
+let page = document.getElementById('page');
 const breadcrumb = document.getElementById('breadcrumb');
 const mobileNav = document.getElementById('mobile-nav');
 const systemNav = document.getElementById('system-nav');
@@ -37,15 +37,14 @@ let session;
 let routeRequest;
 let view;
 let renderedHash;
-let projectMemory = {};
-let driveMemory = {};
+let mountedScope;
+let explicitLogout = false;
 let checkingNavigation = false;
 const oauthReturnKey = 'omnirelay.feishu.return-route';
 const workbenchRoute = '#/workbench';
 const loginRoute = '#/login';
 let returnRoute = '';
-let accessRefresh;
-let sessionCheck;
+
 
 function isLoginRoute(hash) {
   return hash === loginRoute || hash.startsWith(loginRoute + '?');
@@ -67,9 +66,7 @@ function clearReturnRoute() {
 }
 
 const login = mountLogin(loginPage, {
-  onSuccess(nextSession) {
-    establishSession(nextSession).then(render).catch(() => start());
-  },
+
   returnTo() {
     rememberReturnRoute(readReturnRoute());
     return '/' + returnRoute;
@@ -79,37 +76,15 @@ const login = mountLogin(loginPage, {
 mountRail(shell, [feishuNav, systemNav]);
 mountAccount({
   currentUser: () => session?.user,
-  onAuthError(error) {
-    if (error.status === 401) showLogin();
-    else if (error.status === 403) void refreshAccess();
-  },
   async onLogout() {
+    const scope = client.scope;
     if (view?.confirmNavigation && !await view.confirmNavigation()) return;
-    await logout();
-    showLogin({ preserveTarget: false });
-  },
-  async onSessionChanged(nextSession) {
-    await establishSession(nextSession);
-    await render();
+    if (scope !== client.scope || client.phase !== 'active') return;
+    explicitLogout = true;
+    try { await client.logout(); }
+    finally { explicitLogout = false; }
   }
 });
-
-async function protectedAPI(path, options) {
-  const requestSession = session;
-  try {
-    return await api(path, options);
-  } catch (error) {
-    if (error.status === 401 && requestSession && session === requestSession && !options?.signal?.aborted) {
-      showLogin();
-    } else if (error.status === 403 && requestSession === session && !options?.signal?.aborted) {
-      await refreshAccess();
-    }
-    throw error;
-  }
-}
-const adminAPI = systemAPI(protectedAPI);
-const botAPI = feishuBotAPI(protectedAPI);
-const chats = chatAPI(protectedAPI);
 
 function closeSessionOverlays() {
   for (const popover of document.querySelectorAll(':popover-open')) popover.hidePopover();
@@ -118,13 +93,6 @@ function closeSessionOverlays() {
 
 function showLogin({ preserveTarget = true } = {}) {
   if (view?.hasDraft?.()) ui.toast('warning', '会话已结束，未保存的修改已清除。');
-  projectMemory = {};
-  driveMemory = {};
-  clearChatDrafts();
-  closeSessionOverlays();
-  sessionCheck?.abort();
-  session = null;
-  setSession(null);
   const hash = location.hash;
   if (!preserveTarget) clearReturnRoute();
   else if (hash && !isLoginRoute(hash)) rememberReturnRoute(hash);
@@ -158,64 +126,13 @@ function allowedRoute(hash) {
   return hash === workbenchRoute ? session.user.navigation?.workbench === true : permission(session.user, hash.split('/')[2]);
 }
 
-function refreshAccess() {
-  if (!session) return;
-  if (accessRefresh?.session === session) return accessRefresh.pending;
-  const current = session;
-  const pending = (async () => {
-    try {
-      const next = await getSession();
-      if (session !== current) return;
-      const visibleAccess = access => [access?.roles, access?.admin, access?.navigation, access?.default_route, access?.permissions];
-      if (current.user.id !== next.user.id || JSON.stringify(visibleAccess(current.access)) !== JSON.stringify(visibleAccess(next.access))) {
-        ui.toast('warning', view?.hasDraft?.() ? '当前账号或权限已变更，未保存的修改已清除。' : '账号权限已更新。');
-        clearChatDrafts();
-        closeSessionOverlays();
-        await establishSession(next);
-        void render();
-      } else {
-        current.access = next.access;
-        setSession(next);
-      }
-    } catch (error) {
-      if (session !== current) return;
-      if (error.status === 401) showLogin();
-      else {
-        clearSessionView();
-        showSessionError();
-      }
-    } finally {
-      if (accessRefresh?.session === current) accessRefresh = undefined;
-    }
-  })();
-  accessRefresh = { session:current, pending };
-  return pending;
-}
-
-async function establishSession(nextSession, signal) {
-  signal?.throwIfAborted();
-  nextSession.user = {
-    ...nextSession.user,
-    adminCapabilities:nextSession.access?.admin,
-    navigation:nextSession.access?.navigation,
-    permissions:nextSession.access?.permissions,
-    roles: nextSession.access?.roles ?? []
-  };
-  if (session?.user.id !== nextSession.user.id) {
-    projectMemory = {};
-    driveMemory = {};
-  }
-  setSession(nextSession);
-  session = nextSession;
-}
-
 function drawBreadcrumb(title, section) {
   breadcrumb.innerHTML = '<span></span><span aria-hidden="true">/</span><span aria-current="page"></span>';
   breadcrumb.firstElementChild.textContent = section;
   breadcrumb.lastElementChild.textContent = title;
 }
 
-function goToAdministration(user, signal) {
+function goToAdministration(user, signal, protectedAPI) {
   const available = Object.keys(titles).filter(section => permission(user, section));
   const title = document.createElement('h1');
   title.id = 'page-heading';
@@ -258,6 +175,10 @@ async function render() {
     login.activate(new URLSearchParams(location.hash.split('?')[1]).get('error'));
     return;
   }
+  const protectedAPI = client.bind();
+  const adminAPI = systemAPI(protectedAPI);
+  const botAPI = feishuBotAPI(protectedAPI);
+  const chats = chatAPI(protectedAPI);
   const currentHash = location.hash;
   const requested = isLoginRoute(currentHash) ? readReturnRoute() : safeRoute(currentHash);
   const fallback = safeRoute(session.access?.default_route?.replace(/^\//, ''));
@@ -315,13 +236,13 @@ async function render() {
   page.dataset.layout = project?.id ? 'project' : chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
   if (drive) {
-    mountDrive(page, protectedAPI, signal, {memory:driveMemory});
+    mountDrive(page, protectedAPI, signal, {memory:client.scope.drive});
   } else if (project) {
     view = {};
-    void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id,navigation:view});
+    void mountProjects(page,project,protectedAPI,{signal,memory:client.scope.projects,scope:client.scope,navigation:view});
   } else if (chat) {
     mountChatReader(page, chats, {
-      signal, draftScope: session.user.id, chatId: chat.chatId, messageId: chat.messageId,
+      signal, draftScope: client.scope, chatId: chat.chatId, messageId: chat.messageId,
       onLocation(chatId, messageId) {
         if (signal.aborted || location.hash !== renderedHash) return;
         renderedHash = chatRoute('#/feishu/bot-chats' + (chatId ? '/' + chatId : '') +
@@ -329,7 +250,7 @@ async function render() {
         history.replaceState(history.state, '', renderedHash);
       }
     });
-  } else if (!section) goToAdministration(session.user, signal);
+  } else if (!section) goToAdministration(session.user, signal, protectedAPI);
   else if (section === 'feishu-bot') {
     const permissions = session.user.permissions ?? {};
     view = mountFeishuBot(page, botAPI, {
@@ -353,50 +274,79 @@ async function render() {
   if (!signal.aborted) page.querySelector('#page-heading')?.focus({ preventScroll: true });
 }
 
-function clearSessionView() {
-  routeRequest?.abort();
-  closeSessionOverlays();
-  view = null;
-  page.replaceChildren();
-  shell.hidden = true;
-  loginPage.hidden = true;
-  session = undefined;
-  setSession(null);
-  sessionStatus.hidden = false;
-}
+// 保留普通业务表单及其事件绑定；模态层同时锁住页面外的抽屉。
+const lock = document.createElement('dialog');
+lock.className = 'session-lock';
+document.body.append(lock);
+lock.addEventListener('cancel', event => event.preventDefault());
+const statusParent = sessionStatus.parentElement;
 
-function showSessionError() {
-  sessionLoading.replaceChildren();
-  sessionLoading.removeAttribute('aria-busy');
-  sessionLoading.hidden = true;
-  sessionError.textContent = '暂时无法连接工作台。';
-  sessionError.hidden = false;
-  retrySession.hidden = false;
-}
-
-async function start() {
-  sessionCheck?.abort();
-  sessionCheck = new AbortController();
-  const { signal } = sessionCheck;
-  clearSessionView();
-  retrySession.hidden = true;
-  sessionError.hidden = true;
-  sessionLoading.hidden = false;
-  window.OmniRelayLoading.mount(sessionLoading,{size:'page',label:'正在检查会话…'});
-  try {
-    await establishSession(await getSession({ signal }), signal);
-    if (!signal.aborted) await render();
-  } catch (error) {
-    if (signal.aborted) return;
-    if (error.status === 401) showLogin();
-    else showSessionError();
+function clearPasswords() {
+  for (const field of document.querySelectorAll('input[type=password]')) {
+    field.value = '';
+    field.closest('dialog[open]')?.close('cancel');
   }
 }
 
-retrySession.addEventListener('click', start);
+function lockView() {
+  clearPasswords();
+  for (const popover of document.querySelectorAll(':popover-open')) popover.hidePopover();
+  shell.hidden = loginPage.hidden = true;
+  sessionStatus.hidden = false;
+  sessionLoading.hidden = true;
+  sessionError.textContent = client.phase === 'revoked' ? '工作台访问权限已撤回。' : '暂时无法核验身份，连接恢复后将重新检查。';
+  sessionError.hidden = retrySession.hidden = false;
+  lock.append(sessionStatus);
+  if (!lock.open) lock.showModal();
+}
+
+function unlockView() {
+  if (!lock.open) return;
+  lock.close();
+  statusParent.append(sessionStatus);
+  sessionStatus.hidden = true;
+}
+
+client.addEventListener('change', event => {
+  const previous = session;
+  session = client.session;
+  if (mountedScope !== client.scope) {
+    routeRequest?.abort();
+    if (mountedScope) {
+      if (previous && event.detail === 'identity-changed') {
+        clearReturnRoute();
+        history.replaceState(null, '', safeRoute(session.access?.default_route?.replace(/^\//, '')) || workbenchRoute);
+      } else if (previous && location.hash.includes('?') && !isLoginRoute(location.hash)) {
+        history.replaceState(null, '', location.hash.split('?')[0]);
+      }
+      clearPasswords();
+      unlockView();
+      closeSessionOverlays();
+      const empty = page.cloneNode(false);
+      page.replaceWith(empty);
+      page = empty;
+      view = null;
+    }
+    mountedScope = client.scope;
+  }
+  if (client.phase === 'unverified' || client.phase === 'revoked') return lockView();
+  unlockView();
+  if (client.phase === 'anonymous') {
+    if (previous !== null || !isLoginRoute(location.hash)) showLogin({ preserveTarget: !explicitLogout });
+    else if (loginPage.hidden) render();
+  } else if (event.detail === 'recovered' && renderedHash === location.hash && routeRequest && !routeRequest.signal.aborted) {
+    shell.hidden = false;
+    updateAccount(session.user);
+  } else if (event.detail !== 'unchanged') {
+    if (['identity-changed', 'access-changed'].includes(event.detail)) ui.toast('warning', '当前账号或权限已变更，未保存的修改已清除。');
+    void render();
+  }
+});
+
+retrySession.addEventListener('click', () => void client.verify());
 mobileNav.addEventListener('change', () => { location.hash = '#/' + mobileNav.value; });
 addEventListener('hashchange', async () => {
-  if (session === undefined || checkingNavigation) return;
+  if (!['active', 'anonymous'].includes(client.phase) || checkingNavigation) return;
   if (!session) {
     showLogin();
     return;
@@ -414,16 +364,9 @@ addEventListener('hashchange', async () => {
       return;
     }
   }
-  routeRequest?.abort();
-  const previous = session;
-  await refreshAccess();
-  if (session === previous) render();
+  const scope = client.scope;
+  await client.verify();
+  if (client.phase === 'active' && client.scope === scope) render();
 });
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void refreshAccess();
-});
-addEventListener('focus', () => { void refreshAccess(); });
-addEventListener('pageshow', event => {
-  if (event.persisted) start();
-});
-start();
+client.watch(window, document);
+void client.verify();

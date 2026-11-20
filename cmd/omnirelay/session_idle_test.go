@@ -38,10 +38,13 @@ func TestSessionIdlePolicy(t *testing.T) {
 		}
 		return idle, absolute
 	}
-	request := func(method, path, csrf string, want int) *httptest.ResponseRecorder {
+	request := func(method, path, csrf string, want int, activity ...string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, origin+path, strings.NewReader("{}"))
 		req.AddCookie(admin.cookie)
+		if len(activity) > 0 {
+			req.Header.Set("X-OmniRelay-Activity", activity[0])
+		}
 		req.Header.Set("Origin", origin)
 		req.Header.Set("X-CSRF-Token", csrf)
 		req.Header.Set("Idempotency-Key", "session-idle-fixture")
@@ -71,6 +74,10 @@ func TestSessionIdlePolicy(t *testing.T) {
 	}](t, request(http.MethodGet, me, "", 200)).Token
 	if after, _ := deadlines(); !after.Equal(idle) {
 		t.Fatal("session probe extended the idle deadline")
+	}
+	request(http.MethodGet, systemPath+"/roles", "", 200, "poll")
+	if after, _ := deadlines(); !after.Equal(idle) {
+		t.Fatal("后台读取延长了会话空闲期限")
 	}
 	request(http.MethodPost, checks, "invalid", 403)
 	if after, _ := deadlines(); !after.Equal(idle) {

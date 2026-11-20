@@ -164,3 +164,6 @@ td a:hover { text-decoration: underline; }
 .drive-preview-content select { max-width: 100%; }
 .drive-preview-content .drive-preview-table { overflow: auto; max-width: 100%; }
 .drive-preview-content .drive-archive li { padding-block: 6px; }
+
+body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidden; }
+.session-lock::backdrop { background: var(--surface, Canvas); }

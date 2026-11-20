@@ -28,12 +28,12 @@ export function chatRoute(hash) {
 }
 
 export function chatAPI(request, base = chatBase) {
-  function read(path, params, signal) {
+  function read(path, params, signal, activity = 'user') {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
       if (value !== '' && value != null) query.set(key, value);
     }
-    return request(base + path + (query.size ? '?' + query : ''), { signal });
+    return request(base + path + (query.size ? '?' + query : ''), { signal, activity });
   }
   const path = id => '/' + encodeURIComponent(id);
   return {
@@ -53,7 +53,7 @@ export function chatAPI(request, base = chatBase) {
     },
     send: (id, body, signal) => request(base + path(id) + '/messages', { method: 'POST', body, signal }),
     delivery: (id, key, signal) => read(path(id) + '/deliveries' + path(key), {}, signal),
-    sync: signal => read('/sync', {}, signal),
+    sync: signal => read('/sync', {}, signal, 'poll'),
     refresh: signal => request(base + '/sync', { method: 'POST', signal })
   };
 }

@@ -1,4 +1,4 @@
-import { changePassword, getSession } from './login.js';
+import { client } from './session-client.js';
 
 const ui = window.OmniRelayUI;
 const shell = document.querySelector('.shell');
@@ -29,7 +29,7 @@ export function updateAccount(user) {
   menu.querySelector('.account-identity div span').textContent = role + ' · ' + source;
 }
 
-export function mountAccount({ currentUser, onLogout, onSessionChanged, onAuthError }) {
+export function mountAccount({ currentUser, onLogout }) {
   const toolbarTrigger = () => shell.querySelector('.rail').getBoundingClientRect().width
     ? shell.querySelector('.rail .account-trigger') : shell.querySelector('.mobile-account');
   let trigger;
@@ -83,15 +83,14 @@ export function mountAccount({ currentUser, onLogout, onSessionChanged, onAuthEr
         const next = form.elements.namedItem('newPassword');
         const feedback = form.querySelector('.field-error');
         feedback.hidden = true;
-        changePassword(current.value, next.value)
-          .then(() => getSession())
-          .then(async nextSession => {
-            await onSessionChanged(nextSession);
+        client.changePassword(current.value, next.value)
+          .then(client.guard(() => {
+            if (!dialog.open) return;
             ui.toast('success', '密码已更新。');
             if (dialog.open) dialog.close('confirm');
-          })
+          }))
           .catch(error => {
-            onAuthError(error);
+            if (!dialog.open) return;
             feedback.textContent = error.data?.error === 'https_required' ? '修改密码需要 HTTPS 安全连接。'
               : error.status === 403 ? '无法验证当前账号。请重新登录后再试。'
               : error.status === 400 || error.status === 422 ? '请核对当前密码和新密码要求。'

@@ -1,89 +1,7 @@
-const apiBase = '/api/v1/';
+import { hasHTTPS, client } from './session-client.js';
+export { api, ApiError, setSession } from './session-client.js';
 const authBase = '/auth/';
 const httpsRequired = '账号密码操作需要 HTTPS 安全连接。';
-const hasHTTPS = () => location.protocol === 'https:';
-let csrfToken = '';
-
-export class ApiError extends Error {
-  constructor(status, data) {
-    super('工作台请求失败。');
-    this.name = 'ApiError';
-    this.status = status;
-    this.data = data;
-  }
-}
-
-export function setSession(session) {
-  const token = session?.csrf_token ?? session?.csrfToken;
-  csrfToken = typeof token === 'string' ? token : '';
-}
-
-export async function api(path, { method = 'GET', body, signal, ifMatch, idempotencyKey, includeETag = false, acceptPNG = false } = {}) {
-  const url = new URL(path, location.origin);
-  if (url.origin !== location.origin ||
-      !(url.pathname.startsWith(apiBase) || url.pathname.startsWith(authBase))) {
-    throw new TypeError('工作台请求地址无效。');
-  }
-
-  method = method.toUpperCase();
-  if (method === 'POST' && ['/auth/login', '/auth/password'].includes(url.pathname) && !hasHTTPS()) {
-    throw new ApiError(403, { error: 'https_required' });
-  }
-  const headers = new Headers({ Accept: acceptPNG ? 'application/json, image/png' : 'application/json' });
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
-    headers.set('X-CSRF-Token', csrfToken);
-  }
-  if (ifMatch !== undefined) headers.set('If-Match', ifMatch);
-  if (idempotencyKey !== undefined) headers.set('Idempotency-Key', idempotencyKey);
-  const multipart = body instanceof FormData;
-  if (body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body === undefined || multipart ? body : JSON.stringify(body),
-    credentials: 'same-origin',
-    cache: 'no-store',
-    redirect: 'error',
-    signal
-  });
-
-  const result = data => includeETag ? { data, etag: response.headers.get('ETag') } : data;
-  if (response.status === 204) return result(null);
-  if (acceptPNG && response.ok && response.headers.get('Content-Type') === 'image/png') return response.blob();
-  const isJson = response.headers.get('Content-Type')?.includes('application/json');
-  const data = isJson ? await response.json() : null;
-  if (!response.ok || !isJson) throw new ApiError(response.status, data);
-  return result(data);
-}
-
-export async function getSession({ signal } = {}) {
-  const session = await api(apiBase + 'me', { signal });
-  const principal = session?.principal;
-  const token = session?.csrf_token ?? session?.csrfToken;
-  if (!principal?.account_id || typeof token !== 'string' || !token) throw new ApiError(502);
-  return {
-    ...session,
-    user: { ...principal, id: principal.account_id }
-  };
-}
-
-export async function logout() {
-  try {
-    await api(authBase + 'logout', { method: 'POST' });
-  } catch (error) {
-    if (error.status !== 401) throw error;
-  }
-  setSession(null);
-}
-
-export async function changePassword(currentPassword, newPassword) {
-  const session = await api(authBase + 'password', {
-    method: 'POST',
-    body: { currentPassword, newPassword }
-  });
-  if (session?.csrf_token ?? session?.csrfToken) setSession(session);
-  return session;
-}
 
 const feishuErrors = new Map([
   ['feishu', '飞书登录未完成。你可以重新发起登录或使用账号密码。'],
@@ -92,7 +10,7 @@ const feishuErrors = new Map([
   ['unavailable', '飞书登录暂不可用。请稍后重试或使用账号密码。']
 ]);
 
-export function mountLogin(page, { onSuccess, returnTo = () => '/' }) {
+export function mountLogin(page, { returnTo = () => '/' }) {
   const form = page.querySelector('#password-login');
   const username = form.elements.namedItem('username');
   const password = form.elements.namedItem('password');
@@ -147,14 +65,9 @@ export function mountLogin(page, { onSuccess, returnTo = () => '/' }) {
     }
     setBusy(true, '登录中…');
     username.readOnly = password.readOnly = true;
-    let active;
+
     try {
-      await api(authBase + 'login', {
-        method: 'POST',
-        body: { username: handle, password: password.value },
-        signal: AbortSignal.timeout(20000)
-      });
-      active = await getSession();
+      await client.login(handle, password.value);
       form.reset();
     } catch (error) {
       if (error.status === 401) {
@@ -175,7 +88,7 @@ export function mountLogin(page, { onSuccess, returnTo = () => '/' }) {
       username.readOnly = password.readOnly = false;
       setBusy(false);
     }
-    if (active) onSuccess(active);
+
   });
 
   feishu.addEventListener('click', () => {

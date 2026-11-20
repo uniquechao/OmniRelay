@@ -594,39 +594,25 @@ function failure(error) {
   if (error.status === 409) return '数据或权限已变化，请重新加载。';
   return '暂时无法加载，请重试。';
 }
-export async function mountProjects(host, route, request, { signal, memory, userId, navigation }) {
+export async function mountProjects(host, route, request, { signal, memory, scope, navigation }) {
   const { id, base, tab, parts } = route;
   const loading = (element) => window.OmniRelayLoading.mount(element, { size: 'page', label: '正在加载…' });
   const current = () => !signal.aborted && location.hash === route.hash;
-  const saved = history.state?.projectList;
-  const savedRoute = typeof saved?.list === 'string' ? projectRoute(saved.list) : undefined;
-  if (saved?.userId === userId && savedRoute && !savedRoute.id) {
-    Object.assign(memory, {
-      list: saved.list,
-      focus: saved.focus,
-      scroll: saved.scroll,
-      windowY: saved.windowY,
-    });
-  }
+  const savedKey = history.state?.projectListKey;
+  const saved = savedKey && scope?.read('project.' + savedKey);
+  const savedRoute = typeof saved?.list === 'string' && projectRoute(saved.list);
+  if (savedRoute && !savedRoute.id) Object.assign(memory, saved);
   const taskViews = memory.taskViews ??= new Map();
   if (id && tab === 'tasks' && (!parts.length || parts[0] === 'list')) {
     taskViews.set(id, firstTaskPage(route));
   }
   const back = memory.list || '#/projects';
-  if (id && memory.list)
-    history.replaceState(
-      {
-        ...history.state,
-        projectList: {
-          userId,
-          list: memory.list,
-          focus: memory.focus,
-          scroll: memory.scroll,
-          windowY: memory.windowY,
-        },
-      },
-      '',
-    );
+  if (id && memory.list && scope) {
+    const key = savedKey || crypto.randomUUID();
+    const { list, focus, scroll, windowY } = memory;
+    scope.store('project.' + key, JSON.stringify({list, focus, scroll, windowY}));
+    history.replaceState({...history.state, projectListKey:key}, '');
+  }
   let body;
   if (id) {
     host.innerHTML = `<header class="head"><div class="project-title">${heading('项目工作台')}</div><a class="button" href="${esc(back)}">返回项目列表</a></header>
@@ -727,7 +713,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
         signal,
         project: true,
         projectId: id,
-        draftScope: userId,
+        draftScope: scope,
         chatId: parts[0],
         messageId: parts[1],
         onLocation(chat, message) {
@@ -752,7 +738,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
-      mountProjects(host, route, request, { signal, memory, userId, navigation }));
+      mountProjects(host, route, request, { signal, memory, scope, navigation }));
     wireFilters(body, route);
     const check = body.querySelector('[data-check]');
     if (check)
@@ -802,7 +788,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
     body.innerHTML = empty(failure(error)) + '<button class="button" type="button">重新加载</button>';
     body.querySelector('button').onclick = () => {
       if (tab === 'tasks' && route.params.has('column_id')) location.hash = firstTaskPage(route);
-      else mountProjects(host, route, request, { signal, memory, userId, navigation });
+      else mountProjects(host, route, request, { signal, memory, scope, navigation });
     };
   } finally {
     body.removeAttribute('aria-busy');

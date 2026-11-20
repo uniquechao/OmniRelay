@@ -312,7 +312,7 @@ func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Pr
 		validCSRF = len(origins) == 1 && origins[0] == s.cfg.PublicOrigin && len(csrf) == 1 &&
 			hmac.Equal([]byte(csrf[0]), []byte(csrfToken(token)))
 	}
-	if !validCSRF {
+	if !validCSRF || (r.Method == http.MethodGet && r.Header.Get("X-OmniRelay-Activity") == "poll") {
 		policy = ValidateSession
 	}
 	p, err := s.loadSession(r.Context(), token, policy)

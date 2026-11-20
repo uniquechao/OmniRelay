@@ -12,7 +12,7 @@ export function feishuBotAPI(api) {
     test: (idempotencyKey, signal) => api(checks, {
       method: 'POST', body: {}, idempotencyKey, signal
     }),
-    check: (id, signal) => api(checks + '/' + encodeURIComponent(id), { signal })
+    check: (id, signal) => api(checks + '/' + encodeURIComponent(id), { signal, activity:'poll' })
   };
 }
 
@@ -235,7 +235,7 @@ function syncRun(run) {
 }
 
 async function getSync(api, { signal } = {}) {
-  const response = await api(syncPath + '?limit=2', { signal });
+  const response = await api(syncPath + '?limit=2', { signal, activity:'poll' });
   const snapshot = directoryStatus(response);
   const lastSuccess = snapshot.visible ? response.items.find(run => run.id === snapshot.snapshotVersion) : null;
   return { ...snapshot, run: syncRun(response.current ?? response.latest_attempt), lastSuccess: syncRun(lastSuccess) };
