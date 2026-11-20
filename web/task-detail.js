@@ -501,7 +501,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
           title: '保存修改？',
           variant: 'confirm',
           tone: 'warning',
-          body: '<p>任务有未保存的修改。</p>',
+          body: '<p>有未保存的修改，直接关闭会丢失本次更改。</p>',
           cancelLabel: '继续编辑',
           discard: '不保存',
           confirm: '保存并关闭',
