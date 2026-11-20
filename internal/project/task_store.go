@@ -160,6 +160,7 @@ type boardColumn struct {
 	Cursor *string      `json:"next_cursor"`
 }
 type taskBoard struct {
+	CanMove  bool          `json:"can_move"`
 	Owners   []string      `json:"owner_member_ids"`
 	Project  string        `json:"project_id"`
 	Version  int64         `json:"version"`

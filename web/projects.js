@@ -178,38 +178,185 @@ export async function mountProjectSummary(host, request, signal) {
   }
 }
 
+const taskStages = { todo: '待开始', in_progress: '进行中', blocked: '受阻', done: '已完成' };
+const priorityStyles = { P0: 'urgent', P1: 'important', P2: 'normal', P3: 'low' };
+const priorityTones = { P0: 'danger', P1: 'important' };
+
 function taskDeadline(row) {
-  if (!row?.due_at) return '—';
-  return `<time datetime="${esc(row.due_at)}">${row.due_alert ? '<span class="chip" data-tone="danger">临期告警</span> ' : ''}${esc(row.due_label || row.due_at)}</time>`;
+  if (!row?.due_at) return '<span class="pr-deadline">无截止日期</span>';
+  return `<time class="pr-deadline" datetime="${esc(row.due_at)}"${row.due_alert ? ' data-deadline-alert' : ''}>${row.due_alert ? '<span aria-hidden="true"><svg class="icon"><use href="#status-warning"/></svg></span><span class="sr-only">临期告警</span>' : ''}${esc(row.due_label || row.due_at)}</time>`;
 }
 
-function taskFilters(route, board, milestones) {
+function taskFilters(route, board, nodes, people) {
   const choice = (value, title, selected) =>
     `<option value="${esc(value)}"${value === selected ? ' selected' : ''}>${esc(title)}</option>`;
   const owner = route.params.get('owner_member_id') || '';
   const milestone = route.params.get('milestone_unassigned') === 'true' ? '@none' : route.params.get('milestone_id') || '';
   const owners = new Set(board.owner_member_ids || []);
   if (owner) owners.add(owner);
-  const nodes = new Map(milestones.filter((m) => m.kind === 'milestone' && m.id).map((m) => [m.id, m.title]));
   if (milestone && milestone !== '@none' && !nodes.has(milestone)) nodes.set(milestone, milestone);
   return filters(route, false,
     '<select class="select" name="owner_member_id" aria-label="筛选负责人">' + choice('', '全部负责人', owner) +
-    [...owners].map((id) => choice(id, id, owner)).join('') + '</select>' +
+    [...owners].map((id) => choice(id, people.get(id) || id, owner)).join('') + '</select>' +
     '<select class="select" name="milestone_id" aria-label="筛选里程碑">' + choice('', '全部里程碑', milestone) +
     [...nodes].map(([id,title]) => choice(id,title,milestone)).join('') + choice('@none','未关联里程碑',milestone) + '</select>');
 }
 
-function taskRows(base, items) {
+function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = false) {
   return table(
-    ['任务', '状态', '优先级', '期限'],
+    ['任务', '状态', '优先级', '负责人', '里程碑', '期限'],
     items.map((row) => [
       link(base + '/tasks/' + row.id, row.title),
-      label(row.status),
-      esc(row.priority_label || '—'),
+      canMove && row.status !== 'cancelled'
+        ? `<select class="select" data-move-task="${esc(row.id)}" aria-label="移动任务：${esc(row.title)}">${Object.entries(taskStages).map(([id, name]) =>
+          `<option value="${id}"${id === row.column_id ? ' selected' : ''}>${name}</option>`).join('')}</select>`
+        : esc(taskStages[row.status] || label(row.status)),
+      esc(row.priority_label || '未设置'),
+      esc(people.get(row.owner_member_id) || row.owner_member_id || '未分配'),
+      esc(nodes.get(row.milestone_id) || row.milestone_id || '未关联'),
       taskDeadline(row),
     ]),
     '暂无任务。',
   );
+}
+
+function taskCard(base, row, nodes, people, canMove) {
+  const owner = people.get(row.owner_member_id) || row.owner_member_id || '未分配';
+  const milestone = nodes.get(row.milestone_id) || row.milestone_id;
+  const tags = row.tag_ids || [];
+  const movable = canMove && row.status !== 'cancelled';
+  return `<li data-task-id="${esc(row.id)}" draggable="${movable}">
+    <a href="${esc(base + '/tasks/' + row.id)}" class="pr-task" draggable="false" data-priority="${priorityStyles[row.priority] || 'normal'}"
+       ${movable ? 'aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" aria-describedby="task-move-help"' : ''}>
+      <span class="pr-task-top"><span class="pr-task-code" title="${esc(row.id)}">${esc(row.id)}</span>
+        <span class="pr-task-person" title="${esc(owner)}">${window.OmniRelayUI.personAvatar(owner, row.owner_member_id || owner)}<span class="sr-only">负责人：${esc(owner)}</span></span></span>
+      <span class="pr-task-tags"><span data-tone="${priorityTones[row.priority] || 'pending'}">${esc(row.priority_label || '未设置')}</span>
+        ${tags.slice(0, 2).map(tag => '<span>' + esc(tag) + '</span>').join('')}${tags.length > 2 ? '<span>+' + (tags.length - 2) + '</span>' : ''}</span>
+      <strong class="pr-task-title" title="${esc(row.title)}">${esc(row.title)}</strong>
+      ${row.status === 'blocked' && row.blocked_reason ? `<span class="pr-task-blocker" title="${esc(row.blocked_reason)}">${esc(row.blocked_reason)}</span>` : ''}
+      ${milestone ? `<span class="pr-task-milestone" title="里程碑：${esc(milestone)}"><svg class="icon" aria-hidden="true"><use href="#status-milestone"/></svg><span><span class="sr-only">里程碑：</span>${esc(milestone)}</span></span>` : ''}
+      ${taskDeadline(row)}
+    </a></li>`;
+}
+
+function firstTaskPage(route) {
+  const params = new URLSearchParams(route.params);
+  params.delete('cursor');
+  params.delete('column_id');
+  return withQuery(route.hash.split('?')[0], params);
+}
+
+function requestBlockedReason(task, signal) {
+  return new Promise(resolve => {
+    let reason;
+    const close = () => dialog.close();
+    const dialog = window.OmniRelayUI.openDialog({
+      title: '移至受阻', description: task.title, variant: 'form', confirm: '保存',
+      body: '<label>受阻原因<textarea class="input" name="reason" required autofocus></textarea></label>',
+      onSubmit(form) {
+        const field = form.elements.reason;
+        if (!field.value.trim()) return { field, message: '请填写受阻原因。' };
+        reason = field.value.trim();
+      },
+      onClose(confirmed) {
+        signal.removeEventListener('abort', close);
+        resolve(confirmed ? reason : undefined);
+      },
+    });
+    signal.addEventListener('abort', close, { once: true });
+  });
+}
+
+function wireMoves(body, route, board, request, signal, reload) {
+  const tasks = new Map(board.columns.flatMap(c => c.items.map(t => [t.id, t])));
+  const current = () => !signal.aborted && location.hash === route.hash && body.isConnected;
+  let dragged;
+  let busy = false;
+  function refresh() {
+    const first = firstTaskPage(route);
+    if (first !== route.hash) location.hash = first;
+    else return reload();
+  }
+  async function move(id, target, before) {
+    const task = tasks.get(id);
+    if (!current() || busy || !task || task.status === 'cancelled' || !Object.hasOwn(taskStages, target) ||
+        before === id || (!before && target === task.column_id)) return;
+    busy = true;
+    let reason = task.blocked_reason || '';
+    if (target === 'blocked' && task.column_id !== target) {
+      reason = await requestBlockedReason(task, signal);
+      if (reason === undefined || !current()) {
+        busy = false;
+        return;
+      }
+    }
+    body.setAttribute('aria-busy', 'true');
+    try {
+      await request('/api/v1/projects/' + route.id + '/tasks/' + id + '/move', {
+        method: 'POST', signal,
+        body: { request_key: crypto.randomUUID(), expected_task_version: task.version,
+          expected_board_version: board.version, target_column_id: target, before_id: before,
+          blocked_reason: target === 'blocked' ? reason : '' },
+      });
+    } catch (error) {
+      if (!current()) return;
+      const message = error.status === 409 ? '任务或看板已更新，请重新加载后再移动。' :
+        [403, 404].includes(error.status) ? '移动权限或任务已变化，请重新加载。' : '未能确认移动结果，请重新加载。';
+      body.innerHTML = empty(message) + '<button class="button" type="button">重新加载</button>';
+      body.removeAttribute('aria-busy');
+      const retry = body.querySelector('button');
+      retry.onclick = refresh;
+      retry.focus();
+      return;
+    }
+    if (!current()) return;
+    await refresh();
+    if (signal.aborted || location.hash !== route.hash) return;
+    const panel = document.getElementById('project-panel');
+    const key = CSS.escape(id);
+    panel?.querySelector(`[data-task-id="${key}"] a, [data-move-task="${key}"]`)?.focus();
+  }
+  body.onchange = e => {
+    if (!e.target.matches('[data-move-task]')) return;
+    const id = e.target.dataset.moveTask;
+    const target = e.target.value;
+    e.target.value = tasks.get(id).column_id;
+    void move(id, target);
+  };
+  body.onkeydown = e => {
+    const card = e.target.closest('[data-task-id][draggable="true"]');
+    if (!card || !e.altKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    const stages = Object.keys(taskStages);
+    const index = stages.indexOf(card.closest('[data-column]').dataset.column);
+    void move(card.dataset.taskId, stages[index + (e.key === 'ArrowRight' ? 1 : -1)]);
+  };
+  function highlight(lane) {
+    body.querySelector('[data-drop-active]')?.removeAttribute('data-drop-active');
+    lane?.setAttribute('data-drop-active', '');
+  }
+  body.ondragstart = e => {
+    const card = e.target.closest('[data-task-id][draggable="true"]');
+    if (!card || busy) return e.preventDefault();
+    dragged = card.dataset.taskId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragged);
+  };
+  body.ondragover = e => {
+    const lane = e.target.closest('[data-column]');
+    if (!dragged || !lane) return;
+    e.preventDefault();
+    highlight(lane);
+  };
+  body.ondrop = e => {
+    const lane = e.target.closest('[data-column]');
+    if (!dragged || !lane) return;
+    e.preventDefault();
+    void move(dragged, lane.dataset.column, e.target.closest('[data-task-id]')?.dataset.taskId);
+    dragged = undefined;
+    highlight();
+  };
+  body.ondragend = () => { dragged = undefined; highlight(); };
 }
 
 function columnNext(route, column) {
@@ -219,7 +366,7 @@ function columnNext(route, column) {
   params.set('cursor', column.next_cursor);
   return link(withQuery(route.hash.split('?')[0], params), '查看「' + column.name + '」下一页');
 }
-function contents(route, data, nodes = []) {
+function contents(route, data, milestones = [], people = new Map(), taskReturn) {
   const { base, tab, parts } = route;
   if (tab === 'overview') {
     const { workspace, milestones } = data;
@@ -348,32 +495,25 @@ function contents(route, data, nodes = []) {
           ['状态', label(data.status)],
           ['期限', data.due_at],
           ['任务说明', data.description],
-        ]) + link(base + '/tasks', '返回任务看板'),
+        ]) + link(taskReturn || base + '/tasks', taskReturn?.split('?')[0].endsWith('/list') ? '返回任务列表' : '返回任务看板'),
       );
     const list = parts[0] === 'list';
     const criteria = new URLSearchParams(route.params);
     criteria.delete('cursor');
     criteria.delete('column_id');
-    return (
-      '<nav class="pr-segment" aria-label="任务视图">' +
-      link(withQuery(base + '/tasks', criteria), '看板') +
-      link(withQuery(base + '/tasks/list', criteria), '列表') +
-      '</nav>' +
-      taskFilters(route, data, nodes) +
-      (list
-        ? taskRows(
-            base,
-            data.columns.flatMap((c) => c.items),
-          ) + data.columns.map((c) => columnNext(route, c)).join(' ')
-        : '<div class="pr-board">' +
-          data.columns
-            .map(
-              (c) =>
-                `<section class="pr-lane"><h3>${esc(c.name)} · ${esc(c.total)}</h3><ul>${c.items.map((row) => `<li class="pr-task">${link(base + '/tasks/' + row.id, row.title)} ${esc(row.priority_label || '')} ${taskDeadline(row)}</li>`).join('')}</ul>${c.items.length ? '' : empty('暂无任务。')}${columnNext(route, c)}</section>`,
-            )
-            .join('') +
-          '</div>')
-    );
+    const nodes = new Map(milestones.filter(m => m.kind === 'milestone' && m.id).map(m => [m.id, m.title]));
+    const views = [['看板', base + '/tasks'], ['列表', base + '/tasks/list']];
+    const nav = '<nav class="pr-segment" aria-label="任务视图">' + views.map(([name, path]) =>
+      `<a href="${esc(withQuery(path, criteria))}"${route.hash.split('?')[0] === path ? ' aria-current="page"' : ''}>${name}</a>`).join('') + '</nav>';
+    const toolbar = '<div class="pr-toolbar task-toolbar">' + taskFilters(route, data, nodes, people) + nav + '</div>';
+    if (list) return toolbar + taskRows(base, data.columns.flatMap(c => c.items), nodes, people, data.can_move) +
+      data.columns.map(c => columnNext(route, c)).join(' ');
+    const tones = { todo: 'pending', in_progress: 'progress', blocked: 'danger', done: 'success' };
+    return toolbar + (data.can_move ? '<small id="task-move-help">拖动卡片可移动任务，键盘可用 Alt + 左右方向键移列。</small>' : '') +
+      '<div class="pr-board" role="region" aria-label="任务看板" tabindex="0">' + data.columns.map(c =>
+        `<section class="pr-lane" data-column="${esc(c.id)}"><h3><span class="chip" data-tone="${tones[c.id] || 'pending'}">${esc(c.name)}</span><span>${esc(c.total)}</span></h3>
+        <ul>${c.items.map(row => taskCard(base, row, nodes, people, data.can_move)).join('')}</ul>
+        ${c.items.length ? '' : '<p class="pr-lane-empty">暂无任务</p>'}${columnNext(route, c)}</section>`).join('') + '</div>';
   }
   const rows = data.items.map((row) => {
     const kind = row.ref?.kind || row.resource_type,
@@ -419,6 +559,20 @@ function endpoint(route) {
   return withQuery(path, query);
 }
 
+async function fetchTaskBoard(route, request, signal) {
+  const page = request(endpoint(route), { signal });
+  if (!route.params.has('column_id')) return page;
+  // 列游标只读取一列，其余列沿用同一看板版本的首页。
+  const first = projectRoute(firstTaskPage(route));
+  const [selected, all] = await Promise.all([page, request(endpoint(first), { signal })]);
+  if (selected.data.version !== all.data.version) {
+    throw Object.assign(new Error('看板版本已变化'), { status: 409 });
+  }
+  const column = selected.data.columns[0];
+  all.data.columns = all.data.columns.map(c => c.id === column.id ? column : c);
+  return all;
+}
+
 function partial(data) {
   return (
     data.coverage?.complete === false ||
@@ -454,10 +608,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
   }
   const taskViews = memory.taskViews ??= new Map();
   if (id && tab === 'tasks' && (!parts.length || parts[0] === 'list')) {
-    const criteria = new URLSearchParams(route.params);
-    criteria.delete('cursor');
-    criteria.delete('column_id');
-    taskViews.set(id, withQuery(route.hash.split('?')[0], criteria));
+    taskViews.set(id, firstTaskPage(route));
   }
   const back = memory.list || '#/projects';
   if (id && memory.list)
@@ -535,13 +686,15 @@ export async function mountProjects(host, route, request, { signal, memory, user
     }
     const overviewURL = '/api/v1/projects/' + id + '/overview';
     const overview = request(overviewURL, { signal });
+    const boardView = tab === 'tasks' && (!parts.length || parts[0] === 'list');
     const content =
       tab === 'overview'
         ? overview
         : tab === 'chats'
           ? Promise.resolve()
-          : request(endpoint(route), { signal });
-    const [header, result] = await Promise.allSettled([overview, content]);
+          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(route), { signal });
+    const members = boardView ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
+    const [header, result, directory] = await Promise.allSettled([overview, content, members]);
     if (!current()) return;
     if (header.status === 'rejected' && [403, 404].includes(header.reason.status)) throw header.reason;
     if (result.status === 'rejected') throw result.reason;
@@ -584,8 +737,11 @@ export async function mountProjects(host, route, request, { signal, memory, user
     }
     const data = result.value.data ?? result.value;
     body.innerHTML =
-      (header.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
-      contents(route, data, header.value?.data.milestones?.items || []);
+      (header.status === 'rejected' || directory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
+      contents(route, data, header.value?.data.milestones?.items || [],
+        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])), taskViews.get(id));
+    if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
+      mountProjects(host, route, request, { signal, memory, userId }));
     wireFilters(body, route);
     const check = body.querySelector('[data-check]');
     if (check)
@@ -633,8 +789,10 @@ export async function mountProjects(host, route, request, { signal, memory, user
   } catch (error) {
     if (!current()) return;
     body.innerHTML = empty(failure(error)) + '<button class="button" type="button">重新加载</button>';
-    body.querySelector('button').onclick = () =>
-      mountProjects(host, route, request, { signal, memory, userId });
+    body.querySelector('button').onclick = () => {
+      if (tab === 'tasks' && route.params.has('column_id')) location.hash = firstTaskPage(route);
+      else mountProjects(host, route, request, { signal, memory, userId });
+    };
   } finally {
     body.removeAttribute('aria-busy');
   }
