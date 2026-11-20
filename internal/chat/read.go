@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/directory"
+	"github.com/uniquechao/OmniRelay/internal/drive"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
@@ -128,6 +129,7 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 }
 
 type messageItem struct {
+	FileFormats          []drive.FileFormat         `json:"file_formats,omitempty"`
 	ID                   string                     `json:"id"`
 	ChatID               string                     `json:"chat_id"`
 	ThreadID             string                     `json:"thread_id,omitempty"`
@@ -170,6 +172,33 @@ func (s *Service) projectMessages(ctx context.Context, p identity.Principal, sco
 	}
 	for i, person := range people {
 		items[i].Sender = person
+	}
+	type cloudIcon struct {
+		message, format int
+		token           string
+	}
+	var icons []cloudIcon
+	var tokens []string
+	for i := range items {
+		item := &items[i]
+		if item.State == "deleted" {
+			continue
+		}
+		for _, ref := range drive.References(item.Type, item.Body) {
+			if ref.Kind == "file" {
+				icons = append(icons, cloudIcon{i, len(item.FileFormats), ref.Token})
+				tokens = append(tokens, ref.Token)
+			}
+			item.FileFormats = append(item.FileFormats, drive.Format(ref.Kind, ref.Name))
+		}
+	}
+	if len(tokens) > 0 && s.files != nil {
+		formats := s.files.CloudFormats(ctx, p, tokens)
+		for _, icon := range icons {
+			if format, ok := formats[icon.token]; ok {
+				items[icon.message].FileFormats[icon.format] = format
+			}
+		}
 	}
 	s.receipts.project(ctx, p, items)
 	return nil

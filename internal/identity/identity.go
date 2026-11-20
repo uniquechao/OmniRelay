@@ -366,7 +366,7 @@ func (a WorkbenchAccess) canReturnTo(path string) bool {
 	if projectReturn.MatchString(path) {
 		return a.Navigation["workbench"]
 	}
-	if botChatsReturn.MatchString(path) {
+	if path == "/#/feishu/drive" || botChatsReturn.MatchString(path) {
 		return a.Navigation["bot_chats"]
 	}
 	switch path {
@@ -410,7 +410,7 @@ func localReturnPath(raw string) (string, error) {
 	switch raw {
 	case "":
 		return "/", nil
-	case "/", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
+	case "/", "/#/feishu/drive", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
 		return raw, nil
 	case "/#/settings":
 		return "/#/system/settings", nil

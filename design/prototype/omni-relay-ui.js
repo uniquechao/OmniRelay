@@ -309,13 +309,15 @@ window.OmniRelayUI = (() => {
   }
 
   function getState(config) {
-    if (!listStates.has(config.key)) {
-      listStates.set(config.key, {
+    const states = config.states ?? listStates;
+    if (!states.has(config.key)) {
+      const initial = {
         query: '', filters: {}, page: 0, pageSize: pageSizes[0], selected: new Set(),
         sort: config.defaultSort ?? null, mode: config.selection === false ? 'none' : 'multiple', columnWidths: null
-      });
+      };
+      states.set(config.key, initial);
     }
-    return listStates.get(config.key);
+    return states.get(config.key);
   }
 
   function mountList(root, config) {
@@ -424,19 +426,79 @@ window.OmniRelayUI = (() => {
       find('[data-clear-selection]').hidden = !count;
       find('[data-selection-count]').textContent = count ? '已选 ' + count + ' 项' : '';
       const activeFilters = filters.filter(filter => state.filters[filter.key]);
-      find('[data-filter-summary]').textContent = activeFilters.map(filter => filter.label + '：' + filter.options[state.filters[filter.key]]).join(' · ');
+      find('[data-filter-summary]').textContent = activeFilters.map(filter => filter.label + '：' + (filter.options[state.filters[filter.key]] ?? '当前筛选')).join(' · ');
       find('[data-context]').hidden = !(count || activeFilters.length || config.action);
     }
 
+    let pending;
     function paint() {
+      if (config.loadPage) {
+        void loadPage();
+        return;
+      }
       const rows = filteredRows();
       const existingIds = new Set(config.rows.map(row => row.id));
       for (const id of state.selected) {
         if (!existingIds.has(id)) state.selected.delete(id);
       }
-      const pageCount = Math.ceil(rows.length / state.pageSize);
-      state.page = Math.max(0, Math.min(state.page, pageCount - 1));
-      visible = rows.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize);
+      const pages = Math.ceil(rows.length / state.pageSize);
+      state.page = Math.max(0, Math.min(state.page, pages - 1));
+      paintRows(rows.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize), rows.length);
+    }
+
+    async function loadPage() {
+      pending?.abort();
+      pending = new AbortController();
+      const signal = AbortSignal.any([config.signal, pending.signal]);
+      const empty = find('[data-empty]');
+      body.replaceChildren();
+      visible = [];
+      empty.hidden = false;
+      find('[data-page]').textContent = '';
+      find('[data-total]').textContent = '';
+      find('[data-prev]').disabled = find('[data-next]').disabled = true;
+      find('[data-choice-column]').hidden = !selectable();
+      const loading = window.OmniRelayLoading.mount(empty, {label:'正在读取' + config.itemLabel + '…'});
+      try {
+        const result = await config.loadPage(state, signal);
+        if (signal.aborted) return;
+        for (const filter of filters) {
+          const values = result.options?.[filter.key];
+          if (!values) continue;
+          filter.options = values;
+          const selected = state.filters[filter.key] || '';
+          find('[data-filter="' + filter.key + '"]').innerHTML = options({'':'全部', ...values,
+            ...(selected && !Object.hasOwn(values, selected) ? {[selected]: '当前筛选'} : {})}, selected);
+        }
+        const last = Math.max(0, Math.ceil(result.total / state.pageSize) - 1);
+        if (state.page > last) {
+          state.page = last;
+          return paint();
+        }
+        paintRows(result.items, result.total);
+      } catch (error) {
+        if (signal.aborted) return;
+        for (const filter of filters) {
+          filter.options = {};
+          const selected = state.filters[filter.key] || '';
+          find('[data-filter="' + filter.key + '"]').innerHTML = options(selected ? {'':'全部', [selected]:'当前筛选'} : {'':'全部'}, selected);
+        }
+        updateSelection();
+        empty.textContent = error.status === 403 ? '当前账号无权读取此列表。' : '列表读取失败。';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'button';
+        retry.textContent = '重新读取';
+        retry.onclick = paint;
+        empty.append(' ', retry);
+      } finally {
+        loading.finish();
+      }
+    }
+
+    function paintRows(rows, total) {
+      const pageCount = Math.ceil(total / state.pageSize);
+      visible = rows;
       const showSelection = selectable();
       find('[data-choice-column]').hidden = !showSelection;
       find('[data-page-choice]').hidden = state.mode !== 'multiple';
@@ -455,8 +517,8 @@ window.OmniRelayUI = (() => {
         config.columns.map(col => '<td' + headClass(col) + '>' + col.render(row) + '</td>').join('') + '</tr>').join('');
       const empty = find('[data-empty]');
       empty.hidden = Boolean(rows.length);
-      empty.textContent = config.rows.length ? '没有匹配的' + config.itemLabel + '。' : '暂无' + config.itemLabel + '。';
-      find('[data-total]').textContent = '共 ' + rows.length + ' 条';
+      empty.textContent = (config.rows?.length || (config.loadPage && (state.query || Object.values(state.filters).some(Boolean)))) ? '没有匹配的' + config.itemLabel + '。' : '暂无' + config.itemLabel + '。';
+      find('[data-total]').textContent = '共 ' + total + ' 条';
       find('[data-page]').textContent = '第 ' + (pageCount ? state.page + 1 : 0) + ' / ' + pageCount + ' 页';
       find('[data-prev]').disabled = state.page === 0;
       find('[data-next]').disabled = state.page + 1 >= pageCount;
@@ -608,6 +670,7 @@ window.OmniRelayUI = (() => {
         updateSelection();
         return;
       }
+      if (!control.matches('[data-size], [data-mode], [data-filter]')) return;
       if (control.matches('[data-size]')) {
         state.pageSize = Number(control.value);
         state.page = 0;

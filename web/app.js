@@ -9,6 +9,9 @@ import { projectRoute, mountProjects, mountProjectSummary } from './projects.js'
 import { mountRail } from './rail.js';
 import { mountAccount, updateAccount } from './account.js';
 
+import { mountDrive } from './drive.js';
+
+const driveHash = '#/feishu/drive';
 const titles = {
   users: '用户管理', roles: '角色权限', 'feishu-bot': '飞书 Bot 配置', settings: '连接设置', audit: '审计日志'
 };
@@ -138,7 +141,7 @@ function safeRoute(hash) {
   const chat = chatRoute(hash);
   if (chat) return chat.hash;
   const section = hash?.split('/')[2];
-  if (hash === workbenchRoute) return hash;
+  if (hash === workbenchRoute || hash === driveHash) return hash;
   return Object.hasOwn(titles, section) && hash === '#/system/' + section ? hash : '';
 }
 
@@ -149,7 +152,7 @@ function permission(user, section) {
 function allowedRoute(hash) {
   if (!hash) return false;
   if (projectRoute(hash)) return session.user.navigation?.workbench === true;
-  if (chatRoute(hash)) return session.user.navigation?.bot_chats === true;
+  if (hash === driveHash || chatRoute(hash)) return session.user.navigation?.bot_chats === true;
   return hash === workbenchRoute ? session.user.navigation?.workbench === true : permission(session.user, hash.split('/')[2]);
 }
 
@@ -261,10 +264,15 @@ async function render() {
   const chat = chatRoute(hash);
   const project = projectRoute(hash);
   const section = chat || project ? undefined : hash.split('/')[2];
-  const title = project ? project.title || '项目列表' : chat ? '机器人记录' : section ? titles[section] : '工作台总览';
+  const drive = hash === driveHash;
+  const title = drive ? '文件网盘' : project ? project.title || '项目列表' : chat ? '机器人记录' : section ? titles[section] : '工作台总览';
   feishuNav.hidden = chatOption.hidden = session.user.navigation?.bot_chats !== true;
-  feishuNav.dataset.active = String(Boolean(chat));
-  if (chat) feishuNav.open = true;
+  feishuNav.dataset.active = String(Boolean(chat || drive));
+  mobileNav.querySelector('option[value="feishu/drive"]').hidden = feishuNav.hidden;
+  const driveNav = feishuNav.querySelector('[data-nav="drive"]');
+  if (drive) driveNav.setAttribute('aria-current','page');
+  else driveNav.removeAttribute('aria-current');
+  if (chat || drive) feishuNav.open = true;
   if (chat) chatNav.setAttribute('aria-current', 'page');
   else chatNav.removeAttribute('aria-current');
   const allowed = key => permission(session.user, key);
@@ -297,11 +305,13 @@ async function render() {
     mobileNav.selectedIndex = -1;
     return;
   }
-  drawBreadcrumb(title, project?.id ? '项目列表' : chat ? '飞书' : section ? '系统管理' : '工作空间');
+  drawBreadcrumb(title, project?.id ? '项目列表' : chat || drive ? '飞书' : section ? '系统管理' : '工作空间');
   mobileNav.value = project ? 'projects' : chat ? 'feishu/bot-chats' : hash.slice(2);
   page.dataset.layout = project?.id ? 'project' : chat ? 'bot-chat' : section && section !== 'feishu-bot' && section !== 'settings' ? 'list' : 'content';
   page.scrollTop = 0;
-  if (project) {
+  if (drive) {
+    mountDrive(page, protectedAPI, signal);
+  } else if (project) {
     view = {};
     void mountProjects(page,project,protectedAPI,{signal,memory:projectMemory,userId:session.user.id,navigation:view});
   } else if (chat) {

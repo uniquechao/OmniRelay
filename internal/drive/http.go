@@ -35,6 +35,7 @@ type candidate struct {
 	Updated                  *time.Time
 }
 type item struct {
+	token      string
 	ID         int64      `json:"id"`
 	Name       string     `json:"name"`
 	Category   string     `json:"category"`
@@ -59,10 +60,10 @@ const authorizedSources = ` FROM feishu_file_sources x
  AND pm.account_id=$4 AND a.open_id=$5 AND a.active AND pm.role<>'revoked'
  AND x.chat_kind='group' AND x.state<>'revoked' AND ($6::bigint=0 OR x.file_id=$6)`
 
-func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64) ([]candidate, error) {
+func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]candidate, error) {
 	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,l.project_id,
  x.file_id,x.kind,x.token,x.name,x.state,x.version_id,CASE WHEN x.kind IN ('attachment','file') THEN coalesce(v.byte_size,x.declared_size) END,
- x.synced_at`+authorizedSources+` ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id)
+ x.synced_at`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -78,8 +79,8 @@ type sourceKey struct {
 	msg, project string
 }
 
-func (s *Service) visible(ctx context.Context, p identity.Principal, id int64) ([]item, error) {
-	initial, err := s.candidates(ctx, p, id)
+func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]item, error) {
+	initial, err := s.candidates(ctx, p, id, cloudTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +123,7 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64) (
 			keys[sourceKey{c.ID, c.MessageID, c.ProjectID}] = true
 		}
 	}
-	current, err := s.candidates(ctx, p, id)
+	current, err := s.candidates(ctx, p, id, cloudTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64) (
 		if !ok {
 			pos = len(files)
 			positions[c.ID] = pos
-			files = append(files, item{ID: c.ID, Name: c.Name, State: c.State, SizeSource: "unknown"})
+			files = append(files, item{ID: c.ID, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
 		}
 		f := &files[pos]
 		if len(f.Sources) == 0 || (c.Updated != nil && (f.Updated == nil || c.Updated.After(*f.Updated))) {
@@ -154,6 +155,22 @@ func (s *Service) visible(ctx context.Context, p identity.Principal, id int64) (
 		}
 	}
 	return files, nil
+}
+
+// CloudFormats 仅为聊天中的云盘链接补充已授权文件的实际格式。
+func (s *Service) CloudFormats(ctx context.Context, p identity.Principal, tokens []string) map[string]FileFormat {
+	if len(tokens) == 0 || p.TenantKey != s.tenant || p.AppID != s.app {
+		return nil
+	}
+	files, err := s.visible(ctx, p, 0, tokens)
+	if err != nil {
+		return nil
+	}
+	result := make(map[string]FileFormat, len(files))
+	for _, f := range files {
+		result[f.token] = formats[f.FormatKey]
+	}
+	return result
 }
 
 func jsonResponse(w http.ResponseWriter, status int, data any) {
@@ -192,7 +209,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 			defer cancel()
-			files, err := s.visible(ctx, p, id)
+			files, err := s.visible(ctx, p, id, nil)
 			if err != nil {
 				problem(w, 503, "source_unavailable")
 				return
@@ -299,6 +316,8 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 }
 
+var categoryLabels = map[string]string{"docs": "飞书文档", "minutes": "会议纪要", "tasks": "任务表格（多维表格）", "files": "文件"}
+
 func list(w http.ResponseWriter, r *http.Request, files []item) {
 	q := r.URL.Query()
 	offset, limit := 0, 20
@@ -319,13 +338,17 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 	}
 	key := q.Get("sort")
 	order := q.Get("order")
-	if !slices.Contains([]string{"", "name", "size", "category", "format", "updated_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
+	if !slices.Contains([]string{"", "name", "size", "category", "project", "format", "updated_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
 		problem(w, 400, "invalid_sort")
 		return
 	}
+	projectOptions := map[string]string{}
 	selected := []item{}
 	term := strings.ToLower(strings.TrimSpace(q.Get("q")))
 	for _, f := range files {
+		for _, project := range f.Projects {
+			projectOptions[project] = project
+		}
 		category := q.Get("category")
 		if category != "" && category != "all" && category != f.Category {
 			continue
@@ -336,7 +359,7 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 		if project := q.Get("project_id"); project != "" && !slices.Contains(f.Projects, project) {
 			continue
 		}
-		fields := []string{f.Name, f.Format, f.Category}
+		fields := []string{f.Name, f.Format, f.Category, categoryLabels[f.Category]}
 		fields = append(fields, f.Projects...)
 		for _, src := range f.Sources {
 			fields = append(fields, src.SenderName, src.ChatName)
@@ -367,6 +390,8 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 			}
 		case "name":
 			ordering = strings.Compare(a.Name, b.Name)
+		case "project":
+			ordering = strings.Compare(strings.Join(a.Projects, "、"), strings.Join(b.Projects, "、"))
 		case "format":
 			ordering = strings.Compare(a.Format, b.Format)
 		case "source":
@@ -385,5 +410,5 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 	total := len(selected)
 	offset = min(offset, total)
 	end := offset + min(total-offset, limit)
-	jsonResponse(w, 200, map[string]any{"items": selected[offset:end], "total": total, "offset": offset, "limit": limit})
+	jsonResponse(w, 200, map[string]any{"projects": projectOptions, "items": selected[offset:end], "total": total, "offset": offset, "limit": limit})
 }
