@@ -9,6 +9,11 @@ image="$2"
 
 source "$root/private/route.env"
 [[ "$OMNI_K8S_WEB_NODEPORT" =~ ^[0-9]{1,5}$ ]] || exit 2
+bot_send_enabled=${OMNIRELAY_FEISHU_BOT_SEND_ENABLED-true}
+if [[ "$bot_send_enabled" != true && "$bot_send_enabled" != false ]]; then
+  printf '%s\n' 'OMNIRELAY_FEISHU_BOT_SEND_ENABLED 必须是 true 或 false。' >&2
+  exit 2
+fi
 # 先准备同源资源，最后随 Deployment 一起写入此次切换的恢复摘要。
 export OMNI_UI_ARCHIVE=${OMNI_UI_ARCHIVE:-/var/lib/omnirelay/ui}
 install -d -m 0755 "$OMNI_UI_ARCHIVE"
@@ -61,6 +66,7 @@ fi
 "${kubectl[@]}" logs "$job"
 "${kubectl[@]}" exec postgres-0 -- psql -q -U postgres -d omnirelay -v ON_ERROR_STOP=1 \
   -c 'REVOKE INSERT, UPDATE, DELETE ON TABLE omnirelay_schema_migrations FROM omni_runtime'
-sed -e "s|OMNIRELAY_PREVIOUS_IMAGE|$previous|g" -e "s|OMNIRELAY_GO_IMAGE|$image|g" -e "s|WEB_NODEPORT|$OMNI_K8S_WEB_NODEPORT|g" "$root/base/go/omnirelay.yaml" \
+sed -e "s|OMNIRELAY_PREVIOUS_IMAGE|$previous|g" -e "s|OMNIRELAY_GO_IMAGE|$image|g" \
+  -e "s|WEB_NODEPORT|$OMNI_K8S_WEB_NODEPORT|g" -e "s|BOT_SEND_ENABLED_VALUE|$bot_send_enabled|g" "$root/base/go/omnirelay.yaml" \
   | "${kubectl[@]}" apply --server-side --field-manager=omnirelay-deploy -f -
 "${kubectl[@]}" rollout status deployment/omnirelay --timeout=120s

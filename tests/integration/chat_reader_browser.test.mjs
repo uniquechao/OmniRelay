@@ -751,6 +751,81 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   assert.equal(await box.locator('li').count(), 0);
 });
 
+test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const width of [1366, 390]) for (const theme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: width === 390, isMobile: width === 390 });
+    page.setDefaultTimeout(8000);
+    await mountFixture(page);
+    const sends = [], memberRequests = [];
+    await page.route('**/send-capabilities', route => route.fulfill({ json: {
+      can_send: true, sender: { name: '测试机器人' }, mentions: route.request().url().includes('/oc_group/')
+    } }));
+    await page.route('**/members?purpose=mention*', route => {
+      const { pathname, searchParams } = new URL(route.request().url());
+      const offset = searchParams.get('offset');
+      memberRequests.push(pathname);
+      return route.fulfill({ json: {
+        items: offset === '0' ? [{ name: '王宁', mention_open_id: 'ou_wang' }] : [{ name: '林晓', mention_open_id: 'ou_lin' }],
+        total: 2
+      } });
+    });
+    await page.route('**/oc_group/messages', route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON();
+      sends.push(body);
+      return route.fulfill({ json: { operation_key: body.operation_key, chat_id: group.id, state: 'success',
+        parts: [{ position: 0, state: 'success', message_id: 'om_mention' }] } });
+    });
+    await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + group.id);
+    const box = page.getByRole('form', { name: '发送消息' });
+    const editor = box.getByRole('textbox', { name: '消息内容' });
+    const picker = box.getByRole('group', { name: '提及成员' });
+    await box.getByText('发送身份：机器人 测试机器人').waitFor();
+    await editor.fill('🎉');
+    await page.keyboard.insertText('@');
+    await picker.getByRole('button', { name: '王宁' }).waitFor();
+    assert.ok(await editor.evaluate(node => node === document.activeElement));
+    await page.keyboard.insertText('林');
+    await picker.getByText('已加载成员中没有匹配项。').waitFor();
+    await picker.getByRole('button', { name: '更多成员' }).click();
+    const member = picker.getByRole('button', { name: '林晓' });
+    await member.waitFor();
+    const bounds = await picker.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1);
+    if (width === 390) await member.tap();
+    else {
+      await editor.press('ArrowDown');
+      assert.ok(await member.evaluate(node => node === document.activeElement));
+      await member.press('Enter');
+    }
+    assert.deepEqual(sends, []);
+    assert.equal(await editor.inputValue(), '🎉@林晓 ');
+    await page.keyboard.insertText('请查收 ');
+    await page.keyboard.insertText('@');
+    await picker.getByRole('button', { name: '王宁' }).waitFor();
+    await editor.press('Escape');
+    await picker.waitFor({ state: 'hidden' });
+    await page.keyboard.insertText('王宁');
+    await editor.press('Enter');
+    await box.getByText('飞书已确认接收。').waitFor();
+    assert.equal(sends.length, 1);
+    assert.deepEqual(sends[0].paragraphs, [[{ text: '🎉' }, { mention_open_id: 'ou_lin' }, { text: ' 请查收 @王宁' }]]);
+
+    await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + direct.id);
+    await box.getByRole('textbox', { name: '消息内容' }).and(page.getByPlaceholder('发送给 林晓')).waitFor();
+    await box.getByText('发送身份：机器人 测试机器人').waitFor();
+    assert.ok(await box.getByRole('button', { name: '提及成员' }).isDisabled());
+    await editor.focus();
+    await page.keyboard.insertText('@');
+    assert.equal(await editor.inputValue(), '@');
+    assert.ok(await picker.isHidden());
+    assert.deepEqual(memberRequests, Array(3).fill(base + '/oc_group/members'));
+    await page.close();
+  }
+});
+
 test('分栏与切会话保留草稿，超时后并发恢复只投递一次', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
