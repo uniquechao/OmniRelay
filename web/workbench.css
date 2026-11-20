@@ -125,3 +125,11 @@ td a:hover { text-decoration: underline; }
 .setup-callback code { display: block; overflow-wrap: anywhere; color: var(--or-text); }
 .page.session-loading { min-height:100svh; display:grid; align-content:center; justify-items:center; max-width:none; background:var(--or-surface); }
 .session-loading > [data-session-loading] { width:100%; }
+
+/* 长编号与项目自定义标签需收在卡片宽度内。 */
+.pr-lane li, .pr-task > span { min-width: 0; max-width: 100%; }
+.pr-lane .pr-task { text-decoration: none; box-sizing: border-box; }
+.pr-task-code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.pr-task-person { flex: none; }
+.task-toolbar .toolbar { margin: 0; min-width: 0; }
+.task-toolbar .select { max-width: 100%; }

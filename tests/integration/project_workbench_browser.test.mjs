@@ -269,3 +269,93 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await page.close();
     }
 });
+
+test('任务四列样式、移动回执与恢复', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const stages = ['todo', 'in_progress', 'blocked', 'done'];
+  const names = ['待开始', '进行中', '受阻', '已完成'];
+  for (const width of [1366, 390]) for (const theme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width, height: 844 }, colorScheme: theme });
+    await fixture(page);
+    const rows = stages.map((column_id, i) => ({
+      id: 'task-' + i, title: '交付验收'.repeat(28), column_id, status: column_id, version: 1,
+      owner_member_id: 'reader', priority: 'P' + i, priority_label: ['紧急', '重要', '普通', '低'][i],
+      milestone_id: 'm1', due_at: '2026-11-19', due_label: '11/19', due_alert: i < 3,
+      blocked_reason: i === 2 ? '等待评审' : '', tag_ids: ['评审', '交付'],
+    }));
+    let version = 1, canMove = true, failureStatus;
+    await page.route(origin + root + '/members', route => route.fulfill({
+      json: { data: { members: [{ member_id: 'reader', display_name: '李明' }] } },
+    }));
+    await page.route(origin + root + '/tasks', route => route.fulfill({ json: { data: {
+      version, can_move: canMove, owner_member_ids: ['reader'],
+      columns: stages.map((id, i) => {
+        const items = rows.filter(row => row.column_id === id);
+        return { id, name: names[i], items, total: items.length };
+      }),
+    } } }));
+    await page.route(origin + root + '/tasks/task-0/move', route => {
+      const command = route.request().postDataJSON();
+      assert.equal(command.expected_task_version, rows[0].version);
+      assert.equal(command.expected_board_version, version);
+      assert.ok(command.request_key);
+      if (failureStatus) return route.fulfill({ status: failureStatus, json: {} });
+      version++;
+      Object.assign(rows[0], { column_id: command.target_column_id, status: command.target_column_id,
+        version, blocked_reason: command.blocked_reason });
+      return route.fulfill({ json: rows[0] });
+    });
+    const prototype = new URL('../../design/prototype/omni-relay-workbench.html', import.meta.url);
+    prototype.searchParams.set('theme', theme);
+    prototype.hash = '/projects/beichen/tasks';
+    await page.goto(prototype.href);
+    const colors = cards => cards.evaluateAll(els => Object.fromEntries(els.map(el => {
+      const style = getComputedStyle(el);
+      return [el.dataset.priority, [style.backgroundColor, style.borderColor]];
+    })));
+    await page.locator('.pr-task').first().waitFor();
+    const expectedColors = await colors(page.locator('.pr-task'));
+    await page.goto(origin + '/?theme=' + theme + '#/projects/p-21/tasks');
+    const card = page.locator('[data-task-id="task-0"] a');
+    await card.waitFor();
+    assert.equal(await page.locator('.pr-lane').count(), 4);
+    const actualColors = await colors(page.locator('.pr-task'));
+    assert.equal(new Set(Object.values(actualColors).map(String)).size, 4);
+    for (const [priority, pair] of Object.entries(expectedColors)) assert.deepEqual(actualColors[priority], pair);
+    assert.ok(await page.locator('.pr-task-title').evaluateAll(titles => titles.every(el =>
+      el.scrollWidth <= el.clientWidth && el.offsetHeight <= 2 * parseFloat(getComputedStyle(el).lineHeight) + 1)));
+    assert.equal(await card.locator('.pr-task-person[title="李明"] .person-avatar').count(), 1);
+    assert.equal(await page.locator('[data-column="done"] [data-deadline-alert]').count(), 0);
+    assert.equal(await page.locator('.pr-task [data-deadline-alert]').count(), 3);
+    const href = await card.getAttribute('href');
+    await card.press('Alt+ArrowRight');
+    await page.locator('[data-column="in_progress"] [data-task-id="task-0"]').waitFor();
+    if (width === 1366) await card.dragTo(page.locator('[data-column="blocked"] h3'));
+    else await card.press('Alt+ArrowRight');
+    await page.getByLabel('受阻原因').waitFor();
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    assert.equal(rows[0].column_id, 'in_progress');
+    await card.press('Alt+ArrowRight');
+    await page.getByLabel('受阻原因').fill('等待复核');
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await card.getByText('等待复核').waitFor();
+    assert.equal(await card.getAttribute('href'), href);
+    await page.getByRole('link', { name: '列表', exact: true }).click();
+    const select = page.locator('[data-move-task="task-0"]');
+    await select.waitFor();
+    assert.equal(await select.inputValue(), 'blocked');
+    for (const status of [409, 404]) {
+      failureStatus = status;
+      await select.selectOption('done');
+      const retry = page.getByRole('button', { name: '重新加载' });
+      await retry.waitFor();
+      assert.equal(await page.locator('[data-move-task]').count(), 0);
+      canMove = status === 409;
+      await retry.click();
+      await page.getByRole('table').waitFor();
+    }
+    assert.equal(await page.locator('[data-move-task]').count(), 0);
+    await page.close();
+  }
+});

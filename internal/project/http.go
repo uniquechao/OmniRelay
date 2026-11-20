@@ -132,6 +132,10 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		if err != nil {
 			return nil, err
 		}
+		board.CanMove, err = s.roles.Check(r.Context(), actor, "project.assign", board.Project)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
 	})
 	handle("POST "+project+"/tasks", "project.assign", s.saveTask)
