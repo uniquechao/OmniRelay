@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/migrations"
 )
@@ -106,7 +108,9 @@ func TestFileArchiveAccess(t *testing.T) {
  ('t','a','m2','g2',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
  ('t','a','m3','g1',now(),now(),'{"file_key":"file1","file_name":"空.pdf"}','file')`)
 	src := &testSource{denied: map[string]bool{}, text: "第一版"}
-	s := New(pool, "t", "a", 1, src)
+	roles := access.New(pool, "t", "a")
+	roles.ProjectAccess = access.LocalProjects{Pool: pool}
+	s := New(pool, "t", "a", 1, src, roles)
 	if worked, err := s.index(ctx); err != nil || !worked {
 		t.Fatal(worked, err)
 	}
@@ -153,6 +157,67 @@ func TestFileArchiveAccess(t *testing.T) {
 		t.Fatal(docs)
 	}
 	path := "/" + strconv.FormatInt(docs[0].ID, 10)
+	t.Run("并发归属和来源定位", func(t *testing.T) {
+		exec(`INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role)
+        VALUES('t','a','q','alice','mq','editor'),('t','a','r','alice','mr','manager')`)
+		change := func(version int64, add, remove []string) int {
+			body, _ := json.Marshal(projectChange{&version, add, remove})
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest("PATCH", "/api/v1/feishu/files"+path+"/projects", strings.NewReader(string(body))))
+			return w.Code
+		}
+		initial := docs[0]
+		if status := change(initial.ProjectVersion, []string{"q", "unknown"}, nil); status != 403 {
+			t.Fatal(status)
+		}
+		type result struct {
+			project string
+			status  int
+		}
+		done := make(chan result, 2)
+		for _, id := range []string{"q", "r"} {
+			go func() { done <- result{id, change(initial.ProjectVersion, []string{id}, nil)} }()
+		}
+		first, second := <-done, <-done
+		if first.status != 200 {
+			first, second = second, first
+		}
+		if first.status != 200 || second.status != 409 {
+			t.Fatal(first, second)
+		}
+		total, linked := page("?project_id=" + first.project)
+		if total != 1 || linked[0].ID != initial.ID || !slices.Equal(linked[0].Sources, initial.Sources) {
+			t.Fatal(linked)
+		}
+		if total, _ := page("?project_id=p&category=docs"); total != 1 {
+			t.Fatal(total)
+		}
+		for _, src := range linked[0].Sources {
+			if src.ContextURL != "/api/v1/feishu/chats/"+src.ChatID+"/messages/"+src.MessageID+"/context" {
+				t.Fatal(src)
+			}
+		}
+		if status := change(linked[0].ProjectVersion, nil, []string{first.project}); status != 200 {
+			t.Fatal(status)
+		}
+		if total, _ := page("?project_id=" + first.project); total != 0 {
+			t.Fatal(total)
+		}
+		_, remaining := page("?project_id=p&category=docs")
+		if len(remaining) != 1 || !slices.Equal(remaining[0].Sources, initial.Sources) {
+			t.Fatal(remaining)
+		}
+		var audits int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM feishu_file_project_audit WHERE file_id=$1 AND project_id=$2 AND actor_id='alice'`, initial.ID, first.project).Scan(&audits); err != nil || audits != 2 {
+			t.Fatal(audits, err)
+		}
+		src.denied["m1"], src.denied["m2"] = true, true
+		if status := change(remaining[0].ProjectVersion, []string{"q"}, nil); status != 404 {
+			t.Fatal(status)
+		}
+		delete(src.denied, "m1")
+		delete(src.denied, "m2")
+	})
 	history := path + "/versions/" + strconv.FormatInt(*docs[0].Version, 10) + "/content"
 	if get(history, 200) != "第一版" {
 		t.Fatal("历史正文不符")

@@ -12,17 +12,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/access"
 )
 
 type Service struct {
 	pool        *pgxpool.Pool
 	tenant, app string
 	generation  int64
+	roles       *access.Service
 	source      Source
 }
 
-func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source) *Service {
-	return &Service{pool, tenant, app, generation, source}
+func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source, roles *access.Service) *Service {
+	return &Service{pool, tenant, app, generation, roles, source}
 }
 
 func (s *Service) index(ctx context.Context) (bool, error) {
