@@ -42,7 +42,9 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		if err != nil {
 			return nil, nil, err
 		}
-		roles.ProjectAccess = grid
+	}
+	if roles.ProjectAccess == nil {
+		roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	}
 	if err := roles.Bootstrap(ctx, cfg.bootstrap); err != nil {
 		if errors.Is(err, access.ErrBootstrapRequired) {

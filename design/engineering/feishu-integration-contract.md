@@ -212,3 +212,14 @@ OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署�
 - `POST /tasks` 创建，`PUT /tasks/{taskID}` 携带 `expected_task_version` 完整保存属性。`PATCH /tasks/{taskID}/milestone` 只需同一版本和 `milestone_id`，显式传入 null 可清除归属。`GET /milestones` 和 `POST /milestones` 读取、创建项目里程碑。多个任务可属于同一里程碑。节点可另以 `task_id` 引用任务，节点的负责人及状态由该任务驱动。
 - P0/P1/P2/P3 依次显示紧急、重要、普通、低。任务期限可传自然日或带偏移的时间。读模型在项目业务时区派生日期显示和告警；未来三天、当天和逾期告警，已完成、已取消及无期限均排除。同年展示月日，跨年带年份。缺省时区为 Asia/Shanghai，`PUT /tasks/board/timezone` 使用 `project.settings`、`business_timezone` 和 `expected_board_version` 修改。
 - `POST /tasks/{taskID}/move` 接收 `target_column_id`、`expected_task_version`、`expected_board_version` 和 `request_key`；手动排序可附 `before_id`、`after_id`。成功后返回含双版本的任务，同一操作者重试原命令可重放首次回执。HTTP 409 的 `task_version_conflict`、`board_version_conflict`、`move_request_key_conflict` 分别标识任务陈旧、看板陈旧、同键异参。
+
+### 正式任务与本地授权（H1）
+
+OmniRelay PostgreSQL 持有任务、项目成员、动作权限、标签、来源读权和活动历史。P08 仅作离线对照，固定 OmniGrid 提交 `9ae3636948b9a7e42d0ed2f6e0a265c81c65383b`。仓内保留该提交的 [详情、评论与活动切片](p08/openapi.json) 和 [看板切片](p08/openapi-board.json)。以下路径均相对 `/api/v1/projects/{projectID}`。
+
+- `PUT /members/{accountID}/access` 接收 `role` 和可选的 `member_id`。系统角色管理员可为没有有效管理员的项目显式指派首位 `manager`。之后由项目管理员授权，最后一位有效管理员受保护。首次绑定可指定历史成员标识以承接既有任务。撤权保留标识绑定，清除该账户的来源读权。
+- `reader` 可读任务。`member` 可评论，并可更新本人负责或参与的非终态任务进展、提交反馈。`editor` 可管理任务字段、标签、里程碑及审核反馈。`manager` 还可管理成员和来源读权。`revoked` 收回项目访问。`GET /tasks/{taskID}/actions` 返回当前账号对该任务的动作，写入事务再次核对授权。
+- `GET /members` 与 `GET /task-tags` 提供本项目候选项。`PUT /task-tags/{tagID}` 接收名称 `name`。完整保存沿用 G1 的 `expected_task_version`，支持 `request_key`；移动同时校验看板版本。创建、保存、移动、调整里程碑及采纳反馈均写正式历史。旧任务创建者和创建时间缺失时返回空值。
+- `PUT /sources/{kind}/{sourceID}` 登记本地来源及 `reader_account_ids`。文档和纪要接收 `title`、`body`，消息接收 `chat_id`，按当前群权限、项目归属及有效归档读取。`PUT /sources/{kind}/{sourceID}/readers` 单独替换读者清单。项目成员资格与来源读权分别校验。`PUT /tasks/{taskID}/evidence/{kind}/{sourceID}` 由有任务管理权和来源读权的操作者建立关联。`GET /tasks/{taskID}/evidence` 逐项复核，失权项仅返回通用提示。
+- `POST /tasks/{taskID}/update-suggestions` 携带 `task_version`、`request_key`、`proposed_status` 和 `note`。`GET` 同路径读取可见建议。`POST /task-update-suggestions/{suggestionID}/review` 携带建议的 `expected_version`、`action` 和 `reason`。采纳时还核对建议所依据的任务版本，任务、审核结果及正式历史在同一事务提交。
+- `POST /tasks/{taskID}/comments` 携带 `expected_version`、`request_key` 和 `body`。评论重试返回原回执，任务内容版本保持原值。`GET /tasks/{taskID}/activity` 支持 `kind=all|change|comment`、`limit` 和 `cursor`。客户端原样回传 `next_cursor`，服务端按时间和事件 ID 倒序读取。活动保存服务端账号、名称、时间及变化字段。

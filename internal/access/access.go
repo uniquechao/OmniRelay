@@ -35,9 +35,12 @@ var (
 
 // ProjectAccess comes from the current authoritative project membership and capabilities.
 type ProjectAccess struct {
-	Member    bool
-	Manager   bool
-	CanAssign bool
+	Member       bool
+	Manager      bool
+	CanAssign    bool
+	CanComment   bool
+	CanUpdateOwn bool
+	MemberID     string
 
 	// MembershipGeneration identifies this membership lifetime and changes on rejoin.
 	// Delegated administration requires a nonempty generation from the authority.
@@ -200,17 +203,19 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 		return platformAllowed(effectiveSystemRoles(active, roles), action), nil
 	}
 	switch action {
-	case "project.read", "project.assign", "project.settings", "project.delegate":
+	case "project.comment", "project.read", "project.assign", "project.settings", "project.delegate":
 	default:
 		return false, nil
 	}
-	access, err := s.projectScope(ctx, p, projectID)
+	access, err := s.ProjectGrant(ctx, db, p, projectID)
 	if err != nil || !access.Member {
 		return false, err
 	}
 	switch action {
 	case "project.read":
 		return true, nil
+	case "project.comment":
+		return access.CanComment, nil
 	case "project.assign":
 		return access.CanAssign, nil
 	case "project.settings":
@@ -280,9 +285,12 @@ func platformAllowed(roles []string, action string) bool {
 	return false
 }
 
-func (s *Service) projectScope(ctx context.Context, p identity.Principal, projectID string) (ProjectAccess, error) {
+func (s *Service) ProjectGrant(ctx context.Context, db queryer, p identity.Principal, projectID string) (ProjectAccess, error) {
 	if s.ProjectAccess == nil || !validIdentifier(projectID) {
 		return ProjectAccess{}, nil
+	}
+	if _, local := s.ProjectAccess.(LocalProjects); local {
+		return localProjectGrant(ctx, db, p, projectID)
 	}
 	return s.ProjectAccess.ResolveProjectAccess(ctx, p, projectID)
 }

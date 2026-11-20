@@ -207,7 +207,7 @@ function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = 
     ['任务', '状态', '优先级', '负责人', '里程碑', '期限'],
     items.map((row) => [
       link(base + '/tasks/' + row.id, row.title),
-      canMove && row.status !== 'cancelled'
+      (row.can_move ?? canMove) && row.status !== 'cancelled'
         ? `<select class="select" data-move-task="${esc(row.id)}" aria-label="移动任务：${esc(row.title)}">${Object.entries(taskStages).map(([id, name]) =>
           `<option value="${id}"${id === row.column_id ? ' selected' : ''}>${name}</option>`).join('')}</select>`
         : esc(taskStages[row.status] || label(row.status)),
@@ -224,7 +224,7 @@ function taskCard(base, row, nodes, people, canMove) {
   const owner = people.get(row.owner_member_id) || row.owner_member_id || '未分配';
   const milestone = nodes.get(row.milestone_id) || row.milestone_id;
   const tags = row.tag_ids || [];
-  const movable = canMove && row.status !== 'cancelled';
+  const movable = (row.can_move ?? canMove) && row.status !== 'cancelled';
   return `<li data-task-id="${esc(row.id)}" draggable="${movable}">
     <a href="${esc(base + '/tasks/' + row.id)}" class="pr-task" draggable="false" data-priority="${priorityStyles[row.priority] || 'normal'}"
        ${movable ? 'aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" aria-describedby="task-move-help"' : ''}>
@@ -246,16 +246,16 @@ function firstTaskPage(route) {
   return withQuery(route.hash.split('?')[0], params);
 }
 
-function requestBlockedReason(task, signal) {
+function requestMoveReason(task, signal, reopening) {
   return new Promise(resolve => {
     let reason;
     const close = () => dialog.close();
     const dialog = window.OmniRelayUI.openDialog({
-      title: '移至受阻', description: task.title, variant: 'form', confirm: '保存',
-      body: '<label>受阻原因<textarea class="input" name="reason" required autofocus></textarea></label>',
+      title: reopening ? '重新打开任务' : '移至受阻', description: task.title, variant: 'form', confirm: '保存',
+      body: '<label>' + (reopening ? '变更原因' : '受阻原因') + '<textarea class="input" name="reason" required autofocus></textarea></label>',
       onSubmit(form) {
         const field = form.elements.reason;
-        if (!field.value.trim()) return { field, message: '请填写受阻原因。' };
+        if (!field.value.trim()) return { field, message: reopening ? '请填写变更原因。' : '请填写受阻原因。' };
         reason = field.value.trim();
       },
       onClose(confirmed) {
@@ -279,13 +279,21 @@ function wireMoves(body, route, board, request, signal, reload) {
   }
   async function move(id, target, before) {
     const task = tasks.get(id);
-    if (!current() || busy || !task || task.status === 'cancelled' || !Object.hasOwn(taskStages, target) ||
+    if (!current() || busy || !task || task.can_move === false || task.status === 'cancelled' || !Object.hasOwn(taskStages, target) ||
         before === id || (!before && target === task.column_id)) return;
     busy = true;
     let reason = task.blocked_reason || '';
     if (target === 'blocked' && task.column_id !== target) {
-      reason = await requestBlockedReason(task, signal);
+      reason = await requestMoveReason(task, signal, false);
       if (reason === undefined || !current()) {
+        busy = false;
+        return;
+      }
+    }
+    let changeReason = '';
+    if (task.status === 'done' && target !== task.column_id) {
+      changeReason = await requestMoveReason(task, signal, true);
+      if (!changeReason || !current()) {
         busy = false;
         return;
       }
@@ -296,7 +304,7 @@ function wireMoves(body, route, board, request, signal, reload) {
         method: 'POST', signal,
         body: { request_key: crypto.randomUUID(), expected_task_version: task.version,
           expected_board_version: board.version, target_column_id: target, before_id: before,
-          blocked_reason: target === 'blocked' ? reason : '' },
+          blocked_reason: target === 'blocked' ? reason : '', change_reason: changeReason },
       });
     } catch (error) {
       if (!current()) return;

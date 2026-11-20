@@ -11,92 +11,6 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
-type saveTask struct {
-	taskFields
-	Expected int64  `json:"expected_task_version"`
-	Status   string `json:"status,omitempty"`
-}
-
-func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-	var in saveTask
-	if !decodeLimit(w, r, &in, 96<<10) || strings.TrimSpace(in.Title) == "" || len([]rune(in.Title)) > 200 || len(in.Tags) > 50 {
-		return nil, errInput
-	}
-	if in.Owner != nil && !identifier.MatchString(*in.Owner) || in.Milestone != nil && !identifier.MatchString(*in.Milestone) {
-		return nil, errInput
-	}
-	if in.Priority != nil && priorityLabels[*in.Priority] == "" {
-		return nil, errInput
-	}
-	if in.Due != nil {
-		if _, err := businessDate(*in.Due, time.UTC); err != nil {
-			return nil, err
-		}
-	}
-	if in.Status != "" && in.Status != "cancelled" && columnNames[in.Status] == "" {
-		return nil, errInput
-	}
-	for _, id := range in.Tags {
-		if !identifier.MatchString(id) {
-			return nil, errInput
-		}
-	}
-	if in.Tags == nil {
-		in.Tags = []string{}
-	}
-	id := r.PathValue("taskID")
-	if id != "" && (!identifier.MatchString(id) || in.Expected < 1) {
-		return nil, errInput
-	}
-	k := scope(actor, r.PathValue("projectID"))
-	ctx := r.Context()
-	var result storedTask
-	err := k.write(ctx, s, actor, "project.assign", func(tx pgx.Tx, v int64) error {
-		args := k.args(in.Title, in.Description, in.Owner, in.Milestone, in.Priority, in.Due, in.Tags)
-		if id == "" {
-			if in.Expected != 0 {
-				return errInput
-			}
-			status := in.Status
-			if status == "" {
-				status = "todo"
-			}
-			column := status
-			if status == "cancelled" {
-				column = "todo"
-			}
-			err := tx.QueryRow(ctx, `INSERT INTO project_tasks(tenant_key,app_id,project_id,title,description,owner_member_id,milestone_id,priority,due_at,tag_ids,status,column_id,position)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE(max(position),0)+1 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12 RETURNING id", append(args, status, column)...).Scan(&id)
-			if err != nil {
-				return err
-			}
-		} else {
-			// 看板列通过移动命令修改，属性保存仅允许取消或保留原状态。
-			current, err := k.task(ctx, tx, id, time.Now())
-			if err != nil {
-				return err
-			}
-			if current.Version != in.Expected {
-				return errTaskVersion
-			}
-			if in.Status != "" && in.Status != "cancelled" && in.Status != current.Status {
-				return errInput
-			}
-			_, err = tx.Exec(ctx, `UPDATE project_tasks SET title=$4,description=$5,owner_member_id=$6,milestone_id=$7,priority=$8,due_at=$9,tag_ids=$10,status=COALESCE(NULLIF($11,''),status),version=version+1 WHERE `+projectWhere+" AND id=$12", append(args, in.Status, id)...)
-			if err != nil {
-				return err
-			}
-		}
-		if err := k.bump(ctx, tx); err != nil {
-			return err
-		}
-		var err error
-		result, err = k.task(ctx, tx, id, time.Now())
-		return err
-	})
-	return result, err
-}
-
 type milestoneInput struct {
 	Title string  `json:"title"`
 	Date  *string `json:"occurs_on"`
@@ -203,14 +117,22 @@ func (s *Service) setTaskMilestone(w http.ResponseWriter, r *http.Request, actor
 		if task.Version != in.Expected {
 			return errTaskVersion
 		}
-		if _, err = tx.Exec(ctx, "UPDATE project_tasks SET milestone_id=$5,version=version+1 WHERE "+projectWhere+" AND id=$4", k.args(id, milestone)...); err != nil {
+		old := task
+		names, err := k.relationNames(ctx, tx, taskFields{Milestone: milestone})
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, "UPDATE project_tasks SET milestone_id=$5,relation_names=relation_names||$6::jsonb,version=version+1 WHERE "+projectWhere+" AND id=$4", k.args(id, milestone, names)...); err != nil {
 			return err
 		}
 		if err = k.bump(ctx, tx); err != nil {
 			return err
 		}
 		task, err = k.task(ctx, tx, id, time.Now())
-		return err
+		if err != nil {
+			return err
+		}
+		return k.history(ctx, tx, actor, "task.milestone_updated", old, task)
 	})
 	return task, err
 }
