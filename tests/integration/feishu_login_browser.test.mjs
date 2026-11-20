@@ -367,3 +367,35 @@ test('Go OAuth 接口与浏览器整页联调', { skip: !goOrigin }, () => withP
   await page.locator('#feishu-login:enabled').waitFor();
   assert.equal(await page.evaluate(async () => (await fetch('/api/v1/me')).status), 401);
 }));
+
+test('React 书签与草稿保护、刷新和键盘焦点', {skip:!!goOrigin || !process.env.OMNIRELAY_BROWSER_DIST},()=>withPage(async page=>{
+  fixture.signedIn=true;
+  fixture.method='password';
+  fixture.access={navigation:{system:true,workbench:true},admin:{settings:true,feishu_bot:true},
+    permissions:{'system.configure':true},default_route:'/#/workbench'};
+  await page.goto(origin+'/#/settings');
+  await page.waitForURL('**/#/system/settings');
+  await page.getByRole('link',{name:'飞书 Bot 配置',exact:true}).click();
+  const toggle=page.locator('#bot-enabled');
+  await toggle.waitFor();
+  await toggle.setChecked(!await toggle.isChecked());
+  const refresh=new Promise(resolve=>page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');await dialog.dismiss();resolve();}));
+  await page.evaluate(()=>setTimeout(()=>location.reload(),0));
+  await refresh;
+  await page.goBack({waitUntil:'commit'});
+  await page.getByRole('button',{name:'继续编辑'}).click();
+  await page.waitForURL('**/#/system/feishu-bot');
+  assert.equal(await toggle.evaluate(el=>el===document.activeElement),true);
+  await page.goBack({waitUntil:'commit'});
+  await page.getByRole('button',{name:'不保存'}).click();
+  await page.getByRole('heading',{name:'连接设置'}).waitFor();
+  await page.goForward();
+  await toggle.waitFor();
+  const trigger=page.locator('.rail .account-trigger');
+  await trigger.focus();await page.keyboard.press('Enter');
+  await page.locator('#account-menu:popover-open').waitFor();
+  await page.keyboard.press('Home');await page.keyboard.press('Enter');
+  await page.getByRole('dialog',{name:'个人信息'}).waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.activeElement?.classList.contains('account-trigger'));
+}));

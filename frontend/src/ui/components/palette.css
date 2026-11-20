@@ -1,0 +1,5 @@
+.page[data-layout="list"] > .react-list-host { display:flex; flex:1; min-height:245px; }
+.palette-group { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,148px),1fr)); gap:10px; }
+.palette-swatch { display:grid; justify-items:start; gap:6px; min-width:0; padding:10px; border:1px solid var(--or-border); border-radius:9px; background:var(--or-surface); text-align:left; }
+.palette-swatch i { inline-size:100%; block-size:24px; border:1px solid var(--or-border); border-radius:4px; }
+.palette-swatch code { color:var(--or-text-muted); }

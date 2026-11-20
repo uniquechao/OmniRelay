@@ -1,2 +1,2 @@
 body { margin: 0; background: var(--or-canvas); color: var(--or-text); font-family: system-ui, sans-serif; }
-main { max-width: 42rem; margin: 12vh auto; padding: 2rem; }
+.session-entry { max-width: 42rem; margin: 12vh auto; padding: 2rem; }

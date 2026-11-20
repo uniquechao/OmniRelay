@@ -60,7 +60,7 @@ window.OmniRelayContent = (() => {
     </div>`;
   }
 
-  function mountRich(root) {
+  function mountRich(root, { initial, onChange, signal } = {}) {
     const toolbar = root.querySelector('[data-editor-toolbar]');
     const body = root.querySelector('[data-editor-body]');
     const value = root.querySelector('[data-editor-value]');
@@ -87,13 +87,15 @@ window.OmniRelayContent = (() => {
         {insert:'确认回滚依据'}, {insert:'\n',attributes:{list:'bullet'}}
       ] });
     }
-    const sync = () => { value.value = JSON.stringify(editor.getContents()); };
+    if (initial) editor.setContents(initial);
+    const sync = () => { value.value = JSON.stringify(editor.getContents()); onChange?.(value.value); };
     editor.on('text-change',sync);
     sync();
     root.closest('form')?.addEventListener('reset',() => {
-      editor.setText('');
+      if (initial) editor.setContents(initial); else editor.setText('');
       editor.history.clear();
-    });
+    }, { signal });
+    signal?.addEventListener('abort',() => { editor.off('text-change',sync); editor.disable(); editor.scroll.observer.disconnect(); },{once:true});
   }
 
   function markdownView() {

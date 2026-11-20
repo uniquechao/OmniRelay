@@ -186,7 +186,7 @@ window.OmniRelayUI = (() => {
     const form = dialog.querySelector('form');
     const message = dialog.querySelector('.field-error');
     let invalidField;
-    let hasGuard = false;
+    let guard;
     let closeAfterSubmit = false;
     let lastField;
     dialog.querySelector('.dialog-body').addEventListener('focusin',event => {
@@ -194,14 +194,15 @@ window.OmniRelayUI = (() => {
     });
     function requestClose() {
       if (!isDirty?.(form)) { dialog.close('cancel'); return; }
-      if (hasGuard) return;
-      hasGuard = true;
-      openDialog({
+      if (guard?.open) return;
+      const nextGuard = openDialog({
         title:'保存修改？', variant:'confirm', tone:'warning',
         body:'<p class="dialog-note">有未保存的修改，直接关闭会丢失本次更改。</p>',
         cancelLabel:'继续编辑', discard:'不保存', confirm:'保存并关闭',
         onClose(confirmed, result) {
-          hasGuard = false;
+          if (guard !== nextGuard) return;
+          guard = undefined;
+          if (!dialog.open) return;
           if (confirmed) {
             closeAfterSubmit = true;
             form.requestSubmit();
@@ -214,6 +215,7 @@ window.OmniRelayUI = (() => {
           }
         }
       });
+      guard = nextGuard;
     }
     const clearError = () => {
       if (!invalidField) return;
@@ -263,6 +265,7 @@ window.OmniRelayUI = (() => {
       dialog.addEventListener('click',event => { if (startedOutside && outside(event)) requestClose(); });
     }
     dialog.addEventListener('close',() => {
+      guard?.close();
       const confirmed = dialog.returnValue === 'confirm';
       dialog.remove();
       onClose?.(confirmed,dialog.returnValue);
@@ -425,6 +428,7 @@ window.OmniRelayUI = (() => {
       all.disabled = !visible.length;
       find('[data-clear-selection]').hidden = !count;
       find('[data-selection-count]').textContent = count ? '已选 ' + count + ' 项' : '';
+      config.onSelection?.([...state.selected]);
       const activeFilters = filters.filter(filter => state.filters[filter.key]);
       find('[data-filter-summary]').textContent = activeFilters.map(filter => filter.label + '：' + (filter.options[state.filters[filter.key]] ?? '当前筛选')).join(' · ');
       find('[data-context]').hidden = !(count || activeFilters.length || config.action);
@@ -523,6 +527,7 @@ window.OmniRelayUI = (() => {
       find('[data-next]').disabled = state.page + 1 >= pageCount;
       scroller.scrollTop = 0;
       updateSelection();
+      config.onPaint?.(body,rows);
     }
 
     function applyColumnWidths() {
@@ -590,7 +595,7 @@ window.OmniRelayUI = (() => {
       const previousWidths = state.columnWidths;
       const widths = measureColumnWidths();
       const listeners = new AbortController();
-      const options = { signal: listeners.signal };
+      const options = { signal: config.signal ? AbortSignal.any([listeners.signal,config.signal]) : listeners.signal };
       let moved = false;
 
       function update(next) {
@@ -939,7 +944,7 @@ window.OmniRelayUI = (() => {
     </div>`;
   }
 
-  function mountCombo(root, { choices, initial, preventEscape = true } = {}) {
+  function mountCombo(root, { choices, initial, preventEscape = true, signal } = {}) {
     const input = root.querySelector('[role="combobox"]');
     const output = root.querySelector('[data-combo-result]');
     const box = root.querySelector('.combo-box');
@@ -1038,7 +1043,7 @@ window.OmniRelayUI = (() => {
       selected.clear();
       sync();
       close();
-    });
+    }, { signal });
     if (initial) sync();
   }
 

@@ -794,3 +794,4 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     body.removeAttribute('aria-busy');
   }
 }
+export { label as projectStatusLabel };

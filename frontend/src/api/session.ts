@@ -4,10 +4,14 @@ import { client } from '../../../web/session-client.js';
 
 let scope = client.scope;
 let queries = new QueryClient();
-function snapshot() { return { phase: client.phase, queries }; }
+let revision=0;
+function snapshot() { return { phase: client.phase, queries, revision }; }
 let current = snapshot();
-client.addEventListener('change', () => {
+client.addEventListener('change', event => {
   if (scope !== client.scope) {
+    revision++;
+    for(const overlay of document.querySelectorAll<HTMLDialogElement>('dialog[open]')) overlay.close('cancel');
+    if ((event as CustomEvent).detail === 'identity-changed') history.replaceState(null,'','/');
     queries.clear();
     scope = client.scope;
     queries = new QueryClient();

@@ -23,8 +23,8 @@ test('预发布构建运行工作台和首次配置两个入口', { skip: !dist 
       return route.fulfill(await browserAsset(url.pathname + url.search, { setup: url.origin === setup }));
     });
     await page.goto(workbench + '/#/workbench');
-    await page.getByRole('heading', { name: '工作台' }).waitFor();
-    await page.getByRole('status').filter({ hasText: origin ? /已登录|尚未登录|无法读取会话/ : '尚未登录' }).waitFor();
+    await page.getByRole('heading', { name: '登录工作台' }).waitFor();
+    await page.getByRole('button', {name:'使用飞书登录'}).waitFor();
     const missing = await page.evaluate(async () => {
       const entry = document.querySelector('script[type=module]').src;
       return (await fetch('/missing/' + new URL(entry).pathname.split('/').at(-1))).status;
