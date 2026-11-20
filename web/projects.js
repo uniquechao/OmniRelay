@@ -222,10 +222,10 @@ function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = 
   );
 }
 
-function taskCard(base, row, nodes, people, canMove) {
+function taskCard(base, row, nodes, people, canMove, tagNames) {
   const owner = people.get(row.owner_member_id) || row.owner_member_id || '未分配';
   const milestone = nodes.get(row.milestone_id) || row.milestone_id;
-  const tags = row.tag_ids || [];
+  const tags = (row.tag_ids || []).map(id => tagNames.get(id) || id);
   const movable = (row.can_move ?? canMove) && row.status !== 'cancelled';
   return `<li data-task-id="${esc(row.id)}" draggable="${movable}">
     <a href="${esc(base + '/tasks/' + row.id)}" class="pr-task" draggable="false" data-priority="${priorityStyles[row.priority] || 'normal'}"
@@ -376,7 +376,7 @@ function columnNext(route, column) {
   params.set('cursor', column.next_cursor);
   return link(withQuery(route.hash.split('?')[0], params), '查看「' + column.name + '」下一页');
 }
-function contents(route, data, milestones = [], people = new Map()) {
+function contents(route, data, milestones = [], people = new Map(), tagNames = new Map()) {
   const { base, tab, parts } = route;
   if (tab === 'overview') {
     const { workspace, milestones } = data;
@@ -399,8 +399,8 @@ function contents(route, data, milestones = [], people = new Map()) {
             .map((node) => [
               esc(node.occurs_on || '—'),
               node.task_id ? link(base + '/tasks/' + node.task_id, node.title) + (node.task?.due_at ? ' · ' + taskDeadline(node.task) : '') : esc(node.title),
-              esc(node.owner_name || node.owner_member_id || '—'),
-              label(node.status),
+              esc(node.owner_name || people.get(node.owner_member_id) || node.owner_member_id || '—'),
+              taskStages[node.status] || label(node.status),
             ]),
           '暂无关键节点。',
         ) + link(base + '/tasks', '查看全部任务'),
@@ -411,7 +411,7 @@ function contents(route, data, milestones = [], people = new Map()) {
           ['关注事项', '负责人'],
           milestones.items
             .filter((node) => node.kind === 'concern')
-            .map((node) => [esc(node.title), esc(node.owner_name || node.owner_member_id || '—')]),
+            .map((node) => [esc(node.title), esc(node.owner_name || people.get(node.owner_member_id) || node.owner_member_id || '—')]),
           '当前没有记录的关注事项。',
         ),
       )
@@ -513,7 +513,7 @@ function contents(route, data, milestones = [], people = new Map()) {
     return toolbar + (data.can_move ? '<small id="task-move-help">拖动卡片可移动任务，键盘可用 Alt + 左右方向键移列。</small>' : '') +
       '<div class="pr-board" role="region" aria-label="任务看板" tabindex="0">' + data.columns.map(c =>
         `<section class="pr-lane" data-column="${esc(c.id)}"><h3><span class="chip" data-tone="${tones[c.id] || 'pending'}">${esc(c.name)}</span><span>${esc(c.total)}</span></h3>
-        <ul>${c.items.map(row => taskCard(base, row, nodes, people, data.can_move)).join('')}</ul>
+        <ul>${c.items.map(row => taskCard(base, row, nodes, people, data.can_move, tagNames)).join('')}</ul>
         ${c.items.length ? '' : '<p class="pr-lane-empty">暂无任务</p>'}${columnNext(route, c)}</section>`).join('') + '</div>';
   }
   const rows = data.items.map((row) => {
@@ -694,8 +694,9 @@ export async function mountProjects(host, route, request, { signal, memory, user
         : tab === 'chats'
           ? Promise.resolve()
           : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(route), { signal });
-    const members = boardView ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
-    const [header, result, directory] = await Promise.allSettled([overview, content, members]);
+    const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
+    const tagList = boardView && !parts.length ? request('/api/v1/projects/' + id + '/task-tags', { signal }) : undefined;
+    const [header, result, directory, tagDirectory] = await Promise.allSettled([overview, content, members, tagList]);
     if (!current()) return;
     if (header.status === 'rejected' && [403, 404].includes(header.reason.status)) throw header.reason;
     if (result.status === 'rejected') throw result.reason;
@@ -745,9 +746,10 @@ export async function mountProjects(host, route, request, { signal, memory, user
       return;
     }
     body.innerHTML =
-      (header.status === 'rejected' || directory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
+      (header.status === 'rejected' || directory.status === 'rejected' || tagDirectory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
       contents(route, data, header.value?.data.milestones?.items || [],
-        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])));
+        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
+        new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
       mountProjects(host, route, request, { signal, memory, userId, navigation }));
     wireFilters(body, route);
