@@ -120,8 +120,9 @@ func TestFileArchiveAccess(t *testing.T) {
 	}
 	refresh(3)
 	mux := http.NewServeMux()
+	account := "alice"
 	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
-		return identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}, true
+		return identity.Principal{TenantKey: "t", AppID: "a", AccountID: account, OpenID: "ou_" + account}, true
 	})
 	get := func(path string, status int) string {
 		t.Helper()
@@ -156,6 +157,53 @@ func TestFileArchiveAccess(t *testing.T) {
 	if get(history, 200) != "第一版" {
 		t.Fatal("历史正文不符")
 	}
+	preview := strings.TrimSuffix(history, "/content") + "/previews"
+	create := func(status int) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/feishu/files"+preview, nil))
+		if w.Code != status {
+			t.Fatalf("创建预览：%d %s", w.Code, w.Body.String())
+		}
+		var value struct {
+			ID string `json:"task_id"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &value); err != nil {
+			t.Fatal(err)
+		}
+		return value.ID
+	}
+	taskID := create(202)
+	taskPath := preview + "/" + taskID
+	for deadline := time.Now().Add(12 * time.Second); ; {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/feishu/files"+taskPath, nil))
+		if w.Code == 200 && strings.Contains(w.Body.String(), `"stage":"ready"`) {
+			break
+		}
+		if w.Code != 202 || time.Now().After(deadline) {
+			t.Fatalf("查询预览：%d %s", w.Code, w.Body.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(get(taskPath+"/result", 200), "第一版") || create(200) != taskID {
+		t.Fatal("版本化缓存读取失败")
+	}
+	exec(`INSERT INTO accounts(id,tenant_key,app_id,open_id) VALUES('bob','t','a','ou_bob');
+	 INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES('t','a','p','bob','b','reader')`)
+	account = "bob"
+	get(taskPath, 404)
+	get(taskPath+"/result", 404)
+	account = "alice"
+	src.revokedToken = "Token"
+	get(taskPath, 403)
+	get(taskPath+"/result", 403)
+	waiting := previewRequest{reader: identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}, file: docs[0], version: *docs[0].Version, sources: messageIDs(docs[0]), options: previewOptions{Page: 1}}
+	if out := s.convertVersion(ctx, waiting); out.Stage != "forbidden" || len(out.Body) != 0 {
+		t.Fatal("执行任务时未复核源权限", out.Stage)
+	}
+	create(403)
+	src.revokedToken = ""
 	var n int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM feishu_file_versions").Scan(&n); err != nil || n != 2 {
 		t.Fatal(n, err)
@@ -177,7 +225,7 @@ func TestFileArchiveAccess(t *testing.T) {
 	src.text = "第二版"
 	exec("UPDATE feishu_file_shares SET next_at=now() WHERE message_id='m1'")
 	refresh(1)
-	if get(path+"/object", 200) != "第二版" || get(history, 200) != "第一版" {
+	if get(path+"/object", 200) != "第二版" || get(history, 200) != "第一版" || !strings.Contains(get(taskPath+"/result", 200), "第一版") {
 		t.Fatal("版本恢复失败")
 	}
 	src.denied["m2"] = true
@@ -189,6 +237,7 @@ func TestFileArchiveAccess(t *testing.T) {
 	if total, _ := page(""); total != 0 {
 		t.Fatal(total)
 	}
+	get(taskPath+"/result", 403)
 	get(history, 404)
 	get(path+"/object", 404)
 	exec("UPDATE project_members SET role='reader'")
