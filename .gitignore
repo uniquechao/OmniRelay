@@ -14,3 +14,5 @@
 
 /node_modules/
 /web/dist/
+
+/deploy/k8s/candidate/__pycache__/
