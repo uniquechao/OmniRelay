@@ -57,8 +57,8 @@ go build -o bin/omnirelay ./cmd/omnirelay
 flowchart TB
     Chat["飞书群聊与私聊"]
     Web["Web 工作台"]
-    PG[("PostgreSQL<br/>账号、队列与回执")]
-    Business["OmniGrid Business API<br/>正式项目与任务"]
+    PG[("PostgreSQL<br/>账号、任务、看板、里程碑与回执")]
+    Business["项目目录与来源读取接口"]
 
     subgraph K8s["Kubernetes 应用层"]
         Go["OmniRelay Go 服务<br/>飞书接入、权限、编排与交付"]
@@ -80,13 +80,13 @@ sequenceDiagram
     participant F as 飞书
     participant G as OmniRelay Go
     participant D as DeepSeek Harness
-    participant B as OmniGrid
+    participant B as OmniRelay PostgreSQL
 
     F->>G: 投递成员的派单消息
     G->>G: 去重入队，核验成员和项目
     G->>D: 运行分派 Agent
     D->>G: 调用受限派单工具
-    G->>B: 按实际发起人提交任务
+    G->>B: 持久化已授权的项目任务
     B-->>G: 返回正式任务编号和回执
     G->>G: 保存工作结果与待发回复
     G-->>F: 回复原会话

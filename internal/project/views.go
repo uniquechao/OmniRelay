@@ -73,7 +73,6 @@ var endpoints = map[string]struct{ path, version, collection string }{
 	"meetings": {"/minutes", "minutes", "page"},
 	"docs":     {"/documents", "docs", "page"},
 	"reports":  {"/daily-reports/unified", "reports", "page"},
-	"tasks":    {"/board", "tasks", "board"},
 }
 
 func (g *Grid) view(ctx context.Context, actor identity.Principal, id, panel string, query url.Values) (gridView, error) {
@@ -172,7 +171,7 @@ func viewQuery(panel string, input url.Values) (url.Values, error) {
 	case "reports":
 		keys = []string{"q", "page", "page_size", "date_from", "date_to", "revision"}
 	case "tasks":
-		keys = []string{"q", "status", "owner_member_id", "limit", "column_id", "cursor"}
+		keys = []string{"q", "status", "owner_member_id", "milestone_id", "milestone_unassigned", "limit", "column_id", "cursor"}
 	}
 	result := make(url.Values)
 	for key, values := range input {
@@ -181,8 +180,53 @@ func viewQuery(panel string, input url.Values) (url.Values, error) {
 		}
 		result.Set(key, values[0])
 	}
+	if panel == "tasks" {
+		if value, ok := result["milestone_id"]; ok && !identifier.MatchString(value[0]) {
+			return nil, errInput
+		}
+		if value, ok := result["milestone_unassigned"]; ok {
+			if value[0] != "true" && value[0] != "false" || value[0] == "true" && result.Has("milestone_id") {
+				return nil, errInput
+			}
+		}
+	}
 	if panel == "reports" {
 		result.Set("source", "member")
 	}
 	return result, nil
+}
+
+func overviewWithMilestones(raw json.RawMessage, local []map[string]any) (json.RawMessage, error) {
+	var data struct {
+		Workspace  json.RawMessage            `json:"workspace"`
+		Milestones map[string]json.RawMessage `json:"milestones"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, err
+	}
+	var previous []json.RawMessage
+	if err := json.Unmarshal(data.Milestones["items"], &previous); err != nil {
+		return nil, err
+	}
+	items := make([]any, 0, len(previous)+len(local))
+	for _, raw := range previous {
+		var node struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return nil, err
+		}
+		if node.Kind != "milestone" {
+			items = append(items, raw)
+		}
+	}
+	for _, node := range local {
+		items = append(items, node)
+	}
+	var err error
+	data.Milestones["items"], err = json.Marshal(items)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(data)
 }

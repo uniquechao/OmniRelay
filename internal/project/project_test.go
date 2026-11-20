@@ -140,24 +140,25 @@ func testGrid(t *testing.T) (*Grid, *gridFixture) {
 func TestProjectRecordLinks(t *testing.T) {
 	grid, f := testGrid(t)
 	ctx := t.Context()
-	v, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "")
-	if err != nil || v.(taskLink).ID != "task_late" {
+	lookup := func(id string) (storedTask, error) { return storedTask{ID: id, Project: "allowed"}, nil }
+	v, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "", lookup)
+	if err != nil || v.(storedTask).ID != "task_late" {
 		t.Fatalf("任务定位失败 %v %v", v, err)
 	}
 	for _, tc := range []struct {
 		kind string
 		want int
 	}{{"minutes", 1}, {"document", 0}} {
-		v, err := grid.record(ctx, testActor, "allowed", tc.kind, "minute1", "")
+		v, err := grid.record(ctx, testActor, "allowed", tc.kind, "minute1", "", lookup)
 		if err != nil || v.(map[string]any)["total"] != tc.want {
 			t.Fatalf("关联任务不符 %v %v", v, err)
 		}
 	}
-	if _, err := grid.record(ctx, testActor, "allowed", "document", "revoked", ""); !errors.Is(err, errDenied) {
+	if _, err := grid.record(ctx, testActor, "allowed", "document", "revoked", "", lookup); !errors.Is(err, errDenied) {
 		t.Fatalf("失权来源未识别 %v", err)
 	}
 	f.projectLost.Store(true)
-	if _, err := grid.record(ctx, testActor, "allowed", "task", "task_late", ""); !errors.Is(err, errDenied) {
+	if _, err := grid.record(ctx, testActor, "allowed", "task", "task_late", "", lookup); !errors.Is(err, errDenied) {
 		t.Fatalf("失权后仍可读取 %v", err)
 	}
 }

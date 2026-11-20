@@ -56,12 +56,12 @@ async function fixture(page) {
       const data = {
         overview: {
           workspace: { project },
-          milestones: { items: [{ kind: 'milestone', title: '验收节点', task_id: task.id }] },
+          milestones: { items: [{ kind: 'milestone', id: 'm1', title: '验收节点', task_id: task.id }] },
         },
         members: { members: [{ display_name: '项目成员甲' }] },
         docs: list([{ title: '交付文档', ref: { kind: 'document', source_id: 'd-1' } }]),
         meetings: list([{ title: '交付纪要', resource_type: 'minutes', resource_token: 'm-1' }]),
-        tasks: { columns: [{ name: '进行中', items: [], total: 1, next_cursor: 'more' }] },
+        tasks: { owner_member_ids: ['成员甲'], columns: [{ name: '进行中', items: [], total: 1, next_cursor: 'more' }] },
         reports: {
           ...list([{ person_name: '成员甲', work_date: '2026-11-19', submission_state: 'submitted' }]),
           coverage: { state: 'partial' },
@@ -226,6 +226,27 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await go(path + 'tasks');
       await page.getByRole('link', { name: '列表', exact: true }).click();
       await visible('暂无任务。');
+      await page.getByRole('searchbox').fill('验收');
+      await page.getByLabel('筛选负责人').selectOption('成员甲');
+      await page.getByLabel('筛选里程碑').selectOption('m1');
+      const filtered = page.waitForRequest((r) => {
+        const u = new URL(r.url());
+        return u.pathname === root + '/tasks' && u.searchParams.get('q') === '验收' &&
+          u.searchParams.get('owner_member_id') === '成员甲' && u.searchParams.get('milestone_id') === 'm1';
+      });
+      await page.getByRole('button', {name:'查询'}).click();
+      await filtered;
+      await page.getByRole('link', {name:'看板', exact:true}).click();
+      await page.getByLabel('筛选里程碑').waitFor();
+      assert.equal(await page.getByLabel('筛选里程碑').inputValue(), 'm1');
+      await page.getByLabel('筛选里程碑').selectOption('@none');
+      const unassigned = page.waitForRequest((r) => {
+        const u = new URL(r.url());
+        return u.pathname === root + '/tasks' && u.searchParams.get('milestone_unassigned') === 'true' &&
+          !u.searchParams.has('milestone_id') && u.searchParams.get('owner_member_id') === '成员甲';
+      });
+      await page.getByRole('button', {name:'查询'}).click();
+      await unassigned;
       await go(path + 'members');
       await visible('项目成员甲');
       const delayed = f.holdMembers();

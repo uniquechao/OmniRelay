@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -65,7 +66,8 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			defer cancel()
 			r = r.WithContext(ctx)
 			id := r.PathValue("projectID")
-			if s.grid == nil {
+			section, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"+id+"/"), "/")
+			if s.grid == nil && (id == "" || section != "tasks" && section != "milestones" && section != "overview") {
 				failure(w, errUnavailable)
 				return
 			}
@@ -102,11 +104,48 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			if err != nil {
 				return nil, err
 			}
-			return s.grid.view(r.Context(), actor, r.PathValue("projectID"), panel, query)
+			id := r.PathValue("projectID")
+			if panel != "overview" {
+				return s.grid.view(r.Context(), actor, id, panel, query)
+			}
+			local, err := s.milestones(r.Context(), scope(actor, id), time.Now())
+			if err != nil {
+				return nil, err
+			}
+			if s.grid == nil {
+				return map[string]any{"project_id": id, "panel": panel, "data": map[string]any{"workspace": map[string]any{"project": map[string]string{"id": id}}, "milestones": map[string]any{"items": local}, "coverage": map[string]string{"state": "partial"}}}, nil
+			}
+			view, err := s.grid.view(r.Context(), actor, id, panel, query)
+			if err != nil {
+				return nil, err
+			}
+			view.Data, err = overviewWithMilestones(view.Data, local)
+			return view, err
 		})
 	}
+	handle("GET "+project+"/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		query, err := viewQuery("tasks", r.URL.Query())
+		if err != nil {
+			return nil, err
+		}
+		board, err := scope(actor, r.PathValue("projectID")).board(r.Context(), s.pool, query, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
+	})
+	handle("POST "+project+"/tasks", "project.assign", s.saveTask)
+	handle("PUT "+project+"/tasks/{taskID}", "project.assign", s.saveTask)
+	handle("PATCH "+project+"/tasks/{taskID}/milestone", "project.assign", s.setTaskMilestone)
+	handle("PUT "+project+"/tasks/board/timezone", "project.settings", s.setBoardTimezone)
+	handle("POST "+project+"/tasks/{taskID}/move", "project.assign", s.moveTask)
+	handle("GET "+project+"/milestones", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		items, err := s.milestones(r.Context(), scope(actor, r.PathValue("projectID")), time.Now())
+		return map[string]any{"items": items}, err
+	})
+	handle("POST "+project+"/milestones", "project.assign", s.createMilestone)
 	handle("GET "+project+"/tasks/{taskID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		return s.grid.record(r.Context(), actor, r.PathValue("projectID"), "task", r.PathValue("taskID"), "")
+		return scope(actor, r.PathValue("projectID")).task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
 	})
 	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		id, kind, chatID := r.PathValue("projectID"), r.PathValue("kind"), r.URL.Query().Get("chat_id")
@@ -127,7 +166,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return nil, err
 			}
 		}
-		value, err := s.grid.record(r.Context(), actor, id, kind, r.PathValue("sourceID"), chatID)
+		value, err := s.grid.record(r.Context(), actor, id, kind, r.PathValue("sourceID"), chatID, func(taskID string) (storedTask, error) {
+			return scope(actor, id).task(r.Context(), s.pool, taskID, time.Now())
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -284,8 +325,12 @@ func (s *Service) latestBriefing(_ http.ResponseWriter, r *http.Request, actor i
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeLimit(w, r, dst, 4096)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
 	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	d.DisallowUnknownFields()
 	return media == "application/json" && d.Decode(dst) == nil && d.Decode(new(json.RawMessage)) == io.EOF
 }
@@ -297,6 +342,12 @@ func failure(w http.ResponseWriter, err error) {
 		status, code = http.StatusNotFound, "project_access_denied"
 	case errors.Is(err, errInput):
 		status, code = http.StatusBadRequest, "invalid_project_request"
+	case errors.Is(err, errTaskVersion):
+		status, code = http.StatusConflict, "task_version_conflict"
+	case errors.Is(err, errBoardVersion):
+		status, code = http.StatusConflict, "board_version_conflict"
+	case errors.Is(err, errMoveKey):
+		status, code = http.StatusConflict, "move_request_key_conflict"
 	case errors.Is(err, errConflict):
 		status, code = http.StatusConflict, "project_state_changed"
 	}
