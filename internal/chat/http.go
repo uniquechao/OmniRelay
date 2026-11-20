@@ -270,7 +270,7 @@ func (s *Service) getMembers(w http.ResponseWriter, r *http.Request, p identity.
 			}
 			for _, member := range page.Items {
 				if !seenMembers[member.OpenID] {
-					refs = append(refs, directory.ResourcePersonRef{OpenID: member.OpenID, Name: member.Name})
+					refs = append(refs, directory.ResourcePersonRef{OpenID: member.OpenID, Name: member.Name, GroupMember: true})
 					seenMembers[member.OpenID] = true
 				}
 			}

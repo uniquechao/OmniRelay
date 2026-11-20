@@ -160,11 +160,16 @@ func scanMessage(row pgx.CollectableRow) (messageItem, error) {
 	return item, err
 }
 
-func (s *Service) projectMessages(ctx context.Context, p identity.Principal, scopeID string, items []messageItem) error {
+func (s *Service) projectMessages(ctx context.Context, p identity.Principal, scopeID string, scope authorizedScope, items []messageItem) error {
 	refs := make([]directory.ResourcePersonRef, len(items))
+	groups := make(map[string]bool, len(scope.Conversations))
+	for _, c := range scope.Conversations {
+		groups[c.ID] = c.Kind == orchestrator.ChatGroup
+	}
 	for i, item := range items {
 		refs[i].OpenID = item.senderID
 		refs[i].Name = item.senderName
+		refs[i].GroupMember = groups[item.ChatID] && item.SenderKind == "user"
 	}
 	people, err := s.projectPeople(ctx, p, scopeID, refs)
 	if err != nil {
@@ -285,7 +290,7 @@ func (s *Service) getMessages(w http.ResponseWriter, r *http.Request, p identity
 		sourceError(w, err)
 		return
 	}
-	if err := s.projectMessages(ctx, p, chatScopeID(r), items); err != nil {
+	if err := s.projectMessages(ctx, p, chatScopeID(r), scope, items); err != nil {
 		sourceError(w, err)
 		return
 	}
@@ -352,7 +357,7 @@ func (s *Service) getContext(w http.ResponseWriter, r *http.Request, p identity.
 		err = tx.Commit(ctx)
 	}
 	if err == nil {
-		err = s.projectMessages(ctx, p, chatScopeID(r), items)
+		err = s.projectMessages(ctx, p, chatScopeID(r), scope, items)
 	}
 	if err != nil {
 		sourceError(w, err)

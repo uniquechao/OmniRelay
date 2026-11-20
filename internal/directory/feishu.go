@@ -91,12 +91,13 @@ type contactDepartment struct {
 }
 
 type snapshot struct {
-	Scope           scope
-	Departments     map[string]department
-	People          map[string]contactPerson
-	Members         map[string]map[string]bool
-	Departures      []string
-	MissingExplicit map[string]bool
+	ChatSenderChecks []chatSenderCheck
+	Scope            scope
+	Departments      map[string]department
+	People           map[string]contactPerson
+	Members          map[string]map[string]bool
+	Departures       []string
+	MissingExplicit  map[string]bool
 }
 
 type upstreamError struct {
@@ -406,6 +407,11 @@ func (s *Service) collect(ctx context.Context, progress func(scope, int, int) er
 			return snapshot{}, err
 		}
 		return snapshot{}, errors.New("Feishu authorization scope changed during sync")
+	}
+	if verifyDepartures != nil && s.db != nil {
+		if err := s.checkChatSenders(ctx, &f, &result); err != nil {
+			return snapshot{}, err
+		}
 	}
 	return result, nil
 }
