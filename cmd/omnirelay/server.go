@@ -80,6 +80,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	}
 	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles)
 	chatService.ConfigureFiles(fileService)
+	chatService.ConfigurePreview(chatSource, identityService.DocumentPreviewToken)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	projectService := project.New(pool, roles, botStore.Status, chatSource, chatService,
 		cfg.botSendEnabled && cfg.appSecret != "")

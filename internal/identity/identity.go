@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -68,11 +69,13 @@ type Config struct {
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	cfg      Config
-	callback string
-	feishu   *http.Client
-	oauth    oauthLimits
+	pool          *pgxpool.Pool
+	cfg           Config
+	callback      string
+	feishu        *http.Client
+	oauth         oauthLimits
+	previewMu     sync.Mutex
+	previewGrants map[previewGrantKey]previewGrant
 }
 
 func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
@@ -128,6 +131,7 @@ func newIdentityService(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/feishu/start", s.start)
+	mux.HandleFunc("GET /auth/feishu/preview", s.start)
 	mux.HandleFunc("GET "+callbackPath, s.complete)
 	mux.HandleFunc("GET /api/v1/me", s.me)
 	mux.HandleFunc("POST /auth/logout", s.logout)
@@ -160,6 +164,19 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "login_unavailable")
 		return
 	}
+	var scope string
+	if r.URL.Path == "/auth/feishu/preview" {
+		scope = previewScopes[query.Get("kind")]
+		if scope == "" || len(query["kind"]) != 1 || !previewReturnPath(returnPath) {
+			writeFailure(w, http.StatusBadRequest, "invalid_return_path")
+			return
+		}
+		p, token, ok := s.authenticate(w, r, ValidateSession)
+		if !ok {
+			return
+		}
+		returnPath = encodePreviewLogin(previewLogin{Path: returnPath, Kind: query.Get("kind"), Session: previewSession(token), OpenID: p.OpenID})
+	}
 	browser, verifier := newSecret(), newSecret()
 	state := s.newOAuthState(time.Now(), browser)
 	if err := s.storeLogin(r.Context(), state, browser, verifier, returnPath); err != nil {
@@ -167,7 +184,7 @@ func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setCookie(w, browserCookie, browser, int(loginTTL.Seconds()))
-	redirect(w, s.authorizationURL(state, verifier), http.StatusFound)
+	redirect(w, s.authorizationURLForScope(state, verifier, scope), http.StatusFound)
 }
 
 func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +220,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setCookie(w, browserCookie, "", -1)
+	if saved, ok := decodePreviewLogin(returnPath); ok {
+		s.completePreview(w, r, query, verifier, saved)
+		return
+	}
 	if len(query["error"]) == 1 && query.Get("error") == "access_denied" && len(query["code"]) == 0 {
 		redirectLoginError(w, r, "cancelled")
 		return
@@ -432,6 +453,7 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusServiceUnavailable, "logout_unavailable")
 		return
 	}
+	s.clearPreviewGrants(token)
 	setCookie(w, sessionCookie, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }

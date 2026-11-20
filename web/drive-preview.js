@@ -23,7 +23,7 @@ function table(rows, fields) {
   return '<div class="table-box drive-preview-table" tabindex="0" role="region" aria-label="表格预览"><table>' +
     header + '<tbody>' + rows.map(row => '<tr>' + row.map(v => '<td>' + cell(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
 }
-function renderResult(kind, data, meta) {
+export function renderResult(kind, data, meta) {
   const paragraph = value => '<p class="drive-preview-text">' + esc(value) + '</p>';
   if (typeof data?.text === 'string') return paragraph(data.text || '本页没有正文');
   if (!Array.isArray(data)) throw new Error();
@@ -35,6 +35,20 @@ function renderResult(kind, data, meta) {
   if (kind === 'xlsx') return table(data);
   return data.map(block => block.table ? table(block.table) : paragraph(block.text)).join('');
 }
+
+export async function previewCanvas(data, label) {
+  const bitmap = await createImageBitmap(data);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', label);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    return canvas;
+  } finally { bitmap.close(); }
+}
+
 export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus}) {
   const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', restoreFocus,
     description:row.format + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
@@ -128,17 +142,9 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
       const kind = entry ? meta.name.split('.').pop().toLowerCase() :
         row.category === 'files' ? row.name.split('.').pop().toLowerCase() : row.format_key;
       if (data instanceof Blob) {
-        const bitmap = await createImageBitmap(data);
-        try {
-          if (signal.aborted || !dialog.open) return;
-          const canvas = document.createElement('canvas');
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-          canvas.setAttribute('role','img');
-          canvas.setAttribute('aria-label','PDF 第 ' + page + ' 页');
-          canvas.getContext('2d').drawImage(bitmap, 0, 0);
-          body.replaceChildren(canvas);
-        } finally { bitmap.close(); }
+        const canvas = await previewCanvas(data, 'PDF 第 ' + page + ' 页');
+        if (signal.aborted || !dialog.open) return;
+        body.replaceChildren(canvas);
       } else {
         body.innerHTML = renderResult(kind, data, meta);
       }

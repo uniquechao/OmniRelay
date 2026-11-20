@@ -18,8 +18,8 @@ var (
 )
 
 type Ref struct {
-	Kind, Token, Name, MessageID, ChatKind string
-	Size                                   *int64
+	Kind, Token, Name, MessageID, ChatKind, URL string
+	Size                                        *int64
 }
 type Snapshot struct {
 	Name    string

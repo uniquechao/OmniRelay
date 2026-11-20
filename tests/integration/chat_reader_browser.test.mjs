@@ -357,7 +357,7 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   const second = { ...group, id: 'project_second', name: '第二个关联群' };
   await page.getByRole('heading', { name: '工作台总览' }).waitFor();
   // 适配器单测按测试专用地址注入，工作台仍从实际构建加载。
-  const adapters = ['chat-reader', 'chat-assignment', 'chat-card', 'chat-composer', 'file-format'];
+  const adapters = ['chat-reader', 'chat-assignment', 'chat-card', 'chat-composer', 'chat-preview', 'drive-preview', 'file-format'];
   for (const name of adapters) {
     await page.route(origin + '/fixture/' + name + '.js', route =>
       route.fulfill({path:'web/' + name + '.js',contentType:'text/javascript'}));
@@ -549,6 +549,112 @@ test('飞书卡片保留标题、正文、操作和说明，并适配主题和�
   }
   assert.notEqual(headers[0], headers[1]);
   assert.deepEqual(headers.slice(0, 2), headers.slice(2));
+});
+
+test('两个消息入口预览附件、图片与飞书内容，并恢复授权回跳', {skip: !packageName}, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const png = await readFile(new URL('../../design/prototype/omni-relay-avatar.png', import.meta.url));
+  const messages = [
+    {...oldMessage, id:'om_pdf', type:'file', body:'{"file_name":"操作手册.pdf"}', resources:[{kind:'attachment', key:'pdf', name:'操作手册.pdf'}]},
+    {...oldMessage, id:'om_image', type:'image', body:'{"image_key":"img"}', resources:[{kind:'image', key:'img'}]},
+    ...['wiki', 'sheets', 'minutes', 'docx'].map(kind => {
+      const url = 'https://example.feishu.cn/' + kind + '/example';
+      const resources = [{kind, key:'example', name:url, url}];
+      if (kind === 'docx') resources.push({kind, key:'example-long', name:url + '-long', url:url + '-long'});
+      const links = resources.map(resource => resource.url).join(' ');
+      return {...oldMessage, id:'om_' + kind, body:JSON.stringify({text:kind === 'minutes' ? '请查看 ' + links : links}), resources};
+    }),
+    {...oldMessage, id:'om_unsupported', type:'file', body:'{"file_name":"工具.exe"}', resources:[{kind:'attachment', key:'exe', name:'工具.exe'}]},
+    {...oldMessage, id:'om_deleted', type:'file', state:'deleted', resources:[{kind:'attachment', key:'gone', name:'已撤回.pdf'}]}
+  ];
+  for (const project of [false, true]) {
+    const width = project ? 390 : 1366;
+    const page = await browser.newPage({viewport:{width, height:844}, isMobile:project, hasTouch:project});
+    page.setDefaultTimeout(7000);
+    await mountFixture(page);
+    const prefix = project ? '/api/v1/projects/p1/chat-reader' : base;
+    const hash = (project ? '#/projects/p1/chats/' : '#/feishu/bot-chats/') + group.id;
+    let failed = true;
+    let imageRecalled = false;
+    const granted = new Set();
+    if (project) {
+      await page.route(origin + '/api/v1/projects/p1/overview**', route => route.fulfill({json:{data:{workspace:{project:{id:'p1', name:'北辰'}}}}}));
+      await page.route(origin + '/api/v1/projects/p1/chats**', route => route.fulfill({json:{items:[group], primary_version:0}}));
+    }
+    await page.route(origin + prefix + '**', route => {
+      const {pathname, searchParams} = new URL(route.request().url());
+      const success = json => route.fulfill({json});
+      const failure = (status, error, kind) => route.fulfill({status, json:{error, kind}});
+      if (pathname.endsWith('/sync')) return success({items:[]});
+      if (pathname.endsWith('/send-capabilities')) return success({can_send:false});
+      if (!pathname.includes('/messages')) return success({items:[group], total:1});
+      if (!pathname.includes('/resources/')) return success({items:[...messages].reverse()});
+      const [,kind,key] = pathname.match(/\/resources\/([^/]+)\/([^/]+)$/);
+      const pageNumber = Number(searchParams.get('page') ?? 1);
+      const meta = {page:pageNumber, pages:2, total:2};
+      if (kind === 'image') return imageRecalled ? failure(410, 'message_deleted') : route.fulfill({body:png,contentType:'image/png'});
+      if (key === 'exe') return success({stage:'unsupported'});
+      if (kind === 'attachment') {
+        if (failed) { failed = false; return failure(503, 'source_unavailable'); }
+        return success({stage:'ready', kind:'pdf', meta, png:png.toString('base64')});
+      }
+      const required = kind === 'wiki' && granted.has('wiki') ? 'docx' : kind;
+      if (!granted.has(required)) return failure(403, 'document_authorization_required', required);
+      if (kind === 'sheets') return success({stage:'ready', kind:'xlsx', meta:{...meta, sheets:['明细','汇总'], sheet:0}, data:[['表格预览']]});
+      return success({stage:'ready', kind:'docs', meta, data:{text:kind === 'minutes' ? '会议逐字稿' : '知识库正文'}});
+    });
+    await page.route(origin + '/auth/feishu/preview?**', route => {
+      const params = new URL(route.request().url()).searchParams;
+      const kind = params.get('kind');
+      assert.ok(['wiki','docx','sheets','minutes'].includes(kind));
+      granted.add(kind);
+      const target = params.get('return_to');
+      assert.match(target, /\/oc_group\/om_(wiki|sheets|minutes|docx)$/u);
+      return route.fulfill({status:303, headers:{location:target.replace('/#', '/?document_preview=authorized#')}});
+    });
+    await page.goto(origin + '/?theme=' + (project ? 'dark' : 'light') + hash);
+    const dialog = page.getByRole('dialog');
+    const close = () => dialog.getByRole('button',{name:'关闭对话框'}).click();
+    const doc = page.locator('[data-message="om_docx"]');
+    await doc.getByRole('button',{name:'https://example.feishu.cn/docx/example', exact:true}).waitFor();
+    const longer = doc.getByRole('button',{name:'https://example.feishu.cn/docx/example-long', exact:true});
+    assert.equal(await longer.getAttribute('data-resource'), '1');
+    const pdf = page.getByRole('button',{name:/操作手册.pdf/u});
+    await pdf.click();
+    await dialog.getByText('暂时无法读取来源，请重试。').waitFor();
+    await dialog.getByRole('button',{name:'重试'}).click();
+    await dialog.getByRole('img',{name:'PDF 第 1 页'}).waitFor();
+    const box = await dialog.boundingBox();
+    assert.ok(Math.abs(box.x + box.width - width) <= 2 && box.width <= width);
+    await dialog.getByRole('button',{name:'下一页'}).click();
+    await dialog.getByRole('img',{name:'PDF 第 2 页'}).waitFor();
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({state:'hidden'});
+    assert.ok(await pdf.evaluate(node => node === document.activeElement));
+    const image = page.getByRole('button',{name:'放大图片'});
+    await image.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => document.querySelector('.chat-resource-image img')?.naturalWidth > 0);
+    await image.click();
+    await dialog.getByRole('img',{name:'图片预览'}).waitFor();
+    await close();
+    imageRecalled = true;
+    await image.click();
+    await dialog.getByText('这条消息已撤回。').waitFor();
+    await close();
+    assert.equal(await page.getByRole('button',{name:/已撤回.pdf/u}).count(), 0);
+    await page.getByRole('button',{name:/工具.exe/u}).click();
+    await dialog.getByText('此格式暂不支持预览。').waitFor();
+    await close();
+    for (const [kind, body] of [['wiki','知识库正文'], ['sheets','表格预览'], ['minutes','会议逐字稿']]) {
+      await page.getByRole('button',{name:new RegExp('feishu.cn/' + kind + '/example','u')}).click();
+      for (const _ of kind === 'wiki' ? [1, 2] : [1]) await dialog.getByRole('link',{name:'授权飞书'}).click();
+      await dialog.getByText(body, {exact:true}).waitFor();
+      assert.equal(await page.evaluate(() => location.search), '');
+      await close();
+    }
+    await page.close();
+  }
 });
 
 test('共享发送框按会话保存草稿并按原操作对账', { skip: !packageName }, async t => {
