@@ -96,7 +96,7 @@ function pageNumber(params) {
   return Number.isInteger(page) && page > 0 && page <= 100000 ? page : 1;
 }
 
-function filters(route, directory) {
+function filters(route, directory, extra = '') {
   const q = route.params.get('q') || '';
   const statuses = ['planned', 'active', 'paused', 'blocked', 'completed', 'archived'];
   return (
@@ -111,7 +111,7 @@ function filters(route, directory) {
           .join('') +
         '</select>'
       : '') +
-    '<button class="button">查询</button></form>'
+    extra + '<button class="button">查询</button></form>'
   );
 }
 
@@ -120,7 +120,8 @@ function wireFilters(host, route) {
     event.preventDefault();
     const params = new URLSearchParams();
     for (const [key, value] of new FormData(event.currentTarget))
-      if (value.trim()) params.set(key, value.trim());
+      if (key === 'milestone_id' && value === '@none') params.set('milestone_unassigned', 'true');
+      else if (value.trim()) params.set(key, value.trim());
     location.hash = withQuery(route.hash.split('?')[0], params);
   });
 }
@@ -177,13 +178,35 @@ export async function mountProjectSummary(host, request, signal) {
   }
 }
 
+function taskDeadline(row) {
+  if (!row?.due_at) return '—';
+  return `<time datetime="${esc(row.due_at)}">${row.due_alert ? '<span class="chip" data-tone="danger">临期告警</span> ' : ''}${esc(row.due_label || row.due_at)}</time>`;
+}
+
+function taskFilters(route, board, milestones) {
+  const choice = (value, title, selected) =>
+    `<option value="${esc(value)}"${value === selected ? ' selected' : ''}>${esc(title)}</option>`;
+  const owner = route.params.get('owner_member_id') || '';
+  const milestone = route.params.get('milestone_unassigned') === 'true' ? '@none' : route.params.get('milestone_id') || '';
+  const owners = new Set(board.owner_member_ids || []);
+  if (owner) owners.add(owner);
+  const nodes = new Map(milestones.filter((m) => m.kind === 'milestone' && m.id).map((m) => [m.id, m.title]));
+  if (milestone && milestone !== '@none' && !nodes.has(milestone)) nodes.set(milestone, milestone);
+  return filters(route, false,
+    '<select class="select" name="owner_member_id" aria-label="筛选负责人">' + choice('', '全部负责人', owner) +
+    [...owners].map((id) => choice(id, id, owner)).join('') + '</select>' +
+    '<select class="select" name="milestone_id" aria-label="筛选里程碑">' + choice('', '全部里程碑', milestone) +
+    [...nodes].map(([id,title]) => choice(id,title,milestone)).join('') + choice('@none','未关联里程碑',milestone) + '</select>');
+}
+
 function taskRows(base, items) {
   return table(
-    ['任务', '状态', '期限'],
+    ['任务', '状态', '优先级', '期限'],
     items.map((row) => [
       link(base + '/tasks/' + row.id, row.title),
       label(row.status),
-      esc(row.due_at || '—'),
+      esc(row.priority_label || '—'),
+      taskDeadline(row),
     ]),
     '暂无任务。',
   );
@@ -196,7 +219,7 @@ function columnNext(route, column) {
   params.set('cursor', column.next_cursor);
   return link(withQuery(route.hash.split('?')[0], params), '查看「' + column.name + '」下一页');
 }
-function contents(route, data) {
+function contents(route, data, nodes = []) {
   const { base, tab, parts } = route;
   if (tab === 'overview') {
     const { workspace, milestones } = data;
@@ -218,8 +241,8 @@ function contents(route, data) {
             .filter((node) => node.kind === 'milestone')
             .map((node) => [
               esc(node.occurs_on || '—'),
-              node.task_id ? link(base + '/tasks/' + node.task_id, node.title) : esc(node.title),
-              esc(node.owner_name || '—'),
+              node.task_id ? link(base + '/tasks/' + node.task_id, node.title) + (node.task?.due_at ? ' · ' + taskDeadline(node.task) : '') : esc(node.title),
+              esc(node.owner_name || node.owner_member_id || '—'),
               label(node.status),
             ]),
           '暂无关键节点。',
@@ -231,7 +254,7 @@ function contents(route, data) {
           ['关注事项', '负责人'],
           milestones.items
             .filter((node) => node.kind === 'concern')
-            .map((node) => [esc(node.title), esc(node.owner_name || '—')]),
+            .map((node) => [esc(node.title), esc(node.owner_name || node.owner_member_id || '—')]),
           '当前没有记录的关注事项。',
         ),
       )
@@ -328,12 +351,15 @@ function contents(route, data) {
         ]) + link(base + '/tasks', '返回任务看板'),
       );
     const list = parts[0] === 'list';
+    const criteria = new URLSearchParams(route.params);
+    criteria.delete('cursor');
+    criteria.delete('column_id');
     return (
       '<nav class="pr-segment" aria-label="任务视图">' +
-      link(base + '/tasks', '看板') +
-      link(base + '/tasks/list', '列表') +
+      link(withQuery(base + '/tasks', criteria), '看板') +
+      link(withQuery(base + '/tasks/list', criteria), '列表') +
       '</nav>' +
-      filters(route, false) +
+      taskFilters(route, data, nodes) +
       (list
         ? taskRows(
             base,
@@ -343,7 +369,7 @@ function contents(route, data) {
           data.columns
             .map(
               (c) =>
-                `<section class="pr-lane"><h3>${esc(c.name)} · ${esc(c.total)}</h3><ul>${c.items.map((row) => `<li class="pr-task">${link(base + '/tasks/' + row.id, row.title)}</li>`).join('')}</ul>${c.items.length ? '' : empty('暂无任务。')}${columnNext(route, c)}</section>`,
+                `<section class="pr-lane"><h3>${esc(c.name)} · ${esc(c.total)}</h3><ul>${c.items.map((row) => `<li class="pr-task">${link(base + '/tasks/' + row.id, row.title)} ${esc(row.priority_label || '')} ${taskDeadline(row)}</li>`).join('')}</ul>${c.items.length ? '' : empty('暂无任务。')}${columnNext(route, c)}</section>`,
             )
             .join('') +
           '</div>')
@@ -377,7 +403,7 @@ function endpoint(route) {
     query.set('page_size', 25);
   }
   if (tab === 'tasks' && (!parts.length || parts[0] === 'list')) {
-    for (const key of ['cursor', 'column_id']) if (params.has(key)) query.set(key, params.get(key));
+    for (const key of ['cursor', 'column_id', 'owner_member_id', 'milestone_id', 'milestone_unassigned']) if (params.has(key)) query.set(key, params.get(key));
   }
   if (tab !== 'members' && params.get('q')) query.set('q', params.get('q'));
   if (!id) {
@@ -426,6 +452,13 @@ export async function mountProjects(host, route, request, { signal, memory, user
       windowY: saved.windowY,
     });
   }
+  const taskViews = memory.taskViews ??= new Map();
+  if (id && tab === 'tasks' && (!parts.length || parts[0] === 'list')) {
+    const criteria = new URLSearchParams(route.params);
+    criteria.delete('cursor');
+    criteria.delete('column_id');
+    taskViews.set(id, withQuery(route.hash.split('?')[0], criteria));
+  }
   const back = memory.list || '#/projects';
   if (id && memory.list)
     history.replaceState(
@@ -454,7 +487,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
     const nav = host.querySelector('.tabs');
     const switchTab = (next) => {
       memory.tabFocus = true;
-      location.hash = base + '/' + next.dataset.tab;
+      location.hash = next.dataset.tab === 'tasks' && taskViews.has(id) ? taskViews.get(id) : base + '/' + next.dataset.tab;
     };
     nav.onclick = (e) => {
       const next = e.target.closest('button');
@@ -515,7 +548,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
     const project = header.value?.data.workspace.project;
     if (project) {
       const title = host.querySelector('#page-heading');
-      title.textContent = project.name;
+      title.textContent = project.name || project.id;
       if (project.project_type)
         title.insertAdjacentHTML('beforebegin', `<span class="kind">${esc(project.project_type)}</span>`);
       const tone =
@@ -552,7 +585,7 @@ export async function mountProjects(host, route, request, { signal, memory, user
     const data = result.value.data ?? result.value;
     body.innerHTML =
       (header.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
-      contents(route, data);
+      contents(route, data, header.value?.data.milestones?.items || []);
     wireFilters(body, route);
     const check = body.querySelector('[data-check]');
     if (check)

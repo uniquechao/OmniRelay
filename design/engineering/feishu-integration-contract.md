@@ -181,13 +181,13 @@ OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署�
 
 | 栏目 | 路径 | 权威边界 |
 | --- | --- | --- |
-| 概览 | `overview` | OmniGrid 工作台档案及里程碑 |
+| 概览 | `overview` | 项目工作台档案、进展和关注项；关键节点及关联任务读取 OmniRelay 本地里程碑和任务 |
 | 成员 | `members` | OmniGrid 项目名单 |
 | 群聊 | `chats` | OmniRelay 的项目群关联与飞书按读取者核验的群源，消息沿用机器人记录接口 |
 | 会议纪要 | `meetings` | OmniGrid 本人授权的纪要投影 |
 | 文档 | `docs` | OmniGrid 本人授权的飞书资料投影 |
 | 日报 | `reports`、`reports/briefings` | OmniGrid 正式成员提交和覆盖范围，OmniRelay 简报生成与 E1 投递 |
-| 任务 | `tasks` | OmniGrid 正式看板 |
+| 任务 | `tasks` | OmniRelay PostgreSQL 中的正式任务与看板 |
 | 飞书 Bot | `feishu` | OmniRelay 项目接入、目标群、版本化计划及可见的最近简报回执 |
 
 群关联和目标群按租户及应用区分。选择目标群会建立关联，换目标群保留原群的关联。接入设置要求 `project.settings`，写入携带原 `version`，首次使用 0。计划记录 IANA 时区、本地执行时间和启用状态。计划存储和手动发布是独立动作。
@@ -203,3 +203,12 @@ OmniRelay 会话确认租户、应用、本地账号和飞书 Open ID。部署�
 - `PUT /api/v1/feishu/chats/{chatID}/project` 携带读取到的 `version` 和目标 `project_id`，空字符串表示清除。成功返回更新后的归属对象。主群离开原项目时同时清除其主群身份。若该群也是原项目的简报目标，同时撤销该目标并关闭该计划的启用和公开提交数选项。
 - `PUT /api/v1/projects/{projectID}/chats/primary` 携带 `chat_id`、该群的 `assignment_version`（列表项的 `version`）和列表的 `primary_version`。从当前项目的群中选定主群，成功返回 `chat_id` 和新的 `primary_version`。替换时原主群继续留在项目里。切换主群后重新读取受影响的群版本。
 - 写入要求会话通过 CSRF 校验、操作者具备所操作群的当前成员及来源读权，并持有相关项目的 `project.settings`。跨项目移动要同时具备原项目与目标项目的权限。失权返回 404，陈旧版本返回 409，客户端应重新读取。关系、版本和带前后状态的审计同一事务提交。
+
+## 本地任务、里程碑和移动（G1）
+
+任务、看板版本、里程碑和移动回执按租户、应用、项目隔离。以下路径相对于 `/api/v1/projects/{projectID}`。读取使用 `project.read`，任务与里程碑写入使用 `project.assign`。写操作沿用会话 CSRF 校验。
+
+- `GET /tasks` 返回四列看板、项目版本和筛选后的总数。看板与列表共用列内的正式任务 ID；`GET /tasks/{taskID}` 返回同一任务。可组合传递 `q`、`owner_member_id` 和 `milestone_id`。省略里程碑条件表示全部，`milestone_unassigned=true` 表示未关联。分页使用列 ID 与响应中的游标。
+- `POST /tasks` 创建，`PUT /tasks/{taskID}` 携带 `expected_task_version` 完整保存属性。`PATCH /tasks/{taskID}/milestone` 只需同一版本和 `milestone_id`，显式传入 null 可清除归属。`GET /milestones` 和 `POST /milestones` 读取、创建项目里程碑。多个任务可属于同一里程碑。节点可另以 `task_id` 引用任务，节点的负责人及状态由该任务驱动。
+- P0/P1/P2/P3 依次显示紧急、重要、普通、低。任务期限可传自然日或带偏移的时间。读模型在项目业务时区派生日期显示和告警；未来三天、当天和逾期告警，已完成、已取消及无期限均排除。同年展示月日，跨年带年份。缺省时区为 Asia/Shanghai，`PUT /tasks/board/timezone` 使用 `project.settings`、`business_timezone` 和 `expected_board_version` 修改。
+- `POST /tasks/{taskID}/move` 接收 `target_column_id`、`expected_task_version`、`expected_board_version` 和 `request_key`；手动排序可附 `before_id`、`after_id`。成功后返回含双版本的任务，同一操作者重试原命令可重放首次回执。HTTP 409 的 `task_version_conflict`、`board_version_conflict`、`move_request_key_conflict` 分别标识任务陈旧、看板陈旧、同键异参。

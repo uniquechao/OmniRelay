@@ -8,30 +8,11 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
-type taskLink struct {
-	ID          string `json:"id"`
-	Project     string `json:"project_id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	Description string `json:"description"`
-	Due         string `json:"due_at"`
-}
-
-func (g *Grid) readTask(ctx context.Context, entry mapping, project, id string) (taskLink, error) {
-	var task taskLink
-	if !identifier.MatchString(id) {
-		return task, errInput
-	}
-	err := g.get(ctx, entry, projectPath(project)+"/tasks/"+url.PathEscape(id), nil, &task)
-	if err == nil && (task.Project != project || task.ID != id) {
-		err = errUnavailable
-	}
-	return task, err
-}
+type lookupTask func(string) (storedTask, error)
 
 // Read confirmed and merged candidates using the source visibility of the delegated reader.
-func (g *Grid) relatedTasks(ctx context.Context, entry mapping, project, kind, id, chat string) ([]taskLink, error) {
-	tasks := []taskLink{}
+func (g *Grid) relatedTasks(ctx context.Context, entry mapping, project, kind, id, chat string, lookup lookupTask) ([]storedTask, error) {
+	tasks := []storedTask{}
 	seen := map[string]bool{}
 	for _, status := range []string{"confirmed", "merged"} {
 		query := url.Values{"status": {status}, "limit": {"100"}}
@@ -71,7 +52,7 @@ func (g *Grid) relatedTasks(ctx context.Context, entry mapping, project, kind, i
 					if !matches {
 						continue
 					}
-					task, err := g.readTask(ctx, entry, project, item.Task)
+					task, err := lookup(item.Task)
 					if err != nil {
 						return nil, err
 					}
@@ -133,7 +114,7 @@ func (g *Grid) verifySource(ctx context.Context, entry mapping, project, kind, i
 	}
 }
 
-func (g *Grid) record(ctx context.Context, actor identity.Principal, project, kind, id, chat string) (any, error) {
+func (g *Grid) record(ctx context.Context, actor identity.Principal, project, kind, id, chat string, lookup lookupTask) (any, error) {
 	if !identifier.MatchString(id) || !slices.Contains([]string{"task", "message", "minutes", "document", "sheets", "bitable", "file"}, kind) || (kind == "message" && !identifier.MatchString(chat)) {
 		return nil, errInput
 	}
@@ -150,10 +131,10 @@ func (g *Grid) record(ctx context.Context, actor identity.Principal, project, ki
 	}
 	var value any
 	if kind == "task" {
-		value, err = g.readTask(ctx, entry, project, id)
+		value, err = lookup(id)
 	} else {
-		var items []taskLink
-		items, err = g.relatedTasks(ctx, entry, project, kind, id, chat)
+		var items []storedTask
+		items, err = g.relatedTasks(ctx, entry, project, kind, id, chat, lookup)
 		if err == nil && len(items) == 0 && kind != "message" {
 			err = g.verifySource(ctx, entry, project, kind, id)
 		}
