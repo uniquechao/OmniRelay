@@ -114,13 +114,10 @@ func (s *Service) CanReadConversation(ctx context.Context, p identity.Principal,
 	return err == nil, err
 }
 
-// CanReadFileGroup requires membership for a group with no project scope, even for administrators.
+// CanReadFileGroup verifies the current reader and group membership for a stored file.
 func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, projectID, chatID string) (bool, error) {
 	if !validIdentifier(chatID) {
 		return false, nil
-	}
-	if projectID != "" {
-		return s.CanReadConversation(ctx, p, projectID, chatID)
 	}
 	if err := s.activeAccount(ctx, s.pool, p); err != nil {
 		if errors.Is(err, ErrAccessLost) {
@@ -128,15 +125,21 @@ func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, pr
 		}
 		return false, err
 	}
-	items, err := s.listConversations(ctx, chatID, "")
+	if projectID != "" {
+		allowed, err := s.check(ctx, p, "project.read", projectID)
+		if !allowed || err != nil {
+			return false, err
+		}
+	}
+	items, err := s.listConversations(ctx, chatID, projectID)
 	if err != nil || len(items) != 1 || items[0].Kind != orchestrator.ChatGroup {
 		return false, err
 	}
-	err = s.canRead(ctx, p, false, items[0])
-	if errors.Is(err, ErrAccessLost) || errors.Is(err, errHidden) {
+	member, err := s.hasMember(ctx, chatID, p.OpenID)
+	if errors.Is(err, ErrAccessLost) || errors.Is(err, ErrPartial) {
 		return false, nil
 	}
-	return err == nil, err
+	return member, err
 }
 
 func (s *Service) authorize(ctx context.Context, p identity.Principal, id string) (authorizedScope, error) {

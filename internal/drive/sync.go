@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -116,7 +117,6 @@ func (s *Service) index(ctx context.Context) (bool, error) {
 type job struct {
 	Ref
 	id      int64
-	chat    string
 	attempt time.Time
 }
 
@@ -125,11 +125,11 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (SELECT x.* FROM feishu_file_sources x
  JOIN feishu_file_shares s USING(tenant_key,app_id,message_id,file_id)
  WHERE x.chat_kind='group' AND x.tenant_key=$1 AND x.app_id=$2 AND x.credentials_generation=$3 AND x.next_at<=now()
- ORDER BY x.next_at,x.file_id LIMIT 1 FOR UPDATE OF s SKIP LOCKED)
+ ORDER BY (x.state='pending') DESC,x.next_at,x.file_id LIMIT 1 FOR UPDATE OF s SKIP LOCKED)
  UPDATE feishu_file_shares s SET attempted_at=clock_timestamp(),next_at=now()+interval '2 minutes'
  FROM candidate c WHERE (s.tenant_key,s.app_id,s.message_id,s.file_id)=(c.tenant_key,c.app_id,c.message_id,c.file_id)
- RETURNING c.file_id,c.kind,c.token,c.name,c.chat_id,c.chat_kind,c.message_id,c.declared_size,s.attempted_at`, s.tenant, s.app, s.generation).
-		Scan(&j.id, &j.Kind, &j.Token, &j.Name, &j.chat, &j.ChatKind, &j.MessageID, &j.Size, &j.attempt)
+ RETURNING c.file_id,c.kind,c.token,c.name,c.chat_kind,c.message_id,c.declared_size,s.attempted_at`, s.tenant, s.app, s.generation).
+		Scan(&j.id, &j.Kind, &j.Token, &j.Name, &j.ChatKind, &j.MessageID, &j.Size, &j.attempt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -138,11 +138,7 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 	}
 	fetch, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
-	var snap Snapshot
-	failure := s.source.CheckShare(fetch, j.Ref, j.chat)
-	if failure == nil {
-		snap, failure = s.source.ReadFile(fetch, j.Ref, false)
-	}
+	snap, failure := s.source.ReadFile(fetch, j.Ref, false)
 	if snap.Stream != nil {
 		defer snap.Stream.Close()
 	}
@@ -153,12 +149,6 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 			body = snap.Stream
 		}
 		obj, failure = s.storeObject(fetch, body, j.Size)
-	}
-	if failure == nil {
-		failure = s.source.CheckShare(fetch, j.Ref, j.chat)
-	}
-	if failure == nil {
-		_, failure = s.source.ReadFile(fetch, j.Ref, true)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -234,22 +224,42 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 }
 
 func (s *Service) Run(ctx context.Context) {
-	var nextCleanup time.Time
-	for ctx.Err() == nil {
-		if time.Now().After(nextCleanup) {
-			if err := s.discardAbandoned(ctx); err != nil {
+	var workers sync.WaitGroup
+	workers.Go(func() {
+		runSyncSteps(ctx, func(ctx context.Context) (bool, error) {
+			indexed, indexErr := s.index(ctx)
+			resolved, wikiErr := s.resolveWiki(ctx)
+			return indexed || resolved, errors.Join(indexErr, wikiErr)
+		})
+	})
+	for range 3 {
+		workers.Go(func() { runSyncSteps(ctx, s.refresh) })
+	}
+	workers.Go(func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for ctx.Err() == nil {
+			if err := s.discardAbandoned(ctx); err != nil && ctx.Err() == nil {
 				slog.WarnContext(ctx, "待发布文件对象回收失败，将自动重试")
 			}
-			nextCleanup = time.Now().Add(time.Minute)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
-		indexed, e := s.index(ctx)
-		wiki, wikiErr := s.resolveWiki(ctx)
-		worked, err := s.refresh(ctx)
-		if e != nil || err != nil || wikiErr != nil {
+	})
+	workers.Wait()
+}
+
+func runSyncSteps(ctx context.Context, step func(context.Context) (bool, error)) {
+	for ctx.Err() == nil {
+		worked, err := step(ctx)
+		if err != nil && ctx.Err() == nil {
 			slog.WarnContext(ctx, "飞书文件同步暂未完成，将自动重试")
 		}
 		delay := 2 * time.Second
-		if (worked || indexed || wiki) && err == nil && e == nil {
+		if worked && err == nil {
 			delay = 50 * time.Millisecond
 		}
 		select {

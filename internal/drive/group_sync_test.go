@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/uniquechao/OmniRelay/internal/access"
@@ -60,7 +61,7 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	src := &testSource{denied: map[string]bool{}, text: "甲版"}
+	src := &testSource{text: "甲版"}
 	s := New(pool, "t", "a", 1, src, access.New(pool, "t", "a"), testBucket(t), testGroupAccess)
 	actor := identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}
 	mux := http.NewServeMux()
@@ -134,7 +135,9 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 		t.Fatal("未授权群泄露来源", f.Sources)
 	}
 	s.canReadGroup = testGroupAccess
+	exec("UPDATE feishu_file_shares SET next_at=now()-interval '1 day' WHERE message_id='m1'")
 	refresh()
+	exec("UPDATE feishu_file_shares SET next_at=now()+interval '5 minutes' WHERE message_id='m1'")
 	if status := jsonProgress(); status.Groups != 2 || status.Complete != 2 || status.Pending != 0 {
 		t.Fatalf("unbound group failed to sync: %+v", status)
 	}
@@ -160,7 +163,7 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 	if got := get(path+"/content", 200); got != "乙版" {
 		t.Fatal(got)
 	}
-	src.denied["m2"] = true
+	exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id='m2'")
 	file("extra", "p")
 	get(path+"/content", 404)
 	result := httptest.NewRecorder()
@@ -187,8 +190,86 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 	if got := get(fmt.Sprintf("%d/object", f.ID), 200); got != "甲版" {
 		t.Fatal(got)
 	}
-	src.denied["m1"] = true
+	exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id='m1'")
 	get(fmt.Sprintf("%d/object", f.ID), 404)
+}
+
+type countedFileReads struct {
+	*testSource
+	calls atomic.Int64
+}
+
+func (s *countedFileReads) ReadFile(ctx context.Context, ref Ref, probe bool) (Snapshot, error) {
+	s.calls.Add(1)
+	return s.testSource.ReadFile(ctx, ref, probe)
+}
+
+func TestFileSnapshotListsStoredStatesWithoutProviderReads(t *testing.T) {
+	ctx, pool := archiveTestDB(t)
+	source := &countedFileReads{testSource: &testSource{text: "内容"}}
+	s := New(pool, "t", "a", 1, source, access.New(pool, "t", "a"), testBucket(t), testGroupAccess)
+	if _, err := pool.Exec(ctx, `INSERT INTO feishu_chat_messages
+		(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+		SELECT 't','a','msg_'||i,'g1',now(),now(),
+			json_build_object('text','https://example.feishu.cn/docx/Doc'||i)::text,'text'
+		FROM generate_series(1,50) AS i`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.index(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		if ok, err := s.refresh(ctx); !ok || err != nil {
+			t.Fatal(ok, err)
+		}
+	}
+	mux := http.NewServeMux()
+	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
+		return identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}, true
+	})
+	get := func(url string) ([]item, int) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/feishu/files?"+url, nil))
+		var page struct {
+			Items []item
+			Total int
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil {
+			t.Fatalf("file page: %d %s", w.Code, w.Body)
+		}
+		return page.Items, page.Total
+	}
+	source.calls.Store(0)
+	files, total := get("limit=2")
+	if len(files) != 2 || total != 50 || source.calls.Load() != 0 || files[0].State != "complete" {
+		t.Fatalf("first page: %d items, %d total, %d file checks", len(files), total, source.calls.Load())
+	}
+	pending, _ := get("limit=2&offset=8")
+	if len(pending) != 2 || pending[0].State != "pending" || pending[0].Sources[0].SyncState != "pending" ||
+		pending[0].Version != nil || source.calls.Load() != 0 {
+		t.Fatalf("pending metadata: %+v; file checks=%d", pending, source.calls.Load())
+	}
+	msg := files[0].Sources[0].MessageID
+	source.err = ErrUnavailable
+	content := httptest.NewRecorder()
+	mux.ServeHTTP(content, httptest.NewRequest("GET", fmt.Sprintf("/api/v1/feishu/files/%d/object", files[0].ID), nil))
+	if content.Code != 200 || content.Body.String() != "内容" || source.calls.Load() != 0 {
+		t.Fatalf("archived download should use only stored content: %d, %d provider calls", content.Code, source.calls.Load())
+	}
+	if _, err := pool.Exec(ctx, "UPDATE feishu_file_shares SET state='revoked' WHERE message_id=$1", msg); err != nil {
+		t.Fatal(err)
+	}
+	source.calls.Store(0)
+	next, total := get("limit=2")
+	if total != 49 || slices.ContainsFunc(next, func(file item) bool { return file.ID == files[0].ID }) ||
+		source.calls.Load() != 0 {
+		t.Fatalf("revocation persisted in PostgreSQL did not remove the row: total=%d, calls=%d", total, source.calls.Load())
+	}
+	s.canReadGroup = func(context.Context, identity.Principal, string, string) (bool, error) { return false, nil }
+	if files, total := get("limit=2"); total != 0 || len(files) != 0 {
+		t.Fatalf("unauthorized group exposed metadata: %d", total)
+	}
 }
 
 func TestMediaReferences(t *testing.T) {
@@ -318,7 +399,7 @@ func (b interruptedUpload) Put(ctx context.Context, key string, body io.ReadSeek
 
 func TestObjectPublicationRecovery(t *testing.T) {
 	ctx, pool := archiveTestDB(t)
-	src := &testSource{text: "待回收的私有正文", denied: map[string]bool{}}
+	src := &testSource{text: "待回收的私有正文"}
 	bucket := testBucket(t)
 	s := New(pool, "t", "a", 1, src, access.New(pool, "t", "a"), bucket, testGroupAccess)
 	exec := func(sql string) {

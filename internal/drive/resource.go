@@ -34,8 +34,6 @@ type Snapshot struct {
 	Stream  io.ReadCloser
 }
 type Source interface {
-	// CheckShare 复核应用当前是否仍可读取原分享消息。
-	CheckShare(context.Context, Ref, string) error
 	ReadFile(context.Context, Ref, bool) (Snapshot, error)
 }
 

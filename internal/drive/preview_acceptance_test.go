@@ -36,7 +36,7 @@ func (s *previewSampleSource) ReadFile(_ context.Context, r Ref, probe bool) (Sn
 
 func TestPreviewSamples(t *testing.T) {
 	ctx, pool := archiveTestDB(t)
-	src := &previewSampleSource{snapshots: map[string]Snapshot{}, testSource: testSource{denied: map[string]bool{}}}
+	src := &previewSampleSource{snapshots: map[string]Snapshot{}, testSource: testSource{}}
 	roles := access.New(pool, "t", "a")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	s := New(pool, "t", "a", 1, src, roles, testBucket(t), testGroupAccess)
@@ -202,7 +202,9 @@ func TestPreviewSamples(t *testing.T) {
 	if blue < 0xf000 || red > 0x1000 {
 		t.Fatal("第二页像素不符", red, blue)
 	}
-	src.denied["Pdf"] = true
+	if _, err := pool.Exec(ctx, "UPDATE feishu_file_shares SET state='revoked' WHERE message_id='Pdf'"); err != nil {
+		t.Fatal(err)
+	}
 	request("GET", path, 403)
 	request("GET", path+"/result", 403)
 	request("GET", fmt.Sprintf("/%d/versions/%d/content", current.ID, *current.Version), 404)
@@ -214,7 +216,9 @@ func TestPreviewSamples(t *testing.T) {
 	if err := json.Unmarshal(request("GET", "?q="+url.QueryEscape("签字.pdf"), 200).Body.Bytes(), &hidden); err != nil || hidden.Total != 0 || len(hidden.Items) != 0 {
 		t.Fatal("撤权后的搜索结果不符", hidden, err)
 	}
-	delete(src.denied, "Pdf")
+	if _, err := pool.Exec(ctx, "UPDATE feishu_file_shares SET state='complete' WHERE message_id='Pdf'"); err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(request("GET", path+"/result", 200).Body.Bytes(), body) {
 		t.Fatal("恢复授权后的版本不符")
 	}

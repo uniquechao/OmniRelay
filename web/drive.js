@@ -1,10 +1,9 @@
 import { openFilePreview } from './drive-preview.js';
 import { fileIcon } from './file-format.js';
 import { assignmentAPI } from './chat-assignment.js';
-import { fileSources, fileProjects, editFileProjects, mountFileMetadata } from './drive-metadata.js';
+import { fileSources, fileProjects, editFileProjects, mountFileMetadata, syncStateLabel } from './drive-metadata.js';
 
 const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', files:'文件' };
-const coverage = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败', expired:'同步版本已过期', revoked:'访问受限', over_limit:'超过同步大小上限' };
 const decimal = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:1});
 
 function sizeText(bytes) {
@@ -71,7 +70,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
       if (tableSnapshot === undefined) tableSnapshot = latest;
       if (tableSnapshot !== latest && !document.querySelector('dialog[open]') && !list.contains(document.activeElement)) {
         tableSnapshot = latest;
-        await refreshList?.();
+        await refreshList?.({keepRows:true});
       }
     } catch {
       if (!signal.aborted) {
@@ -144,7 +143,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
           (row.size_source === 'original' ? '原件大小' : '大小未知') + '">' + sizeText(row.size_bytes) + '</span>'},
         {key:'updated_at',label:'同步状态',sort:true,render:row => {
           const updated = row.updated_at && new Date(row.updated_at);
-          return escape(coverage[row.sync_state] || '同步状态未知') + (updated ? '<br><time datetime="' +
+          return escape(syncStateLabel(row.sync_state)) + (updated ? '<br><time datetime="' +
             escape(row.updated_at) + '">' + escape(updated.toLocaleString('zh-CN')) + '</time>' : '');
         }},
         {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>' + (row.version_id ? ' <a class="row-action" download href="/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/content?download=1">下载</a>' : '')}

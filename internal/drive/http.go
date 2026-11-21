@@ -13,12 +13,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/identity"
-	"golang.org/x/sync/errgroup"
 )
 
 type share struct {
@@ -30,6 +28,7 @@ type share struct {
 	SenderName string    `json:"sender_name"`
 	SentAt     time.Time `json:"sent_at"`
 	ProjectID  string    `json:"project_id,omitempty"`
+	SyncState  string    `json:"sync_state,omitempty"`
 }
 type candidate struct {
 	share
@@ -92,85 +91,14 @@ func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64
 	})
 }
 
-type sourceKey struct {
-	file         int64
-	msg, project string
-}
-
 func (s *Service) visible(ctx context.Context, p identity.Principal, id int64, cloudTokens []string) ([]item, error) {
 	return s.visibleInProject(ctx, p, id, cloudTokens, "")
 }
 
-func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id int64, cloudTokens []string, project string) ([]item, error) {
-	initial, err := s.candidates(ctx, p, id, cloudTokens, project)
-	if err != nil {
-		return nil, err
-	}
-	var probes, groups sync.Map
-	failures := make([]error, len(initial))
-	verified := make([]bool, len(initial))
-	g, requests := errgroup.WithContext(ctx)
-	g.SetLimit(6)
-	for i, c := range initial {
-		g.Go(func() error {
-			scope := struct{ chat, project string }{c.ChatID, c.ProjectID}
-			permission, _ := groups.LoadOrStore(scope, sync.OnceValues(func() (bool, error) { return s.canReadGroup(requests, p, c.ProjectID, c.ChatID) }))
-			allowed, err := permission.(func() (bool, error))()
-			if !allowed || err != nil {
-				failures[i] = err
-				return nil
-			}
-			ref := Ref{Kind: c.Kind, Token: c.Token, Name: c.Name, MessageID: c.MessageID, ChatKind: "group"}
-			err = s.source.CheckShare(requests, ref, c.ChatID)
-			if err == nil {
-				resource := sourceKey{file: c.ID}
-				if messageResource(c.Kind) {
-					resource.msg = c.MessageID
-				}
-				probe, _ := probes.LoadOrStore(resource, sync.OnceValue(func() error { _, probeErr := s.source.ReadFile(requests, ref, true); return probeErr }))
-				err = probe.(func() error)()
-			}
-			if errors.Is(err, ErrRevoked) {
-				return nil
-			}
-			if errors.Is(err, ErrPartial) && c.State == "partial" && id == 0 {
-				verified[i] = true
-				return nil
-			}
-			if err != nil {
-				failures[i] = err
-				return nil
-			}
-			verified[i] = true
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	if !slices.Contains(verified, true) {
-		for _, err := range failures {
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	keys := map[sourceKey]bool{}
-	for i, c := range initial {
-		if verified[i] {
-			keys[sourceKey{c.ID, c.MessageID, c.ProjectID}] = true
-		}
-	}
-	current, err := s.candidates(ctx, p, id, cloudTokens, project)
-	if err != nil {
-		return nil, err
-	}
+func assembleFiles(current []candidate) []item {
 	files := []item{}
 	positions := map[int64]int{}
 	for _, c := range current {
-		if !keys[sourceKey{c.ID, c.MessageID, c.ProjectID}] {
-			continue
-		}
 		pos, ok := positions[c.ID]
 		if !ok {
 			pos = len(files)
@@ -204,13 +132,14 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 				f.Projects = append(f.Projects, c.ProjectID)
 			}
 		}
+		c.share.SyncState = c.State
 		f.Sources = append(f.Sources, c.share)
 	}
 	for i := range files {
 		slices.Sort(files[i].Projects)
 		slices.Sort(files[i].InheritedProjects)
 	}
-	return files, nil
+	return files
 }
 
 // CloudFormats 仅为聊天中的云盘链接补充已授权文件的实际格式。

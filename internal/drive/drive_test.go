@@ -21,23 +21,12 @@ import (
 )
 
 type testSource struct {
-	denied       map[string]bool
-	revokedToken string
-	err          error
-	attachment   func() io.Reader
-	text         string
+	err        error
+	attachment func() io.Reader
+	text       string
 }
 
-func (s *testSource) CheckShare(_ context.Context, r Ref, _ string) error {
-	if s.denied[r.MessageID] {
-		return ErrRevoked
-	}
-	return nil
-}
 func (s *testSource) ReadFile(_ context.Context, r Ref, probe bool) (Snapshot, error) {
-	if r.Token == s.revokedToken {
-		return Snapshot{}, ErrRevoked
-	}
 	if !probe && s.err != nil {
 		return Snapshot{}, s.err
 	}
@@ -119,7 +108,7 @@ func TestFileArchiveAccess(t *testing.T) {
  VALUES('t','a','m1','g1',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
  ('t','a','m2','g2',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
  ('t','a','m3','g1',now(),now(),'{"file_key":"file1","file_name":"空.pdf"}','file')`)
-	src := &testSource{denied: map[string]bool{}, text: "第一版"}
+	src := &testSource{text: "第一版"}
 	roles := access.New(pool, "t", "a")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	s := New(pool, "t", "a", 1, src, roles, testBucket(t), testGroupAccess)
@@ -243,12 +232,11 @@ func TestFileArchiveAccess(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM feishu_file_project_audit WHERE file_id=$1 AND project_id=$2 AND actor_id='alice'`, initial.ID, first.project).Scan(&audits); err != nil || audits != 2 {
 			t.Fatal(audits, err)
 		}
-		src.denied["m1"], src.denied["m2"] = true, true
+		exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id IN ('m1','m2')")
 		if status := change(remaining[0].ProjectVersion, []string{"q"}, nil); status != 404 {
 			t.Fatal(status)
 		}
-		delete(src.denied, "m1")
-		delete(src.denied, "m2")
+		exec("UPDATE feishu_file_shares SET state='complete' WHERE message_id IN ('m1','m2')")
 	})
 	history := path + "/versions/" + strconv.FormatInt(*docs[0].Version, 10) + "/content"
 	if get(history, 200) != "第一版" {
@@ -292,7 +280,7 @@ func TestFileArchiveAccess(t *testing.T) {
 	get(taskPath, 404)
 	get(taskPath+"/result", 404)
 	account = "alice"
-	src.revokedToken = "Token"
+	exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id IN ('m1','m2')")
 	get(taskPath, 403)
 	get(taskPath+"/result", 403)
 	waiting := previewRequest{reader: identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}, file: docs[0], version: *docs[0].Version, sources: messageIDs(docs[0]), options: previewOptions{Page: 1}}
@@ -300,7 +288,7 @@ func TestFileArchiveAccess(t *testing.T) {
 		t.Fatal("执行任务时未复核源权限", out.Stage)
 	}
 	create(403)
-	src.revokedToken = ""
+	exec("UPDATE feishu_file_shares SET state='complete' WHERE message_id IN ('m1','m2')")
 	var n int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM feishu_file_versions").Scan(&n); err != nil || n != 2 {
 		t.Fatal(n, err)
@@ -325,7 +313,7 @@ func TestFileArchiveAccess(t *testing.T) {
 	if get(path+"/object", 200) != "第二版" || get(history, 200) != "第一版" || !strings.Contains(get(taskPath+"/result", 200), "第一版") {
 		t.Fatal("版本恢复失败")
 	}
-	src.denied["m2"] = true
+	exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id='m2'")
 	_, docs = page("?category=docs")
 	if len(docs) != 1 || len(docs[0].Sources) != 1 || docs[0].Sources[0].MessageID != "m1" {
 		t.Fatal(docs)
@@ -423,7 +411,7 @@ func TestFileArchiveAccess(t *testing.T) {
 			t.Fatal("重试后原件或字节数不符", f)
 		}
 	}
-	src.revokedToken = "file1"
+	exec("UPDATE feishu_file_shares SET state='revoked' WHERE message_id='m3'")
 	if total, rows := page(query); total != 1 || len(rows) != 1 || rows[0].Sources[0].MessageID != "m5" {
 		t.Fatal("资源撤权后应只剩另一份同名文件", total, rows)
 	}

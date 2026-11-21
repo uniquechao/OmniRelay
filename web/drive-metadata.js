@@ -1,5 +1,10 @@
 import { assignmentAPI } from './chat-assignment.js';
 
+const syncStates = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败',
+  expired:'同步版本已过期', revoked:'访问受限', over_limit:'超过同步大小上限' };
+
+export const syncStateLabel = state => syncStates[state] || '同步状态未知';
+
 export function fileSources(row) {
   const { escape } = window.OmniRelayUI;
   const seen = new Set();
@@ -8,8 +13,9 @@ export function fileSources(row) {
     const route = '#/feishu/bot-chats/' + source.chat_id + '/' + source.message_id;
     if (seen.has(route)) return [];
     seen.add(route);
+    const state = source.sync_state && source.sync_state !== row.sync_state ? ' · ' + syncStateLabel(source.sync_state) : '';
     return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '">' + escape(source.chat_name || source.chat_id) +
-      ' · ' + escape(source.sender_name || '未知分享人') + '</a>';
+      ' · ' + escape(source.sender_name || '未知分享人') + escape(state) + '</a>';
   }).join('<br>');
 }
 

@@ -440,9 +440,9 @@ window.OmniRelayUI = (() => {
     }
 
     let pending;
-    function paint() {
+    function paint({keepRows = false} = {}) {
       if (config.loadPage) {
-        return loadPage();
+        return loadPage(keepRows);
       }
       const rows = filteredRows();
       const existingIds = new Set(config.rows.map(row => row.id));
@@ -454,19 +454,22 @@ window.OmniRelayUI = (() => {
       paintRows(rows.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize), rows.length);
     }
 
-    async function loadPage() {
+    async function loadPage(keepRows) {
       pending?.abort();
       pending = new AbortController();
       const signal = AbortSignal.any([config.signal, pending.signal]);
       const empty = find('[data-empty]');
-      body.replaceChildren();
-      visible = [];
-      empty.hidden = false;
-      find('[data-page]').textContent = '';
-      find('[data-total]').textContent = '';
-      find('[data-prev]').disabled = find('[data-next]').disabled = true;
-      find('[data-choice-column]').hidden = !selectable();
-      const loading = window.OmniRelayLoading.mount(empty, {label:'正在读取' + config.itemLabel + '…'});
+      let loading;
+      if (!keepRows || !visible.length) {
+        body.replaceChildren();
+        visible = [];
+        empty.hidden = false;
+        find('[data-page]').textContent = '';
+        find('[data-total]').textContent = '';
+        find('[data-prev]').disabled = find('[data-next]').disabled = true;
+        find('[data-choice-column]').hidden = !selectable();
+        loading = window.OmniRelayLoading.mount(empty, {label:'正在读取' + config.itemLabel + '…'});
+      }
       try {
         const result = await config.loadPage(state, signal);
         if (signal.aborted) return;
@@ -483,10 +486,18 @@ window.OmniRelayUI = (() => {
           state.page = last;
           return paint();
         }
+        const scrollTop = scroller.scrollTop;
         paintRows(result.items, result.total);
+        if (keepRows) scroller.scrollTop = scrollTop;
         return true;
       } catch (error) {
         if (signal.aborted) return;
+        body.replaceChildren();
+        visible = [];
+        empty.hidden = false;
+        find('[data-page]').textContent = '';
+        find('[data-total]').textContent = '';
+        find('[data-prev]').disabled = find('[data-next]').disabled = true;
         for (const filter of filters) {
           filter.options = {};
           const selected = state.filters[filter.key] || '';
@@ -502,7 +513,7 @@ window.OmniRelayUI = (() => {
         empty.append(' ', retry);
         return false;
       } finally {
-        loading.finish();
+        loading?.finish();
       }
     }
 

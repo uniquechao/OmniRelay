@@ -1122,23 +1122,29 @@ test('网盘显示未关联项目的文件，按真实同步状态刷新列表',
       await page.route(origin + '/api/v1/feishu/files/sync', route => route.fulfill({json:completed ? {
         ...status, history_pending:0, unindexed_messages:0, pending_sources:0, complete_sources:1
       } : status}));
-      await page.route(origin + '/api/v1/feishu/files?*', route => route.fulfill({json:{
-        projects:{}, total:Number(completed), items:completed ? [{
-          id:71, name:'未关联群的手册.pdf', category:'files', format_key:'pdf', format:'PDF',
-          project_ids:[], inherited_project_ids:[], sources:[{chat_id:'oc_group',message_id:'om_old',chat_name:'北辰项目群'}],
-          sync_state:'complete', version_id:1
-        }] : []
-      }}));
+      await page.route(origin + '/api/v1/feishu/files?*', route => {
+        return route.fulfill({json:{
+          projects:{}, total:1, items:[{
+            id:71, name:'未关联群的手册.pdf', category:'files', format_key:'pdf', format:'PDF',
+            project_ids:[], inherited_project_ids:[], sources:[{chat_id:'oc_group',message_id:'om_old',chat_name:'北辰项目群'}],
+            sync_state:completed ? 'complete' : 'pending', version_id:completed ? 1 : null
+          }]
+        }});
+      });
       await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
       const progress = page.getByRole('region', {name:'文件同步进度'});
       await progress.getByRole('progressbar', {name:'正在同步群历史…'}).waitFor();
       assert.equal(await progress.getByRole('progressbar').getAttribute('aria-valuenow'), null);
       assert.match(await progress.innerText(), /待同步 1 条/);
-      await page.getByText('暂无文件。', {exact:true}).waitFor();
+      const file = page.locator('.drive-file-name');
+      await file.getByText('未关联群的手册.pdf').waitFor();
+      await page.getByText('等待同步', {exact:true}).waitFor();
+      assert.equal(await file.isDisabled(), true);
       completed = true;
       await page.clock.runFor(10030);
       await progress.getByText(/已同步 1 条来源/).waitFor();
-      await page.locator('.drive-file-name').getByText('未关联群的手册.pdf').waitFor();
+      await page.getByText('已同步', {exact:true}).waitFor();
+      assert.equal(await file.isDisabled(), false);
       assert.equal(await progress.getByRole('progressbar').count(), 0);
       await page.close();
     }
