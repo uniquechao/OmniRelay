@@ -69,6 +69,9 @@ func (s *ChatSource) ReadDocument(ctx context.Context, ref drive.Ref) (drive.Sna
 	if err := f.fileJSON(ctx, root, &info); err != nil {
 		return snap, err
 	}
+	if info.Spreadsheet != nil && info.Spreadsheet.Title != "" {
+		snap.Name = info.Spreadsheet.Title
+	}
 	var result struct {
 		Sheets []previewSheet `json:"sheets"`
 	}
@@ -77,9 +80,6 @@ func (s *ChatSource) ReadDocument(ctx context.Context, ref drive.Ref) (drive.Sna
 	}
 	if len(result.Sheets) > 200 {
 		return snap, drive.ErrPartial
-	}
-	if info.Spreadsheet != nil && info.Spreadsheet.Title != "" {
-		snap.Name = info.Spreadsheet.Title
 	}
 	var workbook []drive.ChatSheet
 	size := 0

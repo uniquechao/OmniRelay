@@ -107,7 +107,13 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 		return resp, nil
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 403 || resp.StatusCode == 404 {
+	if resp.StatusCode == http.StatusForbidden {
+		if responseFileError(resp.Body) == drive.ErrAppScopeMissing {
+			return nil, drive.ErrAppScopeMissing
+		}
+		return nil, drive.ErrRevoked
+	}
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, drive.ErrRevoked
 	}
 	if resp.StatusCode == 401 {
@@ -132,14 +138,20 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 		}
 		return nil, &drive.RetryAfterError{Delay: max(delay, time.Second)}
 	}
+	return nil, responseFileError(resp.Body)
+}
+
+func responseFileError(body io.Reader) error {
 	var failure struct{ Code int }
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&failure)
-	return nil, fileError(failure.Code)
+	_ = json.NewDecoder(io.LimitReader(body, 32768)).Decode(&failure)
+	return fileError(failure.Code)
 }
 
 func fileError(code int) error {
 	switch code {
-	case 91402, 91403, 90303, 90304, 90305, 99991672, 1770032, 1770033, 1254302, 1254040, 1254041, 1061003, 1061004, 2091005, 230006, 230011, 230027:
+	case 99991672:
+		return drive.ErrAppScopeMissing
+	case 91402, 91403, 90303, 90304, 90305, 1770032, 1770033, 1254302, 1254040, 1254041, 1061003, 1061004, 2091005, 230006, 230011, 230027:
 		return drive.ErrRevoked
 	}
 	return drive.ErrUnavailable

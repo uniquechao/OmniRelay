@@ -152,6 +152,31 @@ func TestPreviewSamples(t *testing.T) {
 	}
 	pdf := file("scan.pdf")
 	// 同一文件先后同步需密码、损坏及可读的版本。
+	// Keep the input larger than the previous limit without changing page objects.
+	xref := bytes.LastIndex(pdf, []byte("\nxref\n")) + 1
+	footer := bytes.LastIndex(pdf, []byte("startxref\n"))
+	if xref <= 0 || footer <= xref {
+		t.Fatal("旧版 PDF 夹具应包含交叉引用表")
+	}
+	const paddingSize = 17 << 20
+	large := make([]byte, 0, len(pdf)+paddingSize)
+	large = append(large, pdf[:xref]...)
+	large = append(large, bytes.Repeat([]byte{'\n'}, paddingSize)...)
+	large = append(large, pdf[xref:footer]...)
+	large = fmt.Appendf(large, "startxref\n%d\n%%%%EOF\n", xref+paddingSize)
+
+	f := syncFile("LargePdf", "attachment", "大型手册.pdf", large)
+	_, largePage := preview(f, "?page=2", "ready")
+	if _, err := png.Decode(bytes.NewReader(largePage)); err != nil {
+		t.Fatal("网盘的大型 PDF 未返回真实页面", err)
+	}
+	chatPage, err := RenderMessagePreview(ctx, MessagePreviewOptions{Page: 2}, Ref{Kind: "attachment", Name: f.Name}, func() (Snapshot, error) {
+		return Snapshot{Name: f.Name, Content: large}, nil
+	})
+	if err != nil || chatPage.Stage != "ready" || !bytes.Equal(chatPage.PNG, largePage) {
+		t.Fatalf("聊天和网盘的大型 PDF 预览不一致：%s，%v", chatPage.Stage, err)
+	}
+
 	locked := syncFile("Pdf", "attachment", "签字.pdf", file("encrypted.pdf"))
 	damaged := syncFile("Pdf", "attachment", "签字.pdf", pdf[:20])
 	current := syncFile("Pdf", "attachment", "签字.pdf", pdf)
@@ -195,6 +220,6 @@ func TestPreviewSamples(t *testing.T) {
 	}
 	csv := syncFile("Csv", "attachment", "名单.csv", []byte("姓名,项目\n张宁,验收"))
 	preview(csv, "", "unsupported")
-	large := syncFile("Large", "attachment", "大文档.pdf", append(bytes.Clone(pdf), make([]byte, previewFileLimit+1)...))
-	preview(large, "", "over_limit")
+	oversized := syncFile("Large", "attachment", "大文档.pdf", append(bytes.Clone(pdf), make([]byte, previewPDFLimit+1)...))
+	preview(oversized, "", "over_limit")
 }

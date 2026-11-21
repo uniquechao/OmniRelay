@@ -91,6 +91,8 @@ func (s *Service) syncDocument(ctx context.Context) (bool, error) {
 	if failure != nil {
 		state, delay = "source_unavailable", time.Minute
 		switch {
+		case errors.Is(failure, drive.ErrAppScopeMissing):
+			state, delay = "application_scope_missing", 5*time.Minute
 		case errors.Is(failure, drive.ErrRevoked), errors.Is(failure, drive.ErrPreviewMessageDeleted):
 			state, delay = "resource_forbidden", 5*time.Minute
 		case errors.Is(failure, drive.ErrPartial):

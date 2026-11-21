@@ -13,7 +13,8 @@ const documentIcons = {
   file: new URL('./feishu-icons/file.png', import.meta.url).href,
 };
 const documentStates = {
-  pending:'正在同步', resource_forbidden:'机器人无法读取此文档', source_unavailable:'来源暂时不可用，稍后自动重试',
+  pending:'正在同步', resource_forbidden:'机器人无权读取或来源已失效',
+  application_scope_missing:'机器人应用缺少此类型的读取权限', source_unavailable:'来源暂时不可用，稍后自动重试',
   unsupported:'此类型暂不支持预览', over_limit:'文档超出预览大小限制'
 };
 const extensions = {pdf:'pdf', docx:'word', xlsx:'excel', pptx:'slides', zip:'zip'};

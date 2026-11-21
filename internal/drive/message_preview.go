@@ -146,7 +146,7 @@ func RenderMessagePreview(ctx context.Context, options MessagePreviewOptions, re
 			return MessagePreviewResult{Stage: "unsupported"}, nil
 		}
 	}
-	data, err := ReadPreviewBytes(snapshot)
+	data, err := readPreviewBytes(snapshot, previewInputLimit(kind))
 	if err != nil {
 		return MessagePreviewResult{}, err
 	}
@@ -174,16 +174,20 @@ func previewFileKind(name string) string {
 }
 
 func ReadPreviewBytes(s Snapshot) ([]byte, error) {
+	return readPreviewBytes(s, previewFileLimit)
+}
+
+func readPreviewBytes(s Snapshot, limit int) ([]byte, error) {
 	var reader io.Reader = bytes.NewReader(s.Content)
 	if s.Stream != nil {
 		defer s.Stream.Close()
 		reader = s.Stream
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, previewFileLimit+1))
+	data, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if len(data) > previewFileLimit {
+	if len(data) > limit {
 		return nil, ErrPartial
 	}
 	return data, nil

@@ -40,6 +40,9 @@ func (f *previewFixture) ReadDocument(_ context.Context, ref drive.Ref) (drive.S
 	if ref.Token == "direct_doc" {
 		return drive.Snapshot{Name: "讨论记录", Content: []byte("已同步的私聊文档")}, nil
 	}
+	if ref.Token == "scope_missing" {
+		return drive.Snapshot{}, drive.ErrAppScopeMissing
+	}
 	if ref.Token != "linked_sheet" {
 		return drive.Snapshot{}, drive.ErrRevoked
 	}
@@ -183,6 +186,9 @@ func TestPrivateDocumentSnapshotInvalidation(t *testing.T) {
 	meta("direct_doc", "", "")
 	work()
 	meta("denied", "resource_forbidden", "")
+	archive("scope_missing", false)
+	work()
+	meta("scope_missing", "application_scope_missing", "")
 	archive("direct_doc", false)
 	fixture.onDocument = func() { archive("direct_doc", true) }
 	work()

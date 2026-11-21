@@ -27,6 +27,15 @@ var previewConverter string
 var previewSlot = make(chan struct{}, 1)
 
 const previewFileLimit = 16 << 20
+const previewPDFLimit = 32 << 20
+
+func previewInputLimit(kind string) int {
+	if kind == "pdf" {
+		return previewPDFLimit
+	}
+	return previewFileLimit
+}
+
 const previewRoot = "/api/v1/feishu/files/{fileID}/versions/{versionID}/previews"
 const previewOwner = ` tenant_key=$1 AND app_id=$2 AND generation=$3 AND account_id=$4
  AND open_id=$5 AND file_id=$6 AND version_id=$7 `
@@ -45,6 +54,17 @@ type previewRequest struct {
 	version int64
 	sources []string
 	options previewOptions
+}
+
+func (q previewRequest) previewKind() string {
+	if q.file.Category == "files" {
+		kind := previewFileKind(q.file.Name)
+		if kind == "txt" {
+			return ""
+		}
+		return kind
+	}
+	return q.file.FormatKey
 }
 
 func (s *Service) previewArgs(q previewRequest) []any {
@@ -171,7 +191,7 @@ func (s *Service) createPreview(ctx context.Context, w http.ResponseWriter, q pr
 		return
 	}
 	stage = "queued"
-	if size > previewFileLimit {
+	if size > int64(previewInputLimit(q.previewKind())) {
 		stage = "over_limit"
 	}
 	start := stage == "queued"
@@ -284,7 +304,12 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 	if err != nil {
 		return previewOutput{Stage: "source_unavailable"}
 	}
-	if info.size > previewFileLimit {
+	kind := q.previewKind()
+	if kind == "" {
+		return previewOutput{Stage: "unsupported"}
+	}
+	limit := previewInputLimit(kind)
+	if info.size > int64(limit) {
 		return previewOutput{Stage: "over_limit"}
 	}
 	var data bytes.Buffer
@@ -315,7 +340,7 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 			if err := rows.Scan(&size, &chunk); err != nil {
 				return previewOutput{Stage: "failed"}
 			}
-			if size > previewFileLimit || data.Len()+len(chunk) > previewFileLimit {
+			if size > int64(limit) || data.Len()+len(chunk) > limit {
 				return previewOutput{Stage: "over_limit"}
 			}
 			data.Write(chunk)
@@ -326,13 +351,6 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 		}
 		if !found {
 			return previewOutput{Stage: "forbidden"}
-		}
-	}
-	kind := q.file.FormatKey
-	if q.file.Category == "files" {
-		kind = previewFileKind(q.file.Name)
-		if kind == "" || kind == "txt" {
-			return previewOutput{Stage: "unsupported"}
 		}
 	}
 	return renderPreview(ctx, kind, data.Bytes(), q.options)

@@ -571,7 +571,10 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
       const url = 'https://example.feishu.cn/' + kind + '/example';
       const titles = {wiki:'知识库周报',sheets:'费用明细',minutes:'评审会议',docx:'操作指南'};
       const resources = [{kind, key:'example', name:titles[kind], url, object_kind:kind === 'wiki' ? 'docx' : kind, state:'ready'}];
-      if (kind === 'docx') resources.push({kind, key:'example-long', name:'', url:url + '-long', state:'resource_forbidden'});
+      if (kind === 'docx') resources.push(
+        {kind, key:'example-long', name:'', url:url + '-long', state:'resource_forbidden'},
+        {kind, key:'missing-scope', name:'', url:url + '-scope', state:'application_scope_missing'},
+      );
       const links = resources.map(resource => resource.url).join(' ');
       return {...oldMessage, id:'om_' + kind, body:JSON.stringify({text:kind === 'minutes' ? '请查看 ' + links : links}), resources};
     }),
@@ -631,9 +634,10 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
     assert.equal(await icon('wiki').getAttribute('src'),await icon('docx').getAttribute('src'));
     assert.notEqual(await icon('sheets').getAttribute('src'),await icon('wiki').getAttribute('src'));
     await page.waitForFunction(() => [...document.querySelectorAll('.chat-document img')].every(img => img.naturalWidth > 0));
-    const longer = doc.getByRole('button',{name:/机器人无法读取此文档/u});
+    const longer = doc.getByRole('button',{name:/机器人无权读取或来源已失效/u});
     assert.equal(await longer.getAttribute('data-resource'), '1');
     assert.equal(await longer.isDisabled(),true);
+    assert.equal(await doc.getByRole('button',{name:/机器人应用缺少此类型的读取权限/u}).isDisabled(),true);
     const pdf = page.getByRole('button',{name:/操作手册.pdf/u});
     await pdf.click();
     await dialog.getByText('暂时无法读取来源，请重试。').waitFor();

@@ -465,7 +465,7 @@ export function mountChatReader(host, api, {
     const waiting = messages.filter(item => messageResources(item).some(resource => resource.state === 'pending'));
     const open = currentPreview?.resource.url && messages.find(item => item.id === currentPreview.id);
     const retrying = messages.filter(item => messageResources(item).some(resource =>
-      ['source_unavailable', 'resource_forbidden'].includes(resource.state)));
+      ['source_unavailable', 'resource_forbidden', 'application_scope_missing'].includes(resource.state)));
     const candidates = waiting.length ? waiting : retrying;
     const target = open || candidates[nextDocument++ % (candidates.length || 1)];
     if (target) documentTimer = setTimeout(() => refreshDocumentCards(target), open || !waiting.length ? 30000 : 4000);

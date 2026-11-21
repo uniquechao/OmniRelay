@@ -186,8 +186,9 @@ def main():
     resource.setrlimit(resource.RLIMIT_CPU, (8, 9))
     kind, page, sheet, entry = sys.argv[1:]
     try:
-        data = sys.stdin.buffer.read(16 * MIB + 1)
-        if len(data) > 16 * MIB:
+        limit = (32 if kind == "pdf" else 16) * MIB
+        data = sys.stdin.buffer.read(limit + 1)
+        if len(data) > limit:
             raise State("over_limit")
         meta, result = convert(kind, data, int(page), int(sheet), int(entry), [TOTAL_LIMIT])
         mime = "image/png" if isinstance(result, bytes) else "application/json"

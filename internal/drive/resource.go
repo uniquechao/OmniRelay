@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	ErrRevoked     = errors.New("file access revoked")
-	ErrPartial     = errors.New("partial file")
-	ErrUnavailable = errors.New("file source unavailable")
+	ErrRevoked         = errors.New("file access revoked")
+	ErrAppScopeMissing = errors.Join(ErrRevoked, errors.New("file application scope missing"))
+	ErrPartial         = errors.New("partial file")
+	ErrUnavailable     = errors.New("file source unavailable")
 )
 
 type RetryAfterError struct{ Delay time.Duration }

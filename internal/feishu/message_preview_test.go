@@ -34,10 +34,17 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 			}
 			body = "图像字节"
 		case "/open-apis/wiki/v2/spaces/get_node":
+			if r.URL.Query().Get("token") == "WikiWithoutScope" {
+				return deliveryResponse(403, `{"code":99991672}`), nil
+			}
 			if r.URL.Query().Get("token") != "Wiki" {
 				t.Fatal("知识库节点参数错误")
 			}
 			body = `{"code":0,"data":{"node":{"obj_type":"sheet","obj_token":"Sheet","title":"共享表格"}}}`
+		case "/open-apis/sheets/v3/spreadsheets/TitleOnly":
+			body = `{"code":0,"data":{"spreadsheet":{"title":"已有标题的表格"}}}`
+		case "/open-apis/sheets/v3/spreadsheets/TitleOnly/sheets/query":
+			body = `{"code":1254302}`
 		case "/open-apis/sheets/v3/spreadsheets/Sheet":
 			body = `{"code":0,"data":{"spreadsheet":{"title":"真实表格标题"}}}`
 		case "/open-apis/sheets/v3/spreadsheets/Sheet/sheets/query":
@@ -75,6 +82,13 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 	image.MessageID = "recalled"
 	if err := source.CheckPreviewShare(ctx, image, "oc"); !errors.Is(err, drive.ErrPreviewMessageDeleted) {
 		t.Fatal("撤回的原消息应被识别", err)
+	}
+	if _, err := source.ResolveDocumentWiki(ctx, drive.Ref{Kind: "wiki", Token: "WikiWithoutScope"}); !errors.Is(err, drive.ErrAppScopeMissing) || !errors.Is(err, drive.ErrRevoked) {
+		t.Fatal("知识库缺应用权限时应保留拒读语义并上报原因", err)
+	}
+	sheet, titleErr := source.ReadDocument(ctx, drive.Ref{Kind: "sheets", Token: "TitleOnly"})
+	if !errors.Is(titleErr, drive.ErrRevoked) || errors.Is(titleErr, drive.ErrAppScopeMissing) || sheet.Name != "已有标题的表格" {
+		t.Fatal("表格资源拒读时应保留已成功取得的标题", sheet.Name, titleErr)
 	}
 	wiki, err := source.ResolveDocumentWiki(ctx, drive.Ref{Kind: "wiki", Token: "Wiki"})
 	if err != nil || wiki.Kind != "sheets" || wiki.Token != "Sheet" {
