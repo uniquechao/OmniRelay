@@ -91,6 +91,25 @@ func (s *Service) ConfigureDelivery(source DeliverySource, enabled bool) {
 	}
 }
 
+// VerifyCandidateConversation reuses the existing Bot and tester conversation
+// checks before exposing scoped queue content to a candidate.
+func (s *Service) VerifyCandidateConversation(ctx context.Context, actor identity.Principal, target string) error {
+	_, err := s.deliveryTarget(ctx, actor, target, nil, false)
+	return err
+}
+
+func (s *Service) SendCandidateReply(ctx context.Context, actor identity.Principal, target, operation, text string,
+	authorize func(context.Context) error) (DeliveryStatus, error) {
+	if authorize == nil || strings.TrimSpace(text) == "" {
+		return DeliveryStatus{}, errDeliveryInput
+	}
+	return s.send(ctx, actor, target, operation, DeliveryContent{Text: text}, nil, authorize)
+}
+
+func (s *Service) CandidateReplyReceipt(ctx context.Context, actor identity.Principal, target, operation string) (DeliveryStatus, error) {
+	return s.deliveryStatus(ctx, actor, target, operation, false)
+}
+
 // BriefingAuthority verifies a committed briefing, publication rights, current
 // group binding and the exact content approved for the group's audience.
 type BriefingAuthority func(context.Context, identity.Principal, BusinessReceiptKey, string, DeliveryContent) (bool, error)
@@ -154,7 +173,7 @@ func (s *Service) send(ctx context.Context, actor identity.Principal, target, op
 	if err := s.deliveryAccount(ctx, actor); err != nil {
 		return DeliveryStatus{}, err
 	}
-	if !s.deliveryEnabled || s.delivery == nil {
+	if s.delivery == nil || (!s.deliveryEnabled && (authorize == nil || receipt != nil)) {
 		return DeliveryStatus{}, errDeliveryDisabled
 	}
 	// Upload handles are immutable bindings to their content digests.
@@ -174,9 +193,13 @@ func (s *Service) send(ctx context.Context, actor identity.Principal, target, op
 		return s.deliveryStatus(ctx, actor, target, operation, receipt != nil)
 	}
 	// Finish the bounded operation even if the caller loses the HTTP response.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Second)
+	provider := context.WithoutCancel(ctx)
+	if authorize != nil && receipt == nil {
+		provider = ctx
+	}
+	ctx, cancel := context.WithTimeout(provider, 24*time.Second)
 	defer cancel()
-	err = s.dispatchDelivery(ctx, k, actor, target, parts, mentions, authorize)
+	err = s.dispatchDelivery(ctx, k, actor, target, parts, mentions, receipt != nil, authorize)
 	save, done := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
 	defer done()
 	if err != nil {
@@ -334,7 +357,7 @@ func deliveryReason(err error) string {
 }
 
 func (s *Service) dispatchDelivery(ctx context.Context, k deliveryKey, actor identity.Principal, target string,
-	parts []deliveryPart, mentions []string, authorize func(context.Context) error,
+	parts []deliveryPart, mentions []string, groupOnly bool, authorize func(context.Context) error,
 ) error {
 	fail := func(position int, err error) error {
 		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
@@ -347,7 +370,7 @@ func (s *Service) dispatchDelivery(ctx context.Context, k deliveryKey, actor ide
 				return err
 			}
 		}
-		_, err := s.deliveryTarget(ctx, actor, target, mentions, authorize != nil)
+		_, err := s.deliveryTarget(ctx, actor, target, mentions, groupOnly)
 		return err
 	}
 	if err := check(mentions); err != nil {
@@ -404,6 +427,11 @@ func (s *Service) dispatchDelivery(ctx context.Context, k deliveryKey, actor ide
 			return fail(i, ErrAccessLost)
 		}
 		nonce := sha256.Sum256([]byte(k.tenant + "\x00" + k.app + "\x00" + k.operation + "\x00" + strconv.Itoa(i)))
+		if authorize != nil && !groupOnly {
+			if err := authorize(ctx); err != nil {
+				return fail(i, err)
+			}
+		}
 		result := s.delivery.Deliver(ctx, target, bot.OpenID, part.kind, part.content, hex.EncodeToString(nonce[:24]))
 		part.state, part.reason, part.messageID = result.State, result.Reason, result.MessageID
 		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)

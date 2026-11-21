@@ -26,6 +26,9 @@ type configuration struct {
 	botLeaseNamespace, botPodUID           string
 	setupKey                               []byte
 	oauthProxyToken                        string
+	candidateReceiverToken                 string
+	candidateReceiverRollback              string
+	candidateMessageRun                    *webRun
 }
 
 func readConfig(getenv func(string) string, serving bool) (configuration, error) {
@@ -111,6 +114,16 @@ func readConfig(getenv func(string) string, serving bool) (configuration, error)
 	cfg.botPodUID = strings.TrimSpace(getenv("OMNIRELAY_FEISHU_BOT_POD_UID"))
 	if (cfg.botLeaseNamespace == "") != (cfg.botPodUID == "") {
 		return configuration{}, errors.New("Feishu Bot Lease namespace and Pod UID must be configured together")
+	}
+	cfg.candidateReceiverToken = strings.TrimSpace(getenv("OMNIRELAY_CANDIDATE_RECEIVER_TOKEN"))
+	if cfg.candidateReceiverToken != "" {
+		cfg.candidateReceiverRollback = getenv("OMNIRELAY_CANDIDATE_RECEIVER_ROLLBACK")
+		token, err := hex.DecodeString(cfg.candidateReceiverToken)
+		sha, shaErr := hex.DecodeString(receiverSourceSHA)
+		if err != nil || len(token) != 32 || shaErr != nil || len(sha) != 20 ||
+			!receiverRollbackRef.MatchString(cfg.candidateReceiverRollback) || cfg.tlsCertFile == "" || cfg.botLeaseNamespace == "" {
+			return configuration{}, errors.New("候选消息接收端需要固定源码版本、回退摘要、TLS、Bot Lease 和独立服务令牌")
+		}
 	}
 	if addr := strings.TrimSpace(getenv("OMNIRELAY_LISTEN_ADDR")); addr != "" {
 		cfg.listenAddr = addr

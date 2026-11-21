@@ -24,6 +24,20 @@ type webRun struct {
 	bridge               string
 	Run, Credential, Pod string
 	Expires              int64
+	MessageProject       string
+}
+
+func loadWebRun(bridge, pod string) (webRun, error) {
+	raw, err := os.ReadFile(filepath.Join(bridge, "web.json"))
+	if err != nil {
+		return webRun{}, err
+	}
+	var run webRun
+	if json.Unmarshal(raw, &run) != nil || pod == "" || run.Pod != pod || run.Expires <= time.Now().Unix() || len(run.Credential) < 32 {
+		return webRun{}, errors.New("验收运行未开放")
+	}
+	run.bridge = bridge
+	return run, nil
 }
 
 func (run webRun) call(ctx context.Context, op string, payload map[string]string) (candidateReply, error) {
@@ -40,7 +54,7 @@ func (run webRun) call(ctx context.Context, op string, payload map[string]string
 	conn.SetDeadline(deadline)
 	request := map[string]any{"version": 1, "run": run.Run, "credential": run.Credential, "operation": op, "payload": payload}
 	var reply candidateReply
-	if json.NewEncoder(conn).Encode(request) != nil || json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&reply) != nil || !reply.Finished || reply.Component == "" {
+	if json.NewEncoder(conn).Encode(request) != nil || json.NewDecoder(io.LimitReader(conn, 2<<20)).Decode(&reply) != nil || !reply.Finished || reply.Component == "" {
 		return candidateReply{}, errors.New("运行服务未确认完成")
 	}
 	return reply, nil
@@ -89,6 +103,7 @@ func candidateWeb(ctx context.Context, pool *pgxpool.Pool, probes http.Handler, 
 	var cancel context.CancelFunc
 	pod := os.Getenv("OMNIRELAY_CANDIDATE_POD")
 	origin := os.Getenv("OMNIRELAY_CANDIDATE_ORIGIN")
+	go runCandidateMessages(ctx, pool, bridge, pod)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 			probes.ServeHTTP(w, r)
@@ -99,14 +114,12 @@ func candidateWeb(ctx context.Context, pool *pgxpool.Pool, probes http.Handler, 
 			return
 		}
 		mu.Lock()
-		raw, err := os.ReadFile(filepath.Join(bridge, "web.json"))
-		var run webRun
-		if err != nil || json.Unmarshal(raw, &run) != nil || pod == "" || run.Pod != pod || run.Expires <= time.Now().Unix() || len(run.Credential) < 32 {
+		run, err := loadWebRun(bridge, pod)
+		if err != nil {
 			mu.Unlock()
 			http.Error(w, "验收运行未开放", 503)
 			return
 		}
-		run.bridge = bridge
 		if current != run {
 			if cancel != nil {
 				cancel()
@@ -122,6 +135,7 @@ func candidateWeb(ctx context.Context, pool *pgxpool.Pool, probes http.Handler, 
 				botHeartbeatTTL:       30 * time.Second,
 				candidateOAuth:        &identity.CandidateOAuth{Run: run.Run, StateKey: run.Credential, Resolve: run.resolve},
 				candidateRead:         run.sample,
+				candidateMessageRun:   &run,
 			}
 			_, err = pool.Exec(r.Context(), "UPDATE directory_sources SET visible=false,next_run_at=clock_timestamp() WHERE tenant_key=$1 AND app_id=$2", cfg.tenantKey, cfg.appID)
 			var workers *backendWorkers

@@ -29,3 +29,13 @@
 在 `register` 的 `resources` 内登记固定回调 `callback`、验收者 `identity` 及需要的 `department`、`person`、`group`。这里的 `group` 指通讯录授权范围返回的用户组。部门样本选用平台授权根或全组织授权下的指定测试部门。将 `oauth.identity` 映射到 `OAuth`，将 `directory.scope`、`directory.sample` 映射到 `目录`，两个场景的 `socket` 填适配服务套接字。先执行 `preflight`，再用 `open` 绑定所选代号、操作、有效期和次数。有预先清点的人数时传入 `expectedPeople`。一次成功登录需一次换码，完整目录同步需一次范围读取和一次样本读取。
 
 验收者使用专用账号分别批准和取消。以候选日志确认回跳结果，以工作台落点、当前账号及 `/api/v1/me` 核对身份。按运行代号关联管理侧 `events.jsonl`，其中的 `component` 为实际适配进程可执行文件的 SHA-256。取消在候选回调结束。目录记录包含预期人数、实际去重人数、部门数、成员页数、成员续页数，以及缺少激活状态和头像的人数；只有实际人数与预期一致且成员续页数大于零时，才记录真实成员多页通过。真人身份、平台授权和字段缺项按场景记录，测试账号用匿名代号。浏览器取证关闭 HAR、追踪及录屏。
+
+## 专用群与私聊消息验收
+
+完成隔离故障验证后，从接收端自己的完整 Git SHA 构建 Go 镜像，将该值传给构建参数 `OMNIRELAY_SOURCE_SHA`，按既有 Go 发布流程使用镜像摘要上线。发布时保留生产 Bot 的 Lease 和 TLS。应用清单从发布时记录的上一镜像摘要读取回退点。首次发布保持 `Secret/omnirelay-candidate-receiver` 缺省，复核普通收信后，再按验收窗口下发该 Secret 的 `token` 键并使配置生效。令牌是独立的 32 字节随机值的十六进制编码。仅管理服务可经私有 HTTPS 路径访问 `/internal/candidate-messages`。
+
+通过 `receiver` 的标准输入登记私有对象，字段为接收端 HTTPS 来源 `origin`、接收端源码 `sha`、相同的 `token` 和上一镜像摘要 `rollback`。消息场景复用既有受控套接字，无需登记额外适配器套接字。在 `register` 添加匿名的 `chat` 专用群及 `privateChat` 私聊绑定，可选登记一个允许携带的 `file` 来源。确保测试者在生产和候选均使用同一个飞书应用身份，并拥有登记项目的读取权限。回复需项目评论权限。每次 `open` 选择要启用的会话和 `message.receive`，需要发送或对账时分别选择 `message.reply`、`message.receipt`。需要在 Web 取证时，同一 run 登记 `oauth.identity` 和固定回调。次数涵盖换码、发送、重试及对账；队列领取和确认不占发送次数。
+
+测试者登录候选后，以 `GET /api/v1/candidate/messages` 和 `/api/v1/me` 核对账号及逻辑工作。使用正常工作台会话及 CSRF 头调用 `POST /api/v1/candidate/messages/{messageID}/reply`，请求只含 `text`。回执未知时请求同一来源的 `POST /api/v1/candidate/messages/{messageID}/receipt` 并核对平台。只有平台关联能够确认原操作时才更新未知状态。服务为候选从已确认的入站记录确定目标。管理侧 `events.jsonl` 记录匿名 run、候选 SHA、接收端 SHA 和接收端回退摘要。接收端用 `event_ref` 关联归属已提交日志与 SDK 回调返回日志，`callback_millis` 从 SDK 业务回调接收事件计到该回调返回。线协议复验记录平台侧看到的 ACK 状态和往返耗时。
+
+`hold-messages` 关闭转交，`revoke-outbound` 单独撤销出站，`revoke` 关闭两者。回退前先撤销运行，再按既有 Go 回退流程恢复上一镜像；复核普通收信，已固定的候选工作不进入生产待路由状态。候选停机或进程重启后可在同一 Pod 和有效 run 内续领；重新锁定新 Pod 会撤销旧 run。代理的消息用于验证候选业务处理，候选 SDK 握手和代次另按长连接流程演练。

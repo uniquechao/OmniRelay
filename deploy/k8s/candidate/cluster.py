@@ -65,10 +65,12 @@ class Cluster:
         # 从 Git 对象构建，防止忽略目录中的额外文件混入源码。
         archive = subprocess.Popen(["git", "archive", sha], stdout=subprocess.PIPE)
         try:
-            args=["--build-arg", "GO_MODULE_PROXY"] if os.getenv("GO_MODULE_PROXY") else []
+            args=["--build-arg","OMNIRELAY_SOURCE_SHA="+sha]
+            if os.getenv("GO_MODULE_PROXY"):
+                args.extend(["--build-arg","GO_MODULE_PROXY"])
             if os.getenv("CANDIDATE_PIP_INDEX"):
                 args.extend(["--build-arg","CANDIDATE_PIP_INDEX"])
-            subprocess.run(["docker", "build", *args, "--label", "org.opencontainers.image.revision="+sha,
+            subprocess.run(["docker", "build", *args,
                             "-f", "deploy/k8s/base/go/image.Dockerfile", "-t", tag, "-"],
                            stdin=archive.stdout, check=True)
         finally:
@@ -213,16 +215,20 @@ class Cluster:
         self.apply(obj)
         command(*self.k,"rollout","status","deployment/app","--timeout=180s")
 
-    def verify(self,image):
-        self.owned()
+    def candidate_pod(self,image):
         pods=self.get("pods","-l","role=server")["items"]
         require(len(pods)==1,"需要唯一候选实例")
         pod=pods[0]
         spec=pod["spec"]
         state=pod["status"]["containerStatuses"]
-        require(len(state)==1 and state[0]["ready"] and state[0]["imageID"].removeprefix("docker://").split("@")[-1]==image.split("@")[-1]
+        require(not pod["metadata"].get("deletionTimestamp") and len(state)==1 and state[0]["ready"] and state[0]["imageID"].removeprefix("docker://").split("@")[-1]==image.split("@")[-1]
                 and spec["containers"][0]["image"]==self.workload_image(image) and spec["serviceAccountName"]=="candidate"
                 and spec["automountServiceAccountToken"] is False,"运行镜像或服务身份不匹配")
+        return pod
+
+    def verify(self,image):
+        self.owned()
+        pod=self.candidate_pod(image)
         services=self.get("service")["items"]
         require({s["metadata"]["name"] for s in services}=={"app","db"} and all(
             s["spec"]["type"]=="ClusterIP" and not s["spec"].get("externalIPs") for s in services),"候选服务存在外部入口")

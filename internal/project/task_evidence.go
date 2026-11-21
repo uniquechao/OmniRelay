@@ -106,7 +106,9 @@ func (s *Service) messageSource(ctx context.Context, tx pgx.Tx, k taskScope, a i
 		return err
 	}
 	err := tx.QueryRow(ctx, `SELECT m.body,m.sent_at FROM feishu_chat_messages m JOIN project_chat_assignments g USING(tenant_key,app_id,chat_id)
- WHERE g.tenant_key=$1 AND g.app_id=$2 AND g.project_id=$3 AND m.message_id=$4 AND m.chat_id=$5 AND m.visible_in_chat AND NOT m.deleted`, k.args(src.ID, src.Chat)...).Scan(&src.Text, &src.Created)
+ WHERE g.tenant_key=$1 AND g.app_id=$2 AND g.project_id=$3 AND m.message_id=$4 AND m.chat_id=$5 AND m.visible_in_chat AND NOT m.deleted
+ AND NOT EXISTS(SELECT FROM feishu_candidate_event_owners o
+    WHERE (o.tenant_key,o.app_id,o.source_id)=(m.tenant_key,m.app_id,m.message_id) AND o.run_id IS NOT NULL)`, k.args(src.ID, src.Chat)...).Scan(&src.Text, &src.Created)
 	return taskError(err)
 }
 func (s *Service) source(ctx context.Context, tx pgx.Tx, k taskScope, a identity.Principal, kind, id string) (taskSource, error) {

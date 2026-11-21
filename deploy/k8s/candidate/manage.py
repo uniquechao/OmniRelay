@@ -13,6 +13,9 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from cluster import Cluster, PRIVATE, ROOT, command, require, save
@@ -49,6 +52,47 @@ def verify(lock):
 
 
 WEB_OPERATIONS={"oauth.identity":"OAuth","directory.scope":"目录","directory.sample":"目录"}
+MESSAGE_OPERATIONS={"message.receive","message.reply","message.receipt"}
+MESSAGE_QUEUE={"message.claim","message.ack"}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        return None
+
+
+def receiver_call(operation,run=None,**fields):
+    receiver=read("receiver.json")
+    require(receiver,"接收端未登记")
+    body={"Operation":operation,**fields}
+    if run is not None:
+        body.update(Run=run["id"],SHA=run["candidate"]["sha"],Pod=run["candidate"]["pod"])
+    request=urllib.request.Request(receiver["origin"]+"/internal/candidate-messages",
+        data=json.dumps(body).encode(),headers={"Content-Type":"application/json",
+            "Authorization":"Bearer "+receiver["token"],"X-Omnirelay-Receiver-SHA":receiver["sha"],
+            "X-Omnirelay-Receiver-Rollback":receiver["rollback"]})
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+    with opener.open(request,timeout=32) as reply:
+        raw=reply.read((2<<20)+1)
+    require(len(raw)<=2<<20,"接收端响应过长")
+    result=json.loads(raw)
+    require(result.get("ReceiverSHA")==receiver["sha"],"接收端版本不匹配")
+    require(result.get("ReceiverRollback")==receiver["rollback"],"接收端回退摘要不匹配")
+    return result
+
+
+def stop_messages(run,transfer,outbound):
+    if not run or not run.get("messages"):
+        return
+    result=receiver_call("stop",run,StopTransfer=transfer,RevokeOutbound=outbound)
+    if transfer:
+        run["transferStopped"]=True
+    if outbound:
+        run["outboundRevoked"]=True
+    if transfer and outbound:
+        run.pop("openingMessages",None)
+    save("run.json",run)
+    event("暂停受控消息",run=run["id"],receiver_sha=result["ReceiverSHA"],transfer=transfer,outbound=outbound)
 
 
 def validate_web(web):
@@ -65,6 +109,8 @@ def revoke():
     if run:
         run["revoked"]=True
         save("run.json",run)
+        if run["expires"]>time.time():
+            stop_messages(run,True,True)
 
 
 def exchange(address, request):
@@ -93,6 +139,9 @@ def preflight(reg, lock, selection):
     report={"候选":status(not missing,owner,missing)}
     for scene,fields in SCENES.items():
         spec=reg.get("capabilities",{}).get(scene,{})
+        managed_messages=scene=="消息" and (read("receiver.json") or not spec.get("socket"))
+        if managed_messages:
+            fields=("identity","project")
         absent=[]
         selected={}
         for field in fields:
@@ -102,7 +151,16 @@ def preflight(reg, lock, selection):
                 absent.append(field)
             else:
                 selected[field]=options[alias]
-        if not spec.get("socket"):
+        if managed_messages:
+            resources=reg.get("resources",{})
+            if not any(resources.get(k,{}).get(selection.get(k) or next(iter(resources.get(k,{})),None))
+                       for k in ("chat","privateChat")):
+                absent.append("专用群或私聊")
+            try:
+                receiver_call("status")
+            except (ValueError,OSError,KeyError):
+                absent.append("接收端版本与认证")
+        elif not spec.get("socket"):
             absent.append("受控服务绑定")
         elif not absent:
             try:
@@ -127,7 +185,8 @@ def new_run(req, lock, reg):
     verify(lock)
     previous=read("run.json")
     now=time.time()
-    require(not previous or previous["expires"]<=now or (previous["revoked"] and not previous.get("pending")),"已有真实写运行")
+    require(not previous or previous["expires"]<=now or
+            (previous["revoked"] and not previous.get("pending") and not previous.get("openingMessages")),"已有真实写运行")
     require(isinstance(req["issue"],str) and req["issue"].strip(),"缺少 issue")
     require(type(req["count"]) is int and req["count"]>0 and type(req["ttl"]) is int and req["ttl"]>0,"次数和有效期必须为正整数")
     selected=req["resources"]
@@ -135,33 +194,60 @@ def new_run(req, lock, reg):
     resolved={k:reg["resources"][k][alias] for k,alias in selected.items()}
     require(all(isinstance(x,str) and x for x in resolved.values()),"资源未绑定")
     web=read("target.json",{}).get("web")
-    publish_web=bool(set(req["operations"]).intersection(WEB_OPERATIONS))
+    requested=set(req["operations"])
+    message_ops=requested.intersection(MESSAGE_OPERATIONS)
+    publish_web=bool(requested.intersection(WEB_OPERATIONS) or message_ops)
     require(not publish_web or web,"缺少候选网页固定入口")
     if publish_web:
         resolved.update(appID=web["appID"],tenantKey=web["tenantKey"])
-        require(resolved.get("callback")==web["origin"]+"/auth/feishu/callback" and
-                all(op in WEB_OPERATIONS and reg["operations"][op]==WEB_OPERATIONS[op] for op in req["operations"]), "网页运行绑定不匹配")
+        require((not requested.intersection(WEB_OPERATIONS) or resolved.get("callback")==web["origin"]+"/auth/feishu/callback") and
+                all((op in WEB_OPERATIONS and reg["operations"][op]==WEB_OPERATIONS[op]) or
+                    (op in MESSAGE_OPERATIONS and reg["operations"][op]=="消息") for op in req["operations"]), "网页运行绑定不匹配")
+    if message_ops:
+        require("message.receive" in message_ops and (resolved.get("chat") or resolved.get("privateChat")) and
+                req["ttl"]<=86400 and req["count"]<=1000,"消息运行缺少接收操作、专用会话或有效预算")
     expected_people=req.get("expectedPeople")
     require(expected_people is None or type(expected_people) is int and expected_people>=0 and "directory.sample" in req["operations"],"样本预期人数无效")
     operations={}
     for op in req["operations"]:
+        if op in MESSAGE_OPERATIONS:
+            continue
         scene=reg["operations"][op]
         require(set(SCENES[scene])<=resolved.keys(),"操作缺少测试资源")
         spec=reg["capabilities"][scene]
         require(exchange(spec["socket"],{"version":1,"method":"readiness","scene":scene,"resources":resolved}).get("ready") is True,"服务能力未就绪")
         operations[op]=spec["socket"]
-    require(operations,"缺少允许操作")
+    require(operations or message_ops,"缺少允许操作")
     token=secrets.token_urlsafe(32)
     run={"id":secrets.token_hex(16),"issue":req["issue"],"candidate":lock,"aliases":selected,"resources":resolved,
          "operations":operations,"remaining":req["count"],"expires":int(time.time())+req["ttl"],
          "tokenHash":hashlib.sha256(token.encode()).hexdigest(),"revoked":False}
     run["expectedPeople"]=expected_people
+    if message_ops:
+        receiver_call("status")
+        run.update(messages=sorted(message_ops),openingMessages=True,revoked=True)
+        save("run.json",run)
+        try:
+            result=receiver_call("open",run,Binding={"Tenant":resolved["tenantKey"],"App":resolved["appID"],
+                "Sender":resolved["identity"],"Project":resolved["project"],"GroupChat":resolved.get("chat",""),
+                "PrivateChat":resolved.get("privateChat",""),"FileToken":resolved.get("file",""),
+                "Expires":datetime.datetime.fromtimestamp(run["expires"],datetime.timezone.utc).isoformat(),
+                "Budget":req["count"],"MayReply":"message.reply" in message_ops,"MayReconcile":"message.receipt" in message_ops})
+        except urllib.error.HTTPError as failure:
+            if failure.code in (400,403,404):
+                run.pop("openingMessages")
+                save("run.json",run)
+            raise
+        run.pop("openingMessages")
+        run["revoked"]=False
+        event("接收端授权",run=run["id"],candidate_sha=lock["sha"],receiver_sha=result["ReceiverSHA"],
+              receiver_rollback=result["ReceiverRollback"])
     save("run.json",run)
-    event("创建运行",run=run["id"],issue=run["issue"],candidate=lock,resources=selected,operations=list(operations),count=req["count"],expires=run["expires"])
+    event("创建运行",run=run["id"],issue=run["issue"],candidate=lock,resources=selected,operations=req["operations"],count=req["count"],expires=run["expires"])
     result={"run":run["id"],"credential":token,"expires":run["expires"]}
     if publish_web:
         try:
-            save("web/web.json",{**result,"pod":lock["pod"]})
+            save("web/web.json",{**result,"pod":lock["pod"],"messageProject":resolved["project"] if message_ops else ""})
             command("setfacl","-m","u:10000:r--",str(PRIVATE/"web/web.json"))
         except (ValueError,OSError):
             revoke()
@@ -169,14 +255,45 @@ def new_run(req, lock, reg):
     return result
 
 
+def dispatch_message(req,run,lock):
+    op=req["operation"]
+    require(run.get("messages"),"运行未获准处理消息")
+    cluster=Cluster(read("target.json"))
+    require(cluster.candidate_pod(lock["image"])["metadata"]["uid"]==lock["pod"],"候选已换代")
+    payload=req.get("payload") or {}
+    fields={}
+    if op in MESSAGE_QUEUE:
+        require(not run.get("transferStopped"),"转交已关闭")
+        if op=="message.claim":
+            require(not payload,"领取参数不匹配")
+        else:
+            require(set(payload)=={"source","lease","revision"},"确认参数不匹配")
+            fields={"Source":payload["source"],"Lease":payload["lease"],"Revision":int(payload["revision"])}
+    else:
+        require(op in run["messages"] and run["remaining"]>0 and not run.get("outboundRevoked"),"出站授权已失效")
+        expected={"source","text"} if op=="message.reply" else {"source"}
+        require(set(payload)==expected,"出站参数不匹配")
+        fields={"Source":payload["source"],"Text":payload.get("text","")}
+        require(isinstance(fields["Source"],str) and 0<len(fields["Source"])<=256 and len(fields["Text"])<=8192,"出站字段无效")
+        run["remaining"]-=1
+        save("run.json",run)
+        event("受控出站",run=run["id"],operation=op)
+    result=receiver_call(op,run,**fields)
+    return {"finished":True,"component":"omnirelay@source:"+result["ReceiverSHA"],
+            "message":result.get("Message"),"delivery":result.get("Delivery")}
+
+
 def dispatch(req):
     run=read("run.json")
     require(run and req["version"]==1 and run["id"]==req["run"] and
             hmac.compare_digest(run["tokenHash"],hashlib.sha256(req["credential"].encode()).hexdigest()),"运行凭据无效")
     op=req["operation"]
-    require(not run["revoked"] and time.time()<run["expires"] and run["remaining"]>0 and op in run["operations"],"运行授权已失效")
+    require(not run["revoked"] and time.time()<run["expires"],"运行授权已失效")
     lock=read("candidate.json")
     require(lock==run["candidate"],"候选锁已更新")
+    if op in MESSAGE_QUEUE or op in {"message.reply","message.receipt"}:
+        return dispatch_message(req,run,lock)
+    require(run["remaining"]>0 and op in run["operations"],"运行授权已失效")
     verify(lock)
     require(time.time()<run["expires"],"运行已到期")
     run["remaining"]-=1
@@ -235,14 +352,15 @@ def serve():
                     except (ValueError,OSError,KeyError,TypeError,AttributeError):
                         result={"error":"调用未获准或未确认完成"}
                     try:
-                        conn.sendall(json.dumps(result).encode()+b"\n")
+                        conn.sendall(json.dumps(result,ensure_ascii=False).encode()+b"\n")
                     except OSError:
                         pass
 
 
 def main():
     parser=argparse.ArgumentParser(description="候选验收管理")
-    parser.add_argument("action",choices=["init","web","register","start","stop","rollback","lock","preflight","open","revoke","service","samples","evidence","demo"])
+    parser.add_argument("action",choices=["init","web","receiver","register","start","stop","rollback","lock","preflight","open","revoke",
+        "hold-messages","revoke-outbound","service","samples","evidence","demo"])
     parser.add_argument("value",nargs="?")
     args=parser.parse_args()
     os.umask(0o077)
@@ -274,6 +392,16 @@ def main():
             revoke()
             cfg["web"]=web
             save("target.json",cfg)
+        elif action=="receiver":
+            existing=read("run.json")
+            require(not existing or not existing.get("messages") or existing["expires"]<=time.time() or
+                    existing.get("transferStopped") and existing.get("outboundRevoked"),"请先关闭当前消息运行")
+            data=json.load(sys.stdin)
+            url=urllib.parse.urlsplit(data["origin"])
+            require(url.scheme=="https" and url.hostname and not (url.username or url.password or url.path or url.query or url.fragment)
+                    and re.fullmatch(r"[0-9a-f]{40}",data["sha"]) and re.fullmatch(r"[0-9a-f]{64}",data["token"])
+                    and re.fullmatch(r"[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}",data["rollback"]),"接收端登记无效")
+            save("receiver.json",data)
         elif action=="register":
             data=json.load(sys.stdin)
             require(isinstance(data["owner"],str) and data["owner"].strip(),"缺少负责人")
@@ -298,6 +426,10 @@ def main():
         elif action=="revoke":
             revoke()
             event("撤销运行")
+        elif action in ("hold-messages","revoke-outbound"):
+            run=read("run.json")
+            require(run and run.get("messages"),"没有消息运行")
+            stop_messages(run,action=="hold-messages",action=="revoke-outbound")
         else:
             require(cfg,"尚未登记目标环境")
             cluster=Cluster(cfg)

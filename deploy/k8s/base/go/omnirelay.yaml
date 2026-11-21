@@ -27,6 +27,8 @@ spec:
       app.kubernetes.io/name: omnirelay
   template:
     metadata:
+      annotations:
+        omnirelay.io/receiver-rollback: "OMNIRELAY_PREVIOUS_IMAGE"
       labels:
         app.kubernetes.io/name: omnirelay
         omnirelay.io/postgres-access: "true"
@@ -59,8 +61,18 @@ spec:
                   name: omnirelay-oauth-proxy
                   key: token
                   optional: true
+            - name: OMNIRELAY_CANDIDATE_RECEIVER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: omnirelay-candidate-receiver
+                  key: token
+                  optional: true
             - name: OMNIRELAY_S3_ENDPOINT
               value: https://minio.omni.svc:9000
+            - name: OMNIRELAY_CANDIDATE_RECEIVER_ROLLBACK
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['omnirelay.io/receiver-rollback']
             - name: OMNIRELAY_S3_BUCKET
               value: omnirelay-files
             - name: OMNIRELAY_S3_CA_FILE

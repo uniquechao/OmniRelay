@@ -88,6 +88,45 @@ class RunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.open()
 
+    def test_message_binding_and_independent_stops(self):
+        self.lock.update(sha="a"*40,image="candidate-image")
+        manage.save("candidate.json",self.lock)
+        manage.save("target.json",{"id":"a"*24,"context":"fixture",
+            "web":{"origin":"https://candidate.example.test","appID":"app","tenantKey":"tenant"}})
+        manage.save("receiver.json",{"sha":"b"*40,"rollback":"previous-digest"})
+        (manage.PRIVATE/"web").mkdir()
+        self.request["operations"]=["message.receive","message.reply"]
+        self.registry["operations"].update({op:"消息" for op in self.request["operations"]})
+        self.request["resources"]["privateChat"]="私聊"
+        self.registry["resources"]["privateChat"]={"私聊":"oc_private"}
+        with (
+            patch("manage.command"),
+            patch("manage.receiver_call",return_value={"ReceiverSHA":"b"*40,"ReceiverRollback":"previous-digest"}) as receiver,
+            patch("manage.Cluster.candidate_pod",return_value={"metadata":{"uid":self.lock["pod"]}}),
+        ):
+            opened=manage.new_run(self.request,self.lock,self.registry)
+            binding=receiver.call_args.kwargs["Binding"]
+            self.assertEqual(binding["PrivateChat"],"oc_private")
+            self.assertEqual(binding["GroupChat"],manage.read("run.json")["resources"]["chat"])
+            self.assertTrue(binding["MayReply"])
+            self.assertFalse(binding["MayReconcile"])
+            req={**opened,"version":1}
+            with self.assertRaises(ValueError):
+                manage.dispatch({**req,"credential":"wrong","operation":"message.claim"})
+            with self.assertRaises(ValueError):
+                manage.dispatch({**req,"operation":"message.reply","payload":{
+                    "source":"om_message","text":"test","target":"oc_unrelated"}})
+            manage.dispatch({**req,"operation":"message.claim"})
+            manage.stop_messages(manage.read("run.json"),True,False)
+            with self.assertRaises(ValueError):
+                manage.dispatch({**req,"operation":"message.claim"})
+            manage.dispatch({**req,"operation":"message.reply","payload":{"source":"om_message","text":"test"}})
+            self.assertEqual(manage.read("run.json")["remaining"],0)
+            with self.assertRaises(ValueError):
+                manage.dispatch({**req,"operation":"message.reply","payload":{"source":"om_message","text":"test"}})
+            manage.stop_messages(manage.read("run.json"),False,True)
+            self.assertTrue(manage.read("run.json")["outboundRevoked"])
+
 
 if __name__=="__main__":
     cluster.PRIVATE.parent.mkdir(parents=True,exist_ok=True,mode=0o700)

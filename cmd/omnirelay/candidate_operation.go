@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/directory"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 const exchangeOperation = "oauth.identity"
@@ -34,13 +36,15 @@ type candidateRequest struct {
 }
 
 type candidateReply struct {
-	Ready     bool                      `json:"ready,omitempty"`
-	Attempt   string                    `json:"attempt,omitempty"`
-	Finished  bool                      `json:"finished,omitempty"`
-	Component string                    `json:"component,omitempty"`
-	Error     string                    `json:"error,omitempty"`
-	Identity  *identity.Principal       `json:"identity,omitempty"`
-	Sample    *directory.SampleSnapshot `json:"sample,omitempty"`
+	Ready     bool                           `json:"ready,omitempty"`
+	Attempt   string                         `json:"attempt,omitempty"`
+	Finished  bool                           `json:"finished,omitempty"`
+	Component string                         `json:"component,omitempty"`
+	Error     string                         `json:"error,omitempty"`
+	Identity  *identity.Principal            `json:"identity,omitempty"`
+	Sample    *directory.SampleSnapshot      `json:"sample,omitempty"`
+	Message   *orchestrator.CandidateMessage `json:"message,omitempty"`
+	Delivery  *chat.DeliveryStatus           `json:"delivery,omitempty"`
 }
 
 // 通过受控服务的私有 Unix 套接字按连接启动。标准输入输出仅传送协议消息。

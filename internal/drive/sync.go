@@ -33,8 +33,10 @@ func (s *Service) index(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT message_id,message_type,body,chat_id FROM feishu_chat_messages
- WHERE tenant_key=$1 AND app_id=$2 AND NOT deleted AND NOT files_indexed
+	rows, err := tx.Query(ctx, `SELECT message_id,message_type,body,chat_id FROM feishu_chat_messages m
+ WHERE m.tenant_key=$1 AND m.app_id=$2 AND NOT deleted AND NOT files_indexed
+ AND NOT EXISTS(SELECT FROM feishu_candidate_event_owners o
+    WHERE (o.tenant_key,o.app_id,o.source_id)=(m.tenant_key,m.app_id,m.message_id) AND o.run_id IS NOT NULL)
  AND EXISTS(SELECT FROM feishu_bot_configs WHERE tenant_key=$1 AND app_id=$2 AND enabled AND credentials_generation=$3)
  ORDER BY sent_at LIMIT 64 FOR UPDATE SKIP LOCKED`, s.tenant, s.app, s.generation)
 	if err != nil {
