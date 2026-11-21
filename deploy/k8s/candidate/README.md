@@ -39,3 +39,15 @@
 测试者登录候选后，以 `GET /api/v1/candidate/messages` 和 `/api/v1/me` 核对账号及逻辑工作。使用正常工作台会话及 CSRF 头调用 `POST /api/v1/candidate/messages/{messageID}/reply`，请求只含 `text`。回执未知时请求同一来源的 `POST /api/v1/candidate/messages/{messageID}/receipt` 并核对平台。只有平台关联能够确认原操作时才更新未知状态。服务为候选从已确认的入站记录确定目标。管理侧 `events.jsonl` 记录匿名 run、候选 SHA、接收端 SHA 和接收端回退摘要。接收端用 `event_ref` 关联归属已提交日志与 SDK 回调返回日志，`callback_millis` 从 SDK 业务回调接收事件计到该回调返回。线协议复验记录平台侧看到的 ACK 状态和往返耗时。
 
 `hold-messages` 关闭转交，`revoke-outbound` 单独撤销出站，`revoke` 关闭两者。回退前先撤销运行，再按既有 Go 回退流程恢复上一镜像；复核普通收信，已固定的候选工作不进入生产待路由状态。候选停机或进程重启后可在同一 Pod 和有效 run 内续领；重新锁定新 Pod 会撤销旧 run。代理的消息用于验证候选业务处理，候选 SDK 握手和代次另按长连接流程演练。
+
+## 候选镜像回滚演练
+
+使用独立 Deployment、合成业务账号、可恢复的验收数据库和稳定的同源入口。记录前一镜像及候选镜像的完整摘要、实际 Pod 身份与 Ready。先备份测试库、写入可撤销的业务记录并归档两版静态资源，再执行候选迁移和换版。候选通过业务接口读取旧版记录并写入新记录。核对上一版支持当前迁移后，只在该验收 Deployment 执行镜像回退，保留迁移账本与归档。用重新启动的旧版登录，读回候选记录，恢复测试数据，并比对账本校验值。可在另一空库试恢复备份。
+
+旧 DOM 至 React 的现场浏览器验证使用稳定的回环 HTTPS 隧道。将前一镜像公开资源和候选哈希资源的 SHA-256 清单写入私有 JSON 对象，键分别为 `legacy/<文件名>` 与 `assets/<文件名>`，值为十六进制校验值。旧版 Ready 时设置 `OMNIRELAY_ROLLOUT_CLUSTER` 为回环入口，`OMNIRELAY_ROLLOUT_MANIFEST` 为清单路径，按需指定 `OMNIRELAY_CHROME`。运行以下定向用例，让浏览器贯穿两次切换。
+
+```sh
+node --test --test-name-pattern='集群候选回滚' tests/integration/rollout_browser.test.mjs
+```
+
+看到“旧版页面已打开”后升级。看到“候选页面已打开，旧 HTML 与归档校验通过”后完成候选业务核验，再切回前一摘要。等待浏览器报告通过并复核旧版业务读写。正式发布与共享连接使用各自的窗口记录。参见 [正式发布记录模板](../release-record.md) 和 [共享连接窗口步骤](shared-connection-window.md)。
