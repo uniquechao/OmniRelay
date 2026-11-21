@@ -124,6 +124,12 @@ func TestUnboundFileGroupRequiresCurrentMembership(t *testing.T) {
 	}
 	alice := identity.Principal{TenantKey: "tenant_chat", AppID: "cli_chat", AccountID: "alice", OpenID: "ou_alice"}
 	admin := identity.Principal{TenantKey: "tenant_chat", AppID: "cli_chat", AccountID: "admin", OpenID: "ou_admin"}
+	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || allowed {
+		t.Fatalf("uninitialized snapshot allowed access: allowed=%v err=%v", allowed, err)
+	}
+	if worked, err := service.refreshFileGroup(ctx); err != nil || !worked {
+		t.Fatalf("could not seed the membership snapshot: worked=%v err=%v", worked, err)
+	}
 	for _, test := range []struct {
 		reader identity.Principal
 		chat   string
@@ -134,6 +140,15 @@ func TestUnboundFileGroupRequiresCurrentMembership(t *testing.T) {
 		}
 	}
 	source.members["oc_group"] = nil
+	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || !allowed {
+		t.Fatalf("reader bypassed the database snapshot: allowed=%v err=%v", allowed, err)
+	}
+	if _, err := service.pool.Exec(ctx, "UPDATE feishu_drive_group_memberships SET next_at=now()"); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := service.refreshFileGroup(ctx); err != nil || !worked {
+		t.Fatalf("could not refresh the membership snapshot: worked=%v err=%v", worked, err)
+	}
 	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || allowed {
 		t.Fatalf("membership was revoked: allowed=%v err=%v", allowed, err)
 	}

@@ -113,7 +113,11 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		receiver = postgres.NewCandidateMessages(inbox, chatService.AcceptEvent, cfg.candidateReceiverToken != "")
 		connection.SetInboundInterceptor(receiver.Intercept, cfg.candidateReceiverToken != "")
 		connection.SetArchive(func(ctx context.Context, event orchestrator.InboundEvent) error {
-			return botStore.AcceptChatArchive(ctx, event, chatService.AcceptEvent)
+			err := botStore.AcceptChatArchive(ctx, event, chatService.AcceptEvent)
+			if err == nil && event.Archive != nil && event.Archive.Message != nil {
+				fileService.NotifyNewMessage()
+			}
+			return err
 		})
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
@@ -172,6 +176,7 @@ func (w *backendWorkers) Run(ctx context.Context) {
 	if w.chat != nil {
 		running.Go(func() { w.chat.Run(ctx) })
 		running.Go(func() { w.chat.RunDocuments(ctx) })
+		running.Go(func() { w.chat.RunFileGroups(ctx) })
 	}
 	if w.files != nil {
 		running.Go(func() { w.files.Run(ctx) })

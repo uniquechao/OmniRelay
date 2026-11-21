@@ -114,7 +114,7 @@ func (s *Service) CanReadConversation(ctx context.Context, p identity.Principal,
 	return err == nil, err
 }
 
-// CanReadFileGroup verifies the current reader and group membership for a stored file.
+// CanReadFileGroup uses the last complete group membership snapshot for a stored file.
 func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, projectID, chatID string) (bool, error) {
 	if !validIdentifier(chatID) {
 		return false, nil
@@ -135,10 +135,11 @@ func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, pr
 	if err != nil || len(items) != 1 || items[0].Kind != orchestrator.ChatGroup {
 		return false, err
 	}
-	member, err := s.hasMember(ctx, chatID, p.OpenID)
-	if errors.Is(err, ErrAccessLost) || errors.Is(err, ErrPartial) {
-		return false, nil
-	}
+	var member bool
+	err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM feishu_drive_group_memberships
+		WHERE tenant_key=$1 AND app_id=$2 AND chat_id=$3 AND generation=$4
+		    AND verified_at>now()-interval '2 minutes' AND $5=ANY(members))`,
+		s.tenant, s.app, chatID, s.generation, p.OpenID).Scan(&member)
 	return member, err
 }
 

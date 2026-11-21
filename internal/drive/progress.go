@@ -11,14 +11,15 @@ import (
 )
 
 type syncProgress struct {
-	Groups           int   `json:"groups"`
-	HistoryPending   int   `json:"history_pending"`
-	HistoryAttention int   `json:"history_attention"`
-	Unindexed        int64 `json:"unindexed_messages"`
-	UnresolvedWiki   int64 `json:"unresolved_wiki"`
-	Pending          int64 `json:"pending_sources"`
-	Complete         int64 `json:"complete_sources"`
-	Attention        int64 `json:"attention_sources"`
+	Groups           int        `json:"groups"`
+	HistoryPending   int        `json:"history_pending"`
+	HistoryAttention int        `json:"history_attention"`
+	Unindexed        int64      `json:"unindexed_messages"`
+	UnresolvedWiki   int64      `json:"unresolved_wiki"`
+	Pending          int64      `json:"pending_sources"`
+	Complete         int64      `json:"complete_sources"`
+	Attention        int64      `json:"attention_sources"`
+	LastCompleted    *time.Time `json:"last_completed_at,omitempty"`
 }
 
 type groupProgress struct {
@@ -26,6 +27,7 @@ type groupProgress struct {
 	HistoryPending, HistoryAttention bool
 	Unindexed, UnresolvedWiki        int64
 	Pending, Complete, Attention     int64
+	LastCompleted                    *time.Time
 }
 
 func (s *Service) getSyncProgress(w http.ResponseWriter, r *http.Request, p identity.Principal) {
@@ -43,7 +45,7 @@ func (s *Service) syncProgress(ctx context.Context, p identity.Principal) (syncP
 	var result syncProgress
 	rows, err := s.pool.Query(ctx, `SELECT c.chat_id,coalesce(l.project_id,''),
 		coalesce(h.pending,true),coalesce(h.attention,false),m.unindexed,m.unresolved_wiki,
-		f.pending,f.complete,f.attention
+		f.pending,f.complete,f.attention,f.last_completed
 	FROM feishu_chat_conversations c JOIN feishu_bot_configs b USING (tenant_key,app_id)
 	JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(c.tenant_key,c.app_id,$4)
 	LEFT JOIN project_chat_links l ON (l.tenant_key,l.app_id,l.chat_id)=(c.tenant_key,c.app_id,c.chat_id)
@@ -67,7 +69,8 @@ func (s *Service) syncProgress(ctx context.Context, p identity.Principal) (syncP
 	CROSS JOIN LATERAL (
 		SELECT count(*) FILTER (WHERE x.state='pending') AS pending,
 		       count(*) FILTER (WHERE x.state='complete' AND x.version_id IS NOT NULL) AS complete,
-		       count(*) FILTER (WHERE x.state IN ('partial','failed','expired','over_limit')) AS attention
+		       count(*) FILTER (WHERE x.state IN ('partial','failed','expired','over_limit')) AS attention,
+		       max(x.synced_at) FILTER (WHERE x.state='complete') AS last_completed
 		FROM feishu_file_sources x WHERE (x.tenant_key,x.app_id,x.chat_id)=(c.tenant_key,c.app_id,c.chat_id)
 	) f
 	WHERE c.tenant_key=$1 AND c.app_id=$2 AND b.credentials_generation=$3 AND b.enabled
@@ -109,6 +112,9 @@ func (s *Service) syncProgress(ctx context.Context, p identity.Principal) (syncP
 		result.Pending += group.Pending
 		result.Complete += group.Complete
 		result.Attention += group.Attention
+		if group.LastCompleted != nil && (result.LastCompleted == nil || group.LastCompleted.After(*result.LastCompleted)) {
+			result.LastCompleted = group.LastCompleted
+		}
 	}
 	return result, nil
 }

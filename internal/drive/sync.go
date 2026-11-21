@@ -18,6 +18,8 @@ import (
 
 type GroupAccess func(context.Context, identity.Principal, string, string) (bool, error)
 
+const fileWorkers = 3
+
 type Service struct {
 	canReadGroup GroupAccess
 	pool         *pgxpool.Pool
@@ -26,10 +28,15 @@ type Service struct {
 	roles        *access.Service
 	source       Source
 	objects      ObjectStore
+	indexWake    chan struct{}
+	fileWake     chan struct{}
 }
 
 func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source, roles *access.Service, objects ObjectStore, canReadGroup GroupAccess) *Service {
-	return &Service{pool: pool, tenant: tenant, app: app, generation: generation, roles: roles, source: source, objects: objects, canReadGroup: canReadGroup}
+	return &Service{
+		pool: pool, tenant: tenant, app: app, generation: generation, roles: roles, source: source,
+		objects: objects, canReadGroup: canReadGroup, indexWake: make(chan struct{}, 1), fileWake: make(chan struct{}, fileWorkers),
+	}
 }
 
 func (s *Service) index(ctx context.Context) (bool, error) {
@@ -223,17 +230,38 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 	return true, tx.Commit(ctx)
 }
 
+// NotifyNewMessage is called after the incoming archive transaction commits.
+func (s *Service) NotifyNewMessage() {
+	select {
+	case s.indexWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) notifyFiles() {
+	for range fileWorkers {
+		select {
+		case s.fileWake <- struct{}{}:
+		default:
+			return
+		}
+	}
+}
+
 func (s *Service) Run(ctx context.Context) {
 	var workers sync.WaitGroup
 	workers.Go(func() {
-		runSyncSteps(ctx, func(ctx context.Context) (bool, error) {
+		runSyncSteps(ctx, s.indexWake, func(ctx context.Context) (bool, error) {
 			indexed, indexErr := s.index(ctx)
+			if indexed && indexErr == nil {
+				s.notifyFiles()
+			}
 			resolved, wikiErr := s.resolveWiki(ctx)
 			return indexed || resolved, errors.Join(indexErr, wikiErr)
 		})
 	})
-	for range 3 {
-		workers.Go(func() { runSyncSteps(ctx, s.refresh) })
+	for range fileWorkers {
+		workers.Go(func() { runSyncSteps(ctx, s.fileWake, s.refresh) })
 	}
 	workers.Go(func() {
 		ticker := time.NewTicker(time.Minute)
@@ -252,7 +280,7 @@ func (s *Service) Run(ctx context.Context) {
 	workers.Wait()
 }
 
-func runSyncSteps(ctx context.Context, step func(context.Context) (bool, error)) {
+func runSyncSteps(ctx context.Context, wake <-chan struct{}, step func(context.Context) (bool, error)) {
 	for ctx.Err() == nil {
 		worked, err := step(ctx)
 		if err != nil && ctx.Err() == nil {
@@ -265,6 +293,7 @@ func runSyncSteps(ctx context.Context, step func(context.Context) (bool, error))
 		select {
 		case <-ctx.Done():
 			return
+		case <-wake:
 		case <-time.After(delay):
 		}
 	}

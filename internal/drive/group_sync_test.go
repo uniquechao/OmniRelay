@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
@@ -270,6 +271,34 @@ func TestFileSnapshotListsStoredStatesWithoutProviderReads(t *testing.T) {
 	if files, total := get("limit=2"); total != 0 || len(files) != 0 {
 		t.Fatalf("unauthorized group exposed metadata: %d", total)
 	}
+}
+
+func TestFileSyncWakesOnCommittedMessage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	service := New(nil, "", "", 0, nil, nil, nil, nil)
+	calls := make(chan struct{}, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runSyncSteps(ctx, service.indexWake, func(context.Context) (bool, error) {
+			calls <- struct{}{}
+			return false, nil
+		})
+	}()
+	select {
+	case <-calls:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	service.NotifyNewMessage()
+	select {
+	case <-calls:
+	case <-ctx.Done():
+		t.Fatal("message did not wake the worker before its polling interval")
+	}
+	cancel()
+	<-done
 }
 
 func TestMediaReferences(t *testing.T) {

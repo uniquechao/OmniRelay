@@ -208,6 +208,8 @@ func (s *Service) savePage(ctx context.Context, conn *pgxpool.Conn, c syncCursor
 		state, next, wait := "complete", page.Next, 2*time.Minute
 		if c.ThreadID != "" {
 			wait = 15 * time.Minute
+		} else if c.Kind == orchestrator.ChatGroup {
+			wait = 30 * time.Second
 		}
 		switch {
 		case sourceErr != nil:

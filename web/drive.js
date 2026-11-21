@@ -68,7 +68,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
       if (syncStatus.textContent !== message) syncStatus.textContent = message;
       const latest = JSON.stringify(state);
       if (tableSnapshot === undefined) tableSnapshot = latest;
-      if (tableSnapshot !== latest && !document.querySelector('dialog[open]') && !list.contains(document.activeElement)) {
+      if (tableSnapshot !== latest && !document.querySelector('dialog[open]') && !list.querySelector('tbody')?.contains(document.activeElement)) {
         tableSnapshot = latest;
         await refreshList?.({keepRows:true});
       }
@@ -78,7 +78,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
         syncStatus.textContent = '暂时无法读取同步进度，稍后自动重试。';
       }
     } finally {
-      if (!signal.aborted) syncTimer = setTimeout(readSync, 10000);
+      if (!signal.aborted) syncTimer = setTimeout(readSync, 2000);
     }
   }
   signal.addEventListener('abort', () => clearTimeout(syncTimer), {once:true});

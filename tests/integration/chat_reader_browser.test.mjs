@@ -1141,7 +1141,7 @@ test('网盘显示未关联项目的文件，按真实同步状态刷新列表',
       await page.getByText('等待同步', {exact:true}).waitFor();
       assert.equal(await file.isDisabled(), true);
       completed = true;
-      await page.clock.runFor(10030);
+      await page.clock.runFor(2300);
       await progress.getByText(/已同步 1 条来源/).waitFor();
       await page.getByText('已同步', {exact:true}).waitFor();
       assert.equal(await file.isDisabled(), false);
