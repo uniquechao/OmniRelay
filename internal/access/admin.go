@@ -66,7 +66,7 @@ func (s *Service) preauthorizeAccount(ctx context.Context, actor identity.Princi
 			JOIN directory_people AS person ON (person.tenant_key, person.app_id, person.snapshot_version)
 				= (source.tenant_key, source.app_id, source.active_version)
 			WHERE source.tenant_key=$1 AND source.app_id=$2 AND source.visible
-				AND person.open_id=$3 AND person.directory_status='active'
+				AND person.open_id=$3 AND (person.directory_status='active' OR person.unactivated)
 			FOR SHARE OF source`, s.tenantKey, s.appID, openID).Scan(&name)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotFound

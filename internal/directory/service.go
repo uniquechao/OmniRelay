@@ -283,8 +283,9 @@ func (s *Service) publishSnapshot(ctx context.Context, tx pgx.Tx, job claim, res
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, tenant, app, job.id, entry.ID, parent, entry.Name, entry.Path, entry.HasChildren)
 	}
 	for _, entry := range result.People {
-		batch.Queue(`INSERT INTO directory_people (tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`, tenant, app, job.id, entry.ID, entry.Name, entry.avatarURL(), entry.status())
+		status, unactivated := entry.status()
+		batch.Queue(`INSERT INTO directory_people (tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status,unactivated)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, tenant, app, job.id, entry.ID, entry.Name, entry.avatarURL(), status, unactivated)
 		for department := range result.Members[entry.ID] {
 			batch.Queue(`INSERT INTO department_memberships (tenant_key,app_id,snapshot_version,department_id,open_id)
 				VALUES ($1,$2,$3,$4,$5)`, tenant, app, job.id, department, entry.ID)
@@ -301,7 +302,7 @@ func (s *Service) publishSnapshot(ctx context.Context, tx pgx.Tx, job claim, res
 	}
 	scopeJSON, _ := json.Marshal(result.Scope.summary())
 	_, err := tx.Exec(ctx, `WITH people AS (
-		SELECT p.open_id,p.name,p.avatar_url,p.directory_status,p.snapshot_version=$3 AS incoming,
+		SELECT p.open_id,p.name,p.avatar_url,p.directory_status,p.unactivated,p.snapshot_version=$3 AS incoming,
 			(SELECT jsonb_agg(jsonb_build_array(m.department_id,d.path) ORDER BY m.department_id)
 				FROM department_memberships m JOIN departments d
 					ON (d.tenant_key,d.app_id,d.snapshot_version,d.id)
@@ -319,8 +320,8 @@ func (s *Service) publishSnapshot(ctx context.Context, tx pgx.Tx, job claim, res
 		SELECT count(*) FILTER (WHERE after.open_id IS NULL) AS missing,
 			count(*) FILTER (WHERE before.open_id IS NULL) AS added,
 			count(*) FILTER (WHERE before.open_id IS NOT NULL AND after.open_id IS NOT NULL AND
-				(before.name,before.avatar_url,before.directory_status,before.memberships) IS DISTINCT FROM
-				(after.name,after.avatar_url,after.directory_status,after.memberships)) AS changed
+				(before.name,before.avatar_url,before.directory_status,before.unactivated,before.memberships) IS DISTINCT FROM
+				(after.name,after.avatar_url,after.directory_status,after.unactivated,after.memberships)) AS changed
 		FROM before FULL JOIN after USING(open_id)
 	)
 	UPDATE directory_sync_runs SET department_count=$4,people_count=$5,scope=$6,missing_people_count=CASE WHEN (SELECT active_scope_hash FROM directory_sources WHERE tenant_key=$1 AND app_id=$2)=$7 THEN delta.missing ELSE 0 END,

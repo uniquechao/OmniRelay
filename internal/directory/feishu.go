@@ -63,16 +63,18 @@ type contactPerson struct {
 	} `json:"status"`
 }
 
-func (p contactPerson) status() string {
+func (p contactPerson) status() (state string, unactivated bool) {
 	switch {
 	case p.Status.Resigned:
-		return "resigned"
-	case p.Status.Exited || p.Status.Frozen || p.Status.Inactive || (p.Status.Activated != nil && !*p.Status.Activated):
-		return "inactive"
+		return "resigned", false
+	case p.Status.Exited || p.Status.Frozen || p.Status.Inactive:
+		return "inactive", false
+	case p.Status.Activated != nil && !*p.Status.Activated:
+		return "inactive", true
 	case p.Status.Activated != nil:
-		return "active"
+		return "active", false
 	default:
-		return "unknown"
+		return "unknown", false
 	}
 }
 
@@ -527,8 +529,10 @@ func (f *collector) readPeople(ctx context.Context, result *snapshot, progress f
 			}
 		}
 		if before, exists := result.People[entry.ID]; exists {
-			oldStatus, newStatus := before.status(), entry.status()
-			if before.Name != entry.Name || (oldStatus != "unknown" && newStatus != "unknown" && oldStatus != newStatus) {
+			oldStatus, oldUnactivated := before.status()
+			newStatus, newUnactivated := entry.status()
+			if before.Name != entry.Name || (oldStatus != "unknown" && newStatus != "unknown" &&
+				(oldStatus != newStatus || oldUnactivated != newUnactivated)) {
 				return errors.New("inconsistent Feishu person")
 			}
 			if newStatus == "unknown" {

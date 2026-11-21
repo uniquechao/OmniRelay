@@ -120,7 +120,8 @@ func runSystemBrowser(t *testing.T, suite string) {
 		_, err := pool.Exec(ctx, `INSERT INTO directory_sources(tenant_key,app_id) VALUES ('tenant_fixture','cli_fixture');
         INSERT INTO directory_sync_runs(id,tenant_key,app_id,trigger,state) OVERRIDING SYSTEM VALUE VALUES(17,'tenant_fixture','cli_fixture','initial','succeeded');
         UPDATE directory_sources SET visible=true,active_version=17,next_run_at=now()+interval '1 day' WHERE tenant_key='tenant_fixture' AND app_id='cli_fixture';
-        INSERT INTO directory_people VALUES ('tenant_fixture','cli_fixture',17,'ou_new','待开通成员','','active');`)
+        INSERT INTO directory_people (tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status,unactivated)
+        VALUES ('tenant_fixture','cli_fixture',17,'ou_new','待开通成员','','inactive',true);`)
 		if err != nil {
 			t.Fatal(err)
 		}

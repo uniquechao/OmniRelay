@@ -5,6 +5,7 @@ const system = '/api/v1/system';
 const titles = { users:'用户管理', roles:'角色权限', audit:'审计日志' };
 const statuses = { active:'已启用', disabled:'已停用', unprovisioned:'尚未开通' };
 const directoryStatuses = { active:'在职', inactive:'未启用', resigned:'已离职', unknown:'未知' };
+const directoryStatusLabel = record => record.directoryUnactivated ? '未激活' : directoryStatuses[record.directoryStatus] ?? '未知';
 function syncFailure(reason, scopeHidden) {
   if (/paginat|page|分页/i.test(reason ?? '')) return '飞书目录分页不完整，请重试同步。';
   if (/credentials are missing/i.test(reason ?? '')) return '飞书应用凭据未配置，请联系管理员。';
@@ -195,7 +196,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
           : '—',record => record.org || '',true),
         column('roles','角色',record => escape(userRoles(record).join('、') || '未授权'),null,true),
         column('status','账号状态',record => badge(statusTone(record.status),statuses[record.status] ?? '未知') +
-          (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatuses[record.directoryStatus] ?? '未知') + '</small>' : '') +
+          (record.directoryStatus ? '<small class="admin-cell-sub">目录 · ' + escape(directoryStatusLabel(record)) + '</small>' : '') +
           (record.disableProtected ? '<small class="admin-cell-sub">最后一位管理员保护</small>' : ''),record => record.status),
         column('actions','操作',record => '<div class="admin-actions">' + action('user',record.id,'查看') +
           (canManageAccounts && !isCurrent(record) &&
@@ -515,9 +516,9 @@ export async function bindAdmin(page, section, api, {user,signal}) {
   function showUser(record) {
     const unprovisioned = record.status === 'unprovisioned';
     let replacementDrawer = false;
-    const canProvision = canManageAccounts && unprovisioned && record.directoryStatus === 'active';
+    const canProvision = canManageAccounts && unprovisioned && (record.directoryStatus === 'active' || record.directoryUnactivated);
     const provision = canProvision ? '<div class="user-grant-tools">' +
-      '<button class="button primary" type="button" data-admin-action="provision">开通账号</button></div>' : '';
+      '<button class="button primary" type="button" data-admin-action="provision">标记为普通用户</button></div>' : '';
     const content = () => displayedRoles(record).length ? '<ul class="admin-grants">' + displayedRoles(record).map(grant =>
       '<li><div class="user-grant-label"><strong>' + escape(roleName(grant.role)) + '</strong>' +
       '<small class="user-grant-scope" data-scope="' + (grant.scope === 'project' ? 'project' : 'system') + '">' + escape(grantScopeLabel(grant,record)) +
@@ -542,7 +543,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
       body:group('账号信息',details([
         ['账号编号',record.status === 'unprovisioned' ? '尚未开通' : record.id],['所属组织',record.org || '—'],
         ['身份来源',sourceOf(record)],['账号状态',statuses[record.status] ?? '未知',statusTone(record.status)],
-        ...(record.directoryStatus ? [['目录状态',directoryStatuses[record.directoryStatus] ?? '未知']] : []),
+        ...(record.directoryStatus ? [['目录状态',directoryStatusLabel(record)]] : []),
         ...(record.resignedAt ? [['离职确认时间',showTime(record.resignedAt) + ' (UTC+08:00)']] : []),
         ...(record.disableProtected ? [['停用保护','同步尝试停用时，该账号是最后一位已启用的系统管理员。转交权限后可停用。']] : [])
       ]) + provision) + group('角色授权',(record.projectError ? '<p role="alert">项目授权读取失败。<button type="button" class="button" data-admin-action="retry-projects">重新读取</button></p>' :
@@ -704,9 +705,9 @@ export async function bindAdmin(page, section, api, {user,signal}) {
     function provisionUser(trigger) {
       let refreshed;
       confirmChange({
-        title:'开通账号', description:record.name, tone:'default',
-        message:'开通后，该成员可以使用飞书登录 OmniRelay。可在用户详情中继续授予角色。',
-        confirm:'确认开通', trigger,
+        title:'标记为普通用户', description:record.name, tone:'default',
+        message:'确认后将启用 OmniRelay 账号。该用户可通过飞书身份验证登录系统。',
+        confirm:'确认标记', trigger,
         async change() {
           const created = await request(userPath(record.id) + '/provision',{ method:'POST' });
           if (!inPage() || !dialog.open) return;
@@ -721,7 +722,7 @@ export async function bindAdmin(page, section, api, {user,signal}) {
             if (inPage()) toast('warning','账号已开通，用户列表刷新失败。请重新打开用户管理。');
             return;
           }
-          if (inPage() && dialog.open) toast('success',record.name + '的账号已开通。');
+          if (inPage() && dialog.open) toast('success','已将' + record.name + '标记为普通用户。');
         },
         onConfirmed() {
           if (!inPage() || !dialog.open) return;
