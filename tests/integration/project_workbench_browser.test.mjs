@@ -6,7 +6,7 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const moduleName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
 const origin = 'https://project.example.test';
-const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active' };
+const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active', updated_at: '2026-11-21T09:15:00Z' };
 const task = { id: 't-99', project_id: project.id, title: '联调验收', status: 'done' };
 const root = '/api/v1/projects/' + project.id;
 const list = (items) => ({ items, total: items.length });
@@ -332,6 +332,8 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await main.getByRole('link', { name: '查看项目列表' }).click();
       await main.getByRole('link', { name: project.name }).waitFor();
+      await main.getByRole('columnheader', { name: '更新时间' }).waitFor();
+      assert.equal(await main.locator('tbody time').getAttribute('datetime'), project.updated_at);
       const filter = main.getByRole('combobox', { name: '项目状态' });
       assert.equal(await filter.inputValue(), 'active');
       assert.equal(await main.getByRole('link', { name: planned.name }).count(), 0);
@@ -339,6 +341,7 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       await filter.selectOption('');
       await main.getByRole('button', { name: '查询' }).click();
       await main.getByRole('link', { name: planned.name }).waitFor();
+      await main.getByRole('row').filter({ hasText: planned.name }).getByRole('cell', { name: '—' }).waitFor();
       await page.waitForURL(/#\/projects\?status=$/);
       await page.reload();
       await main.getByRole('link', { name: planned.name }).waitFor();

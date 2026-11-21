@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const latestMigration = 28
+const latestMigration = 29
 
 func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	versions, err := readMigrations()
@@ -25,6 +25,62 @@ func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 		if change.version != i+1 || len(change.digest) != 64 || change.sql == "" {
 			t.Fatalf("unexpected migration metadata: %d", change.version)
 		}
+	}
+}
+
+func TestProjectProfileTimestampUpgrade(t *testing.T) {
+	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("requires isolated PostgreSQL")
+	}
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	run := func(sql string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("CREATE SCHEMA project_profile_timestamp_upgrade; SET LOCAL search_path=project_profile_timestamp_upgrade")
+	changes, err := readMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range changes[:28] {
+		run(change.sql)
+	}
+	run(`INSERT INTO accounts (tenant_key,app_id,id,open_id) VALUES ('t','a','manager','ou_manager');
+		INSERT INTO project_profiles (tenant_key,app_id,project_id,name,status,version)
+		VALUES ('t','a','known','已知','active',2),('t','a','unknown','未知','active',2);
+		INSERT INTO audit_events (tenant_key,app_id,actor_account_id,action,resource_type,resource_id,result,change_version,created_at)
+		VALUES ('t','a','manager','project.create','project','known','success',1,'2020-01-01T00:00:00Z'),
+		       ('t','a','manager','project.profile.update','project','known','success',2,'2020-01-02T00:00:00Z'),
+		       ('t','a','manager','project.profile.update','project','known','failure',2,'2020-01-03T00:00:00Z'),
+		       ('t','a','manager','project.create','project','unknown','success',1,'2020-01-04T00:00:00Z')`)
+	run(changes[28].sql)
+	var known, unknown *time.Time
+	if err := tx.QueryRow(ctx, `SELECT (SELECT updated_at FROM project_profiles WHERE project_id='known'),
+		(SELECT updated_at FROM project_profiles WHERE project_id='unknown')`).Scan(&known, &unknown); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC)
+	if known == nil || !known.Equal(want) || unknown != nil {
+		t.Fatalf("historical profile times: known=%v unknown=%v", known, unknown)
+	}
+	// Older application versions update only the profile fields and version.
+	run("UPDATE project_profiles SET name='更新',version=3 WHERE project_id='known'")
+	if err := tx.QueryRow(ctx, "SELECT updated_at FROM project_profiles WHERE project_id='known'").Scan(&known); err != nil ||
+		known == nil || !known.After(want) {
+		t.Fatalf("time after save: %v (%v)", known, err)
 	}
 }
 

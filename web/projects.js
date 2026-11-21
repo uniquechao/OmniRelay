@@ -73,6 +73,7 @@ function table(headers, rows, missing) {
 const heading = (title) => `<h1 id="page-heading" tabindex="-1">${esc(title)}</h1>`;
 const withQuery = (path, params) => path + (params.size ? '?' + params : '');
 const directoryStatus = (params) => params.get('status') ?? 'active';
+const projectUpdatedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' });
 export function projectRoute(hash) {
   if (!hash || !/^#\/projects(?:[/?]|$)/.test(hash)) return;
   const [path, query = ''] = hash.split('?');
@@ -165,11 +166,12 @@ function briefings(base, items) {
 }
 function directoryRows(items, projectTypes) {
   return table(
-    ['项目名称', '类型', '阶段'],
+    ['项目名称', '类型', '阶段', '更新时间'],
     items.map((row) => [
       link('#/projects/' + row.id + '/overview', row.name),
       projectTypeBadge(row.project_type, projectTypes),
       label(row.status),
+      row.updated_at ? `<time class="date" datetime="${esc(row.updated_at)}">${esc(projectUpdatedTime.format(new Date(row.updated_at)))}</time>` : '—',
     ]),
     '没有符合条件的项目。',
   );

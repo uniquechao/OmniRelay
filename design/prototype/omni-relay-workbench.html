@@ -360,6 +360,7 @@ td a:hover { text-decoration: underline; }
 const projects = {
   beichen: {
     name: '北辰交付项目', kind: '交付验收', status: 'progress', lead: '王宁', group: '北辰交付项目群', update: '11 月 18 日 17:50',
+    updatedAt: '2026-11-18T17:50:00+08:00',
     summary: '联调能否按期验收，取决于测试环境恢复时间。', latest: '验收主路径待环境恢复',
     tasks: [
       ['接口联调验收', '王宁', '11 月 20 日', 'progress', true],
@@ -378,6 +379,7 @@ const projects = {
   },
   qiming: {
     name: '启明试点项目', kind: '内部试点', status: 'pending', lead: '林晓', group: '待绑定', update: '11 月 17 日 16:20',
+    updatedAt: '2026-11-17T16:20:00+08:00',
     summary: '', latest: '正在确定首批试点范围',
     tasks: [
       ['确认试点参与人员', '林晓', '11 月 20 日', 'pending'],
@@ -398,8 +400,10 @@ const extraProjects = [
 ];
 const exampleProgress = { progress:'按当前节点推进', pending:'待确认启动范围', success:'已完成本期交付', danger:'等待依赖确认' };
 extraProjects.forEach(([name, lead, status], index) => {
+  const day = 16 - Math.floor(index / 2);
   projects['example-' + (index + 1)] = {
-    name, lead, status, kind:'内部示例', group:'待绑定', update:'11 月 ' + (16 - Math.floor(index / 2)) + ' 日',
+    name, lead, status, kind:'内部示例', group:'待绑定', update:'11 月 ' + day + ' 日',
+    updatedAt:'2026-11-' + String(day).padStart(2,'0') + 'T00:00:00+08:00',
     latest:exampleProgress[status], summary:'', tasks:[], milestones:[], attention:[], brief:''
   };
 });
@@ -571,9 +575,11 @@ function renderProject(id, tab, html, listHref) {
 
 const column = (key, label, render, sort, secondary = false) => ({ key, label, render, sort, secondary });
 const stageOptions = { progress:statuses.progress, pending:statuses.pending, success:statuses.success, danger:statuses.danger };
+const projectUpdatedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle:'short', timeStyle:'short' });
 
 function projectListConfig(allProjectStatuses) {
-  const rows = Object.entries(projects).map(([id, project]) => ({ id, ...project }));
+  const rows = Object.entries(projects).map(([id, project]) => ({ id, ...project }))
+    .sort((a,b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
   return {
     key:allProjectStatuses ? 'projects-all' : 'projects', label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
     defaultFilters:allProjectStatuses ? {} : {status:'progress'},
@@ -586,7 +592,9 @@ function projectListConfig(allProjectStatuses) {
       column('name','项目名称', row => '<a href="' + projectUrl(row.id) + '">' + row.name + '</a>', row => row.name),
       column('status','阶段', row => chip(row.status), row => statuses[row.status]),
       column('latest','进展速览', row => row.latest, null, true),
-      column('lead','负责人', row => row.lead, row => row.lead)
+      column('lead','负责人', row => row.lead, row => row.lead),
+      column('updatedAt','更新时间', row =>
+        '<time class="date" datetime="' + row.updatedAt + '">' + projectUpdatedTime.format(new Date(row.updatedAt)) + '</time>')
     ]
   };
 }
