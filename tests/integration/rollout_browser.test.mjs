@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdir,mkdtemp,readFile,readdir,writeFile} from 'node:fs/promises';
 import {createServer} from 'node:net';
 import {resolve} from 'node:path';
@@ -84,4 +85,69 @@ http {
   const missing=await fetch(origin+'/assets/missing.js');
   assert.equal(missing.status,404);
   assert.equal(missing.headers.get('cache-control'),'no-store');
+});
+
+// 由演练执行者在同一个 Deployment 上升级、回退。浏览器通过稳定的候选入口观察切换。
+const clusterOrigin = process.env.OMNIRELAY_ROLLOUT_CLUSTER;
+test('集群候选回滚期间保留已打开页面并逐文件核对同源归档', {skip: !clusterOrigin, timeout: 900_000}, async t => {
+  assert.match(clusterOrigin, /^https:\/\/127\.0\.0\.1:\d+$/);
+  const manifest = JSON.parse(await readFile(process.env.OMNIRELAY_ROLLOUT_MANIFEST, 'utf8'));
+  const assets = Object.entries(manifest);
+  assert.ok(assets.some(([name]) => name === 'legacy/app.js'));
+  const chunk = assets.find(([name]) => /^assets\/task-detail-[\w-]+\.js$/.test(name))?.[0];
+  assert.ok(chunk);
+  const browser = await chromium.launch({executablePath: process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const context = await browser.newContext({ignoreHTTPSErrors: true});
+  const page = await context.newPage();
+  const oldHTML = await (await context.request.get(clusterOrigin)).text();
+  assert.match(oldHTML, /src="app\.js"/);
+  await page.goto(clusterOrigin);
+  await page.locator('#password-login').waitFor();
+  const oldDocument = await page.evaluateHandle(() => document);
+  console.log('旧版页面已打开');
+  async function waitForVersion(matches) {
+    const deadline = Date.now() + 400_000;
+    while (Date.now() < deadline) {
+      const response = await context.request.get(clusterOrigin, {timeout: 5000}).catch(() => null);
+      if (response?.ok() && matches(await response.text())) return;
+      await new Promise(done => setTimeout(done, 500));
+    }
+    assert.fail('等待集群入口完成指定版本切换超时');
+  }
+  async function verifyArchive() {
+    for (const [file, expected] of assets) {
+      assert.match(file, /^(legacy|assets)\/[\w.-]+$/);
+      const path = file.replace(/^legacy\//, '');
+      const response = await context.request.get(clusterOrigin + '/' + path);
+      assert.equal(response.status(), 200, path);
+      assert.equal(response.headers()['x-omnirelay-asset-archive'], '1', path);
+      assert.equal(createHash('sha256').update(await response.body()).digest('hex'), expected, path);
+    }
+  }
+  await waitForVersion(html => html.includes('src="/assets/index-'));
+  assert.ok(await page.evaluate(doc => doc === document, oldDocument));
+  assert.equal(await page.evaluate(async () => (await fetch('/app.js', {cache: 'reload'})).status), 200);
+  await verifyArchive();
+  const cachedPage = await context.newPage();
+  await cachedPage.route(clusterOrigin + '/', route => route.fulfill({contentType: 'text/html', body: oldHTML}));
+  await cachedPage.goto(clusterOrigin);
+  await cachedPage.locator('#password-login').waitFor();
+  await cachedPage.close();
+  await page.reload();
+  await page.getByRole('heading', {name: '登录工作台'}).waitFor();
+  const candidateDocument = await page.evaluateHandle(() => document);
+  console.log('候选页面已打开，旧 HTML 与归档校验通过');
+  await waitForVersion(html => html === oldHTML);
+  assert.ok(await page.evaluate(doc => doc === document, candidateDocument));
+  const lazyResponse = page.waitForResponse(response => response.url() === clusterOrigin + '/' + chunk);
+  assert.equal(await page.evaluate(async path => typeof (await import(path)).mountTaskDetail, '/' + chunk), 'function');
+  assert.equal((await lazyResponse).status(), 200);
+  await verifyArchive();
+  const missing = await context.request.get(clusterOrigin + '/assets/missing.js');
+  assert.equal(missing.status(), 404);
+  assert.equal(missing.headers()['cache-control'], 'no-store');
+  await page.reload();
+  await page.locator('#password-login').waitFor();
+  t.diagnostic('切回后，原候选标签页加载任务详情成功，刷新后旧登录页可用');
 });
