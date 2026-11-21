@@ -78,7 +78,11 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		}
 		return nil, nil, errors.New("could not initialize Feishu Bot configuration")
 	}
-	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles)
+	objects, err := drive.ConfiguredObjects()
+	if err != nil {
+		return nil, nil, err
+	}
+	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles, objects, chatService.CanReadConversation)
 	chatService.ConfigureFiles(fileService)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	projectService := project.New(pool, roles, botStore.Status, chatSource, chatService,

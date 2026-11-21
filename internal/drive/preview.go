@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -145,7 +146,7 @@ func (s *Service) createPreview(ctx context.Context, w http.ResponseWriter, q pr
 	args := s.previewArgs(q)
 	var size int64
 	err = tx.QueryRow(ctx, `SELECT h.byte_size FROM feishu_file_versions h WHERE h.file_id=$6 AND h.id=$8
-    AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7))`,
+    AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)`+sourceVersion+`h.id))`,
 		s.tenant, s.app, s.generation, q.reader.AccountID, q.reader.OpenID, q.file.ID, q.sources, q.version).Scan(&size)
 	if errors.Is(err, pgx.ErrNoRows) {
 		problem(w, 404, "version_unavailable")
@@ -233,7 +234,7 @@ func (s *Service) readPreview(ctx context.Context, w http.ResponseWriter, r *htt
 	err := s.pool.QueryRow(ctx, `SELECT CASE WHEN stage IN ('running','queued') AND created_at<now()-interval '1 minute'
         THEN 'failed' ELSE stage END,metadata,coalesce(mime,''),CASE WHEN $10 THEN body END
         FROM feishu_file_previews WHERE `+previewOwner+` AND id::text=$8 AND sources && $9 AND `+previewFresh+`
-        AND EXISTS (SELECT 1`+authorizedSources+` AND x.message_id=ANY(feishu_file_previews.sources) AND x.message_id=ANY($9))`, args...).Scan(&stage, &meta, &mime, &body)
+        AND EXISTS (SELECT 1`+authorizedSources+` AND x.message_id=ANY(feishu_file_previews.sources) AND x.message_id=ANY($9)`+sourceVersion+`feishu_file_previews.version_id))`, args...).Scan(&stage, &meta, &mime, &body)
 	if errors.Is(err, pgx.ErrNoRows) {
 		problem(w, 404, "preview_unavailable")
 		return
@@ -277,30 +278,56 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 	}
 	src := messageIDs(files[0])
 	src = slices.DeleteFunc(src, func(id string) bool { return !slices.Contains(q.sources, id) })
-	rows, err := s.versionChunks(ctx, q.reader, q.file, src, q.version)
+	info, err := s.versionInfo(ctx, q.reader, q.file, src, q.version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return previewOutput{Stage: "forbidden"}
+	}
 	if err != nil {
 		return previewOutput{Stage: "source_unavailable"}
 	}
-	defer rows.Close()
+	if info.size > previewFileLimit {
+		return previewOutput{Stage: "over_limit"}
+	}
 	var data bytes.Buffer
-	found := false
-	for rows.Next() {
-		var size int64
-		var chunk []byte
-		if err := rows.Scan(&size, &chunk); err != nil {
-			return previewOutput{Stage: "failed"}
+	if info.key != "" {
+		if s.objects == nil {
+			return previewOutput{Stage: "source_unavailable"}
 		}
-		if size > previewFileLimit || data.Len()+len(chunk) > previewFileLimit {
-			return previewOutput{Stage: "over_limit"}
+		body, err := s.objects.Open(ctx, info.key, info.size)
+		if err != nil {
+			return previewOutput{Stage: "source_unavailable"}
 		}
-		data.Write(chunk)
-		found = true
-	}
-	if rows.Err() != nil {
-		return previewOutput{Stage: "source_unavailable"}
-	}
-	if !found {
-		return previewOutput{Stage: "forbidden"}
+		defer body.Close()
+		n, err := io.Copy(&data, io.LimitReader(body, info.size+1))
+		if err != nil || n != info.size {
+			return previewOutput{Stage: "source_unavailable"}
+		}
+	} else {
+		rows, err := s.versionChunks(ctx, q.reader, q.file, src, q.version)
+		if err != nil {
+			return previewOutput{Stage: "source_unavailable"}
+		}
+		defer rows.Close()
+
+		found := false
+		for rows.Next() {
+			var size int64
+			var chunk []byte
+			if err := rows.Scan(&size, &chunk); err != nil {
+				return previewOutput{Stage: "failed"}
+			}
+			if size > previewFileLimit || data.Len()+len(chunk) > previewFileLimit {
+				return previewOutput{Stage: "over_limit"}
+			}
+			data.Write(chunk)
+			found = true
+		}
+		if rows.Err() != nil {
+			return previewOutput{Stage: "source_unavailable"}
+		}
+		if !found {
+			return previewOutput{Stage: "forbidden"}
+		}
 	}
 	kind := q.file.FormatKey
 	if q.file.Category == "files" {

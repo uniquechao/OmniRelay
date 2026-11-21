@@ -800,7 +800,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     const fixture = await mountFixture(page);
     let second = '启明';
     const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
-      project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
+      manual_project_ids:[], inherited_project_ids:['a'], project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
         ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name}))};
     const other = {...row, id:18, name:'会议安排.pdf', project_ids:['a'],
       sources:[{...row.sources[0], message_id:recentMessage.id}]};
@@ -821,7 +821,8 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
         const change = request.postDataJSON();
         patches.push(change);
         if (change.project_version !== row.project_version) return route.fulfill({status:409,json:{}});
-        row.project_ids = row.project_ids.filter(id => !change.remove_project_ids.includes(id)).concat(change.add_project_ids);
+        row.manual_project_ids = row.manual_project_ids.filter(id => !change.remove_project_ids.includes(id)).concat(change.add_project_ids);
+        row.project_ids = [...new Set([...row.inherited_project_ids,...row.manual_project_ids])];
         return route.fulfill({json:{project_version:++row.project_version}});
       }
       if (url.pathname.endsWith('/17')) return route.fulfill({json:row});
@@ -841,7 +842,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.goBack();
     const edit = page.locator('tbody [data-drive-projects="17"]');
     await act(edit);
-    const input = page.getByRole('combobox', {name:'所属项目'});
+    const input = page.getByRole('combobox', {name:'人工关联项目'});
     await input.fill('启');
     await act(page.getByRole('option',{name:'启明'}));
     assert.equal(await input.getAttribute('aria-expanded'),'true');
@@ -853,7 +854,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.reload();
     await act(page.locator('[data-more]'));
     assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
-    await page.locator('[data-filter]').selectOption({label:second});
+    await page.locator('[data-filter="project_id"]').selectOption({label:second});
     await page.keyboard.press('Escape');
     await edit.getByText(second).waitFor();
     const links = page.locator('tbody .drive-source');
@@ -901,7 +902,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await act(page.getByRole('button',{name:'移除 ' + second}));
     await act(save);
     await drawer.locator('[data-drive-projects]:focus').waitFor();
-    assert.deepEqual(await drawer.locator('.kind').allTextContents(), ['北辰']);
+    assert.deepEqual(await drawer.locator('.kind').allTextContents(), ['北辰 · 来自群聊']);
     assert.equal(await edit.count(),0);
     assert.deepEqual(patches[1],{project_version:4,add_project_ids:[],remove_project_ids:['b']});
     await act(drawer.locator('[data-drive-projects]'));
@@ -910,7 +911,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await act(save);
     await page.getByText('归属已变化，请重新打开编辑并确认。',{exact:true}).waitFor();
     await act(page.locator('[data-more]'));
-    await page.locator('[data-filter]').selectOption('');
+    await page.locator('[data-filter="project_id"]').selectOption('');
     await page.keyboard.press('Escape');
     await edit.getByText('北辰').waitFor();
     await act(edit);
@@ -1067,4 +1068,46 @@ test('文件预览格式失败后刷新列表并打开新版本', {skip:!package
     }
     await page.close();
   }
+});
+
+test('群图片和视频使用已授权的版本地址预览和下载', {skip:!packageName}, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await mountFixture(page);
+  const source = {chat_id:group.id, message_id:oldMessage.id, chat_name:group.name};
+  const rows = ['image','video'].map((kind,i) => ({
+    id:i+1, version_id:10+i, format_key:kind, name:i ? '项目视频' : '项目图片', format:i ? '视频' : '图片',
+    category:'files', sync_state:'complete', project_ids:['p'], inherited_project_ids:['p'], manual_project_ids:[], sources:[source]
+  }));
+  let revoked = false;
+  await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
+  await page.route(origin + '/api/v1/feishu/files**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/files')) return route.fulfill({json:{items:revoked ? [] : rows,total:revoked ? 0 : 2,projects:{p:'项目'}}});
+    if (revoked) return route.fulfill({status:404,json:{error:'file_unavailable'}});
+    const row = rows.find(item => path.startsWith('/api/v1/feishu/files/' + item.id + '/'));
+    if (path.endsWith('/versions')) return route.fulfill({json:{items:[{id:row.version_id}]}});
+    if (row.format_key === 'image') return route.fulfill({path:'design/prototype/omni-relay-logo.png',contentType:'image/png'});
+    return route.fulfill({status:415});
+  });
+  await page.goto(origin + '/#/feishu/drive');
+  const trigger = page.locator('.drive-file-name').first();
+  await trigger.click();
+  const img = page.getByRole('img',{name:'项目图片',exact:true});
+  await img.waitFor();
+  await img.evaluate(node => node.decode());
+  assert.equal(new URL(await img.getAttribute('src'),origin).pathname,'/api/v1/feishu/files/1/versions/10/content');
+  await page.keyboard.press('Escape');
+  const link = page.getByRole('link',{name:'下载',exact:true}).first();
+  const download = page.waitForEvent('download');
+  await link.click();
+  assert.match((await download).url(),/versions\/10\/content\?download=1$/);
+  await page.locator('.drive-file-name').last().click();
+  await page.locator('video[controls]').waitFor();
+  await page.getByText('暂时无法预览此格式，可返回文件列表下载原件。').waitFor();
+  revoked = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.getByText('已无权查看此文件').waitFor();
+  assert.equal(await page.locator('video').count(),0);
 });

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"slices"
@@ -31,33 +33,35 @@ type share struct {
 }
 type candidate struct {
 	share
-	Projects                 []string
-	ProjectVersion           int64
-	ID                       int64
-	Kind, Token, Name, State string
-	Version, Size            *int64
-	Updated                  *time.Time
+	Projects                       []string
+	ProjectVersion                 int64
+	ID                             int64
+	Kind, Token, Name, State, MIME string
+	Version, Size                  *int64
+	Updated                        *time.Time
 }
 type item struct {
-	ProjectVersion int64 `json:"project_version"`
-	token          string
-	ID             int64      `json:"id"`
-	Name           string     `json:"name"`
-	Category       string     `json:"category"`
-	FormatKey      string     `json:"format_key"`
-	Format         string     `json:"format"`
-	Size           *int64     `json:"size_bytes"`
-	SizeSource     string     `json:"size_source"`
-	Sources        []share    `json:"sources"`
-	Projects       []string   `json:"project_ids"`
-	State          string     `json:"sync_state"`
-	Version        *int64     `json:"version_id"`
-	Updated        *time.Time `json:"updated_at"`
+	versionSourceIndex int
+	ProjectVersion     int64 `json:"project_version"`
+	token              string
+	ID                 int64      `json:"id"`
+	Name               string     `json:"name"`
+	Category           string     `json:"category"`
+	FormatKey          string     `json:"format_key"`
+	Format             string     `json:"format"`
+	Size               *int64     `json:"size_bytes"`
+	SizeSource         string     `json:"size_source"`
+	Sources            []share    `json:"sources"`
+	Projects           []string   `json:"project_ids"`
+	ManualProjects     []string   `json:"manual_project_ids"`
+	InheritedProjects  []string   `json:"inherited_project_ids"`
+	State              string     `json:"sync_state"`
+	Version            *int64     `json:"version_id"`
+	Updated            *time.Time `json:"updated_at"`
 }
 
 const authorizedSources = ` FROM feishu_file_sources x
  JOIN project_chat_links l USING(tenant_key,app_id,chat_id)
- JOIN feishu_file_projects fp USING(tenant_key,app_id,file_id,project_id)
  JOIN project_members pm USING(tenant_key,app_id,project_id)
  JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(pm.tenant_key,pm.app_id,pm.account_id)
  LEFT JOIN feishu_file_versions v ON v.id=x.version_id
@@ -67,18 +71,21 @@ const authorizedSources = ` FROM feishu_file_sources x
 
 func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string, project string) ([]candidate, error) {
 	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,l.project_id,
- x.file_id,x.kind,x.token,x.name,x.state,x.version_id,CASE WHEN x.kind IN ('attachment','file') THEN coalesce(v.byte_size,x.declared_size) END,
+ x.file_id,x.kind,x.token,x.name,x.state,coalesce(v.content_type,''),x.version_id,CASE WHEN x.kind IN ('attachment','file','image','video') THEN coalesce(v.byte_size,x.declared_size) END,
  x.synced_at, (SELECT version FROM feishu_file_project_revisions r WHERE
  (r.tenant_key,r.app_id,r.file_id)=(x.tenant_key,x.app_id,x.file_id)),
- ARRAY(SELECT t.project_id FROM feishu_file_projects t JOIN project_members member USING(tenant_key,app_id,project_id)
+ ARRAY(SELECT t.project_id FROM feishu_file_manual_projects t JOIN project_members member USING(tenant_key,app_id,project_id)
  WHERE (t.tenant_key,t.app_id,t.file_id)=(x.tenant_key,x.app_id,x.file_id) AND member.account_id=$4
- AND member.role<>'revoked' ORDER BY t.project_id)`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) AND ($8='' OR l.project_id=$8) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens, project)
+ AND member.role<>'revoked' ORDER BY t.project_id)`+authorizedSources+` AND ($7::text[] IS NULL OR (x.kind='file' AND x.token=ANY($7))) AND ($8='' OR l.project_id=$8 OR EXISTS(SELECT FROM feishu_file_manual_projects mp
+ JOIN project_members member USING(tenant_key,app_id,project_id)
+ WHERE (mp.tenant_key,mp.app_id,mp.file_id,mp.project_id)=(x.tenant_key,x.app_id,x.file_id,$8)
+ AND member.account_id=$4 AND member.role<>'revoked')) ORDER BY x.file_id,x.sent_at DESC,x.message_id`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, id, cloudTokens, project)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (candidate, error) {
 		var c candidate
-		err := r.Scan(&c.MessageID, &c.ChatID, &c.ChatName, &c.SenderID, &c.SenderName, &c.SentAt, &c.ProjectID, &c.ID, &c.Kind, &c.Token, &c.Name, &c.State, &c.Version, &c.Size, &c.Updated, &c.ProjectVersion, &c.Projects)
+		err := r.Scan(&c.MessageID, &c.ChatID, &c.ChatName, &c.SenderID, &c.SenderName, &c.SentAt, &c.ProjectID, &c.ID, &c.Kind, &c.Token, &c.Name, &c.State, &c.MIME, &c.Version, &c.Size, &c.Updated, &c.ProjectVersion, &c.Projects)
 		c.ContextURL = "/api/v1/feishu/chats/" + url.PathEscape(c.ChatID) + "/messages/" + url.PathEscape(c.MessageID) + "/context"
 		return c, err
 	})
@@ -98,17 +105,25 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 	if err != nil {
 		return nil, err
 	}
-	var probes sync.Map
+	var probes, groups sync.Map
+	failures := make([]error, len(initial))
 	verified := make([]bool, len(initial))
 	g, requests := errgroup.WithContext(ctx)
 	g.SetLimit(6)
 	for i, c := range initial {
 		g.Go(func() error {
+			scope := struct{ chat, project string }{c.ChatID, c.ProjectID}
+			permission, _ := groups.LoadOrStore(scope, sync.OnceValues(func() (bool, error) { return s.canReadGroup(requests, p, c.ProjectID, c.ChatID) }))
+			allowed, err := permission.(func() (bool, error))()
+			if !allowed || err != nil {
+				failures[i] = err
+				return nil
+			}
 			ref := Ref{Kind: c.Kind, Token: c.Token, Name: c.Name, MessageID: c.MessageID, ChatKind: "group"}
-			err := s.source.CheckShare(requests, ref, c.ChatID)
+			err = s.source.CheckShare(requests, ref, c.ChatID)
 			if err == nil {
 				resource := sourceKey{file: c.ID}
-				if c.Kind == "attachment" {
+				if messageResource(c.Kind) {
 					resource.msg = c.MessageID
 				}
 				probe, _ := probes.LoadOrStore(resource, sync.OnceValue(func() error { _, probeErr := s.source.ReadFile(requests, ref, true); return probeErr }))
@@ -122,7 +137,8 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 				return nil
 			}
 			if err != nil {
-				return err
+				failures[i] = err
+				return nil
 			}
 			verified[i] = true
 			return nil
@@ -130,6 +146,13 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 	}
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+	if !slices.Contains(verified, true) {
+		for _, err := range failures {
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	keys := map[sourceKey]bool{}
 	for i, c := range initial {
@@ -151,19 +174,38 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 		if !ok {
 			pos = len(files)
 			positions[c.ID] = pos
-			files = append(files, item{ID: c.ID, Projects: c.Projects, ProjectVersion: c.ProjectVersion, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
+			files = append(files, item{ID: c.ID, ManualProjects: c.Projects, Projects: slices.Clone(c.Projects), ProjectVersion: c.ProjectVersion, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
 		}
 		f := &files[pos]
 		if len(f.Sources) == 0 || (c.Updated != nil && (f.Updated == nil || c.Updated.After(*f.Updated))) {
+			f.versionSourceIndex = len(f.Sources)
 			f.Version, f.Size, f.Updated, f.Name, f.State = c.Version, c.Size, c.Updated, c.Name, c.State
 			f.SizeSource = "unknown"
 			if f.Size != nil {
 				f.SizeSource = "original"
 			}
 			format := Format(c.Kind, c.Name)
+			if c.Kind == "file" || c.Kind == "attachment" {
+				if strings.HasPrefix(c.MIME, "image/") {
+					format = formats["image"]
+				}
+				if strings.HasPrefix(c.MIME, "video/") {
+					format = formats["video"]
+				}
+			}
 			f.Category, f.Format, f.FormatKey = format.Category, format.Label, format.Key
 		}
+		if !slices.Contains(f.InheritedProjects, c.ProjectID) {
+			f.InheritedProjects = append(f.InheritedProjects, c.ProjectID)
+		}
+		if !slices.Contains(f.Projects, c.ProjectID) {
+			f.Projects = append(f.Projects, c.ProjectID)
+		}
 		f.Sources = append(f.Sources, c.share)
+	}
+	for i := range files {
+		slices.Sort(files[i].Projects)
+		slices.Sort(files[i].InheritedProjects)
 	}
 	return files, nil
 }
@@ -222,7 +264,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 			defer cancel()
-			files, err := s.visible(ctx, p, id, nil)
+			files, err := s.visibleInProject(ctx, p, id, nil, r.URL.Query().Get("source_project"))
 			if err != nil {
 				problem(w, 503, "source_unavailable")
 				return
@@ -247,8 +289,13 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		})
 	}
 }
+
+// 每一个可见版本都必须由本次复核通过的来源独立取得过。
+const sourceVersion = ` AND EXISTS(SELECT FROM feishu_file_share_versions sv WHERE
+ (sv.tenant_key,sv.app_id,sv.message_id,sv.file_id)=(x.tenant_key,x.app_id,x.message_id,x.file_id) AND sv.version_id=`
+
 func (s *Service) versions(ctx context.Context, w http.ResponseWriter, p identity.Principal, f item) {
-	rows, err := s.pool.Query(ctx, `SELECT h.id,h.created_at FROM feishu_file_versions h WHERE h.file_id=$6 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)) ORDER BY h.id DESC`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, messageIDs(f))
+	rows, err := s.pool.Query(ctx, `SELECT h.id,h.created_at FROM feishu_file_versions h WHERE h.file_id=$6 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)`+sourceVersion+`h.id)) ORDER BY h.id DESC`, s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, messageIDs(f))
 	if err != nil {
 		problem(w, 503, "source_unavailable")
 		return
@@ -283,6 +330,53 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 		problem(w, 404, "file_unavailable")
 		return
 	}
+	info, err := s.versionInfo(ctx, p, f, messageIDs(f), v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		problem(w, 404, "file_unavailable")
+		return
+	}
+	if err != nil {
+		problem(w, 503, "source_unavailable")
+		return
+	}
+	kind := contentType(f, info.mime)
+	w.Header().Set("Content-Type", kind)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Query().Has("download") || kind == "application/octet-stream" {
+		name := f.Name
+		switch f.Category {
+		case "docs", "minutes":
+			name += ".txt"
+		case "tasks":
+			name += ".json"
+		}
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	}
+	if info.key != "" {
+		if s.objects == nil {
+			problem(w, 503, "source_unavailable")
+			return
+		}
+		object, err := s.objects.Open(ctx, info.key, info.size)
+		if err != nil {
+			problem(w, 503, "source_unavailable")
+			return
+		}
+		defer object.Close()
+		reader := &checkedReader{ReadSeeker: object, check: func() error {
+			files, err := s.visibleInProject(ctx, p, f.ID, nil, r.URL.Query().Get("source_project"))
+			if err != nil {
+				return err
+			}
+			if len(files) != 1 {
+				return ErrRevoked
+			}
+			_, err = s.versionInfo(ctx, p, f, messageIDs(files[0]), v)
+			return err
+		}, last: time.Now()}
+		http.ServeContent(w, r, f.Name, time.Time{}, reader)
+		return
+	}
 	rows, err := s.versionChunks(ctx, p, f, messageIDs(f), v)
 	if err != nil {
 		problem(w, 503, "source_unavailable")
@@ -296,16 +390,6 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 			problem(w, 404, "file_unavailable")
 		}
 		return
-	}
-	kind := "application/octet-stream"
-	if f.Category == "docs" || f.Category == "minutes" {
-		kind = "text/plain; charset=utf-8"
-	} else if f.Category == "tasks" {
-		kind = "application/json"
-	}
-	w.Header().Set("Content-Type", kind)
-	if kind == "application/octet-stream" {
-		w.Header().Set("Content-Disposition", "attachment")
 	}
 	for {
 		var b []byte
@@ -427,6 +511,53 @@ func (s *Service) versionChunks(ctx context.Context, p identity.Principal, f ite
 	return s.pool.Query(ctx, `SELECT h.byte_size,c.content FROM feishu_file_versions h
  LEFT JOIN LATERAL unnest(h.chunks) WITH ORDINALITY part(digest,ord) ON true
  LEFT JOIN feishu_file_chunks c ON c.file_id=h.file_id AND c.digest=part.digest
- WHERE h.file_id=$6 AND h.id=$8 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)) ORDER BY part.ord`,
+ WHERE h.file_id=$6 AND h.id=$8 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)`+sourceVersion+`h.id)) ORDER BY part.ord`,
 		s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, sources, v)
+}
+
+type versionObject struct {
+	key, mime string
+	size      int64
+}
+
+func (s *Service) versionInfo(ctx context.Context, p identity.Principal, f item, messages []string, version int64) (versionObject, error) {
+	var obj versionObject
+	err := s.pool.QueryRow(ctx, `SELECT coalesce(h.object_key,''),coalesce(h.content_type,''),h.byte_size FROM feishu_file_versions h
+    WHERE h.file_id=$6 AND h.id=$8 AND EXISTS(SELECT 1`+authorizedSources+` AND x.message_id=ANY($7)`+sourceVersion+`h.id))`,
+		s.tenant, s.app, s.generation, p.AccountID, p.OpenID, f.ID, messages, version).Scan(&obj.key, &obj.mime, &obj.size)
+	return obj, err
+}
+
+func contentType(f item, detected string) string {
+	if f.Category == "docs" || f.Category == "minutes" {
+		return "text/plain; charset=utf-8"
+	}
+	if f.Category == "tasks" {
+		return "application/json"
+	}
+	switch detected {
+	case "image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/webm":
+		return detected
+	}
+	return "application/octet-stream"
+}
+
+type checkedReader struct {
+	io.ReadSeeker
+	check func() error
+	read  int
+	last  time.Time
+}
+
+func (r *checkedReader) Read(p []byte) (int, error) {
+	if r.read >= 4<<20 || time.Since(r.last) > 5*time.Second {
+		if err := r.check(); err != nil {
+			return 0, err
+		}
+		r.read = 0
+		r.last = time.Now()
+	}
+	n, err := r.ReadSeeker.Read(p)
+	r.read += n
+	return n, err
 }

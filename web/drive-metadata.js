@@ -15,7 +15,7 @@ export function fileSources(row) {
 
 export function fileProjects(row, names) {
   const { escape } = window.OmniRelayUI;
-  const chips = row.project_ids.map(id => '<span class="kind">' + escape(names.get(id) || id) + '</span>');
+  const chips = row.project_ids.map(id => '<span class="kind">' + escape(names.get(id) || id) + (row.inherited_project_ids?.includes(id) ? ' · 来自群聊' : '') + '</span>');
   return '<button class="row-action drive-projects" type="button" data-drive-projects="' + escape(row.id) +
     '" aria-label="修改 ' + escape(row.name) + ' 的所属项目">' + (chips.join('') || '添加所属项目') + '</button>';
 }
@@ -36,7 +36,7 @@ export async function editFileProjects({ row, trigger, request, signal, refresh,
     trigger.disabled = false;
   }
   if (signal.aborted || !trigger.isConnected) return;
-  const current = new Set(snapshot.project_ids);
+  const current = new Set(snapshot.manual_project_ids ?? snapshot.project_ids);
   const known = new Set(choices.map(item => item.id));
   for (const id of current) if (!known.has(id)) choices.push({id, label:id});
   const read = form => new Set(form.querySelector('[data-combo-result]').value.split(',').filter(Boolean));
@@ -48,7 +48,7 @@ export async function editFileProjects({ row, trigger, request, signal, refresh,
   const close = () => dialog.close();
   const dialog = openDialog({
     title:'修改所属项目', description:snapshot.name, variant:'form', confirm:'保存',
-    body:combo('drive-project-picker','所属项目','projects',true), isDirty:dirty,
+    body:(snapshot.inherited_project_ids?.length ? '<p>来自群聊：' + snapshot.inherited_project_ids.map(id => window.OmniRelayUI.escape(choices.find(choice => choice.id === id)?.label || id)).join('、') + '</p>' : '') + combo('drive-project-picker','人工关联项目','projects',true), isDirty:dirty,
     async onSubmit(form) {
       if (busy) return {keepOpen:true};
       if (!dirty(form)) return;

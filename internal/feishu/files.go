@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,10 +39,27 @@ func (s *ChatSource) CheckShare(ctx context.Context, r drive.Ref, chatID string)
 		if m == nil || value(m.MessageId) != r.MessageID || value(m.ChatId) != chatID || m.Body == nil || (m.Deleted != nil && *m.Deleted) {
 			continue
 		}
-		for _, live := range drive.References(value(m.MsgType), value(m.Body.Content)) {
+		refs := drive.References(value(m.MsgType), value(m.Body.Content))
+		for _, live := range refs {
 			if r.Kind == live.Kind && r.Token == live.Token {
 				return nil
 			}
+		}
+		var unavailable error
+		for _, live := range refs {
+			if live.Kind != "wiki" {
+				continue
+			}
+			target, err := s.ResolveWiki(ctx, live.Token)
+			if err != nil && !errors.Is(err, drive.ErrRevoked) {
+				unavailable = err
+			}
+			if err == nil && target.Kind == r.Kind && target.Token == r.Token {
+				return nil
+			}
+		}
+		if unavailable != nil {
+			return unavailable
 		}
 	}
 	return drive.ErrRevoked
@@ -49,6 +68,10 @@ func (s *ChatSource) CheckShare(ctx context.Context, r drive.Ref, chatID string)
 const fileLimit = 64 << 20
 
 func (s *ChatSource) fileRequest(ctx context.Context, path string) (*http.Response, error) {
+	return s.fileRequestWithToken(ctx, path, true)
+}
+
+func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retryToken bool) (*http.Response, error) {
 	token, err := s.credential(ctx)
 	if err != nil {
 		return nil, drive.ErrUnavailable
@@ -77,6 +100,20 @@ func (s *ChatSource) fileRequest(ctx context.Context, path string) (*http.Respon
 			s.tokenUntil = time.Time{}
 		}
 		s.mu.Unlock()
+		if retryToken {
+			resp.Body.Close()
+			return s.fileRequestWithToken(ctx, path, false)
+		}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		raw := resp.Header.Get("Retry-After")
+		delay := 30 * time.Second
+		if seconds, err := strconv.ParseInt(raw, 10, 32); err == nil && seconds >= 0 {
+			delay = time.Duration(seconds) * time.Second
+		} else if when, err := http.ParseTime(raw); err == nil {
+			delay = time.Until(when)
+		}
+		return nil, &drive.RetryAfterError{Delay: max(delay, time.Second)}
 	}
 	var failure struct{ Code int }
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&failure)
@@ -159,8 +196,11 @@ func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (dri
 		}
 		result.Name = meta.Minute.Title
 		path += "/transcript?file_format=txt"
-	case "attachment":
+	case "attachment", "image", "video":
 		path = "im/v1/messages/" + url.PathEscape(r.MessageID) + "/resources/" + id + "?type=file"
+		if r.Kind == "image" {
+			path = "im/v1/messages/" + url.PathEscape(r.MessageID) + "/resources/" + id + "?type=image"
+		}
 	case "file":
 		path = "drive/v1/files/" + id + "/download"
 	default:
@@ -175,12 +215,28 @@ func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (dri
 		result.Name = name
 	}
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") && params["filename"] == "" {
-		defer resp.Body.Close()
-		var envelope struct{ Code *int }
-		if json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&envelope) == nil && envelope.Code != nil {
-			return result, fileError(*envelope.Code)
+		// 合法 JSON 附件可能没有文件名；只将明确的平台错误信封识别为失败。
+		head, err := io.ReadAll(io.LimitReader(resp.Body, 32769))
+		if err != nil {
+			resp.Body.Close()
+			return result, drive.ErrPartial
 		}
-		return result, drive.ErrUnavailable
+		var envelope struct {
+			Code int
+			Msg  *string
+		}
+		if len(head) <= 32768 && json.Unmarshal(head, &envelope) == nil && envelope.Code != 0 {
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(head, &fields)
+			if envelope.Msg != nil || len(fields) == 1 {
+				resp.Body.Close()
+				return result, fileError(envelope.Code)
+			}
+		}
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
 	}
 	if probe {
 		resp.Body.Close()
@@ -267,4 +323,28 @@ func (s *ChatSource) baseFile(ctx context.Context, id string, probe bool) (drive
 		result.Content, err = json.Marshal(tables)
 	}
 	return result, err
+}
+
+func (s *ChatSource) ResolveWiki(ctx context.Context, token string) (drive.Ref, error) {
+	var result struct {
+		Node *struct {
+			Kind  string `json:"obj_type"`
+			Token string `json:"obj_token"`
+		}
+	}
+	if err := s.fileJSON(ctx, "wiki/v2/spaces/get_node?token="+url.QueryEscape(token), &result); err != nil {
+		return drive.Ref{}, err
+	}
+	if result.Node == nil || result.Node.Token == "" {
+		return drive.Ref{}, drive.ErrUnavailable
+	}
+	kind := result.Node.Kind
+	if kind == "bitable" {
+		kind = "base"
+	}
+	switch kind {
+	case "docx", "file", "base", "minutes":
+		return drive.Ref{Kind: kind, Token: result.Node.Token}, nil
+	}
+	return drive.Ref{}, drive.ErrRevoked
 }

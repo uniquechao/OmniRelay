@@ -8,6 +8,7 @@ import (
 )
 
 type ProjectSource struct {
+	VersionID *int64
 	ID        int64
 	Title     string
 	Category  string
@@ -18,7 +19,7 @@ type ProjectSource struct {
 	SharedAt  time.Time
 }
 
-// ProjectSources projects only sources still readable through this project's own group links.
+// 项目入口复用网盘的有效归属、可读群及来源版本筛选。
 func (s *Service) ProjectSources(ctx context.Context, actor identity.Principal, project string) ([]ProjectSource, error) {
 	if project == "" || actor.TenantKey != s.tenant || actor.AppID != s.app || actor.AccountID == "" {
 		return nil, ErrRevoked
@@ -29,9 +30,9 @@ func (s *Service) ProjectSources(ctx context.Context, actor identity.Principal, 
 	}
 	items := make([]ProjectSource, 0, len(files))
 	for _, file := range files {
-		source := file.Sources[0]
+		source := file.Sources[file.versionSourceIndex]
 		items = append(items, ProjectSource{
-			ID: file.ID, Title: file.Name, Category: file.Category, FormatKey: file.FormatKey, State: file.State,
+			ID: file.ID, VersionID: file.Version, Title: file.Name, Category: file.Category, FormatKey: file.FormatKey, State: file.State,
 			ChatID: source.ChatID, MessageID: source.MessageID, SharedAt: source.SentAt,
 		})
 	}

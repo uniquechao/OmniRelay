@@ -70,6 +70,8 @@ type sourceSummary struct {
 	Title     string    `json:"title"`
 	Created   time.Time `json:"created_at"`
 	RefID     string    `json:"resource_token,omitempty"`
+	FileID    int64     `json:"file_id,omitempty"`
+	VersionID *int64    `json:"version_id,omitempty"`
 	Category  string    `json:"category"`
 	Status    string    `json:"status,omitempty"`
 	ChatID    string    `json:"chat_id,omitempty"`
@@ -119,11 +121,11 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 			files = nil
 		}
 		for _, f := range files {
-			if f.Category != category && (panel != "docs" || f.Category != "tasks") {
+			if (panel == "meetings") != (f.Category == "minutes") {
 				continue
 			}
 			items = append(items, sourceSummary{
-				ID: strconv.FormatInt(f.ID, 10), Kind: f.FormatKey, Title: f.Title, Category: f.Category,
+				ID: strconv.FormatInt(f.ID, 10), FileID: f.ID, VersionID: f.VersionID, Kind: f.FormatKey, Title: f.Title, Category: f.Category,
 				Status: f.State, ChatID: f.ChatID, MessageID: f.MessageID, Created: f.SharedAt,
 			})
 		}

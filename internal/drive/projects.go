@@ -121,10 +121,10 @@ func (s *Service) changeProjects(ctx context.Context, p identity.Principal, file
 		if _, err := tx.Exec(ctx, `SELECT set_config('omnirelay.file_project_actor',$1,true)`, p.AccountID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM feishu_file_projects WHERE tenant_key=$1 AND app_id=$2 AND file_id=$3 AND project_id=ANY($4)`, s.tenant, s.app, file.ID, c.Remove); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM feishu_file_manual_projects WHERE tenant_key=$1 AND app_id=$2 AND file_id=$3 AND project_id=ANY($4)`, s.tenant, s.app, file.ID, c.Remove); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO feishu_file_projects SELECT $1,$2,$3,unnest($4::text[]) ON CONFLICT DO NOTHING`, s.tenant, s.app, file.ID, c.Add); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO feishu_file_manual_projects SELECT $1,$2,$3,unnest($4::text[]) ON CONFLICT DO NOTHING`, s.tenant, s.app, file.ID, c.Add); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, revisionQuery, s.tenant, s.app, file.ID).Scan(&version)
