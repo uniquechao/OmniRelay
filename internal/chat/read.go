@@ -185,13 +185,20 @@ func (s *Service) projectMessages(ctx context.Context, p identity.Principal, sco
 	}
 	var icons []cloudIcon
 	var tokens []string
+	documentItems := map[string]*messageItem{}
 	for i := range items {
 		item := &items[i]
 		if item.State == "deleted" {
 			continue
 		}
 		for _, ref := range drive.MessageReferences(item.Type, item.Body) {
-			item.Resources = append(item.Resources, messageResource{ref.Kind, ref.Token, ref.Name, ref.URL})
+			resource := messageResource{Kind: ref.Kind, Key: ref.Token, Name: ref.Name, URL: ref.URL}
+			if ref.URL != "" {
+				resource.Name = ""
+				resource.State = "pending"
+				documentItems[item.ID] = item
+			}
+			item.Resources = append(item.Resources, resource)
 		}
 		for _, ref := range drive.References(item.Type, item.Body) {
 			if ref.Kind == "file" {
@@ -199,6 +206,11 @@ func (s *Service) projectMessages(ctx context.Context, p identity.Principal, sco
 				tokens = append(tokens, ref.Token)
 			}
 			item.FileFormats = append(item.FileFormats, drive.Format(ref.Kind, ref.Name))
+		}
+	}
+	if len(documentItems) > 0 {
+		if err := s.projectDocuments(ctx, documentItems); err != nil {
+			return err
 		}
 	}
 	if len(tokens) > 0 && s.files != nil {

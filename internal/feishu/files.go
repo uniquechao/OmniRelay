@@ -93,19 +93,12 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 	if err != nil {
 		return nil, drive.ErrUnavailable
 	}
-	return s.fetchFile(ctx, path, token, false, retryToken)
-}
-
-func (s *ChatSource) fetchFile(ctx context.Context, path, token string, user, retryToken bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://open.feishu.cn/open-apis/"+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := http.Client{Transport: s.check.client.Transport, CheckRedirect: s.check.client.CheckRedirect}
-	if user {
-		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, drive.ErrUnavailable
@@ -118,9 +111,6 @@ func (s *ChatSource) fetchFile(ctx context.Context, path, token string, user, re
 		return nil, drive.ErrRevoked
 	}
 	if resp.StatusCode == 401 {
-		if user {
-			return nil, drive.ErrPreviewAuthorization
-		}
 		s.mu.Lock()
 		if s.token == token {
 			s.token = ""
@@ -144,7 +134,7 @@ func (s *ChatSource) fetchFile(ctx context.Context, path, token string, user, re
 	}
 	var failure struct{ Code int }
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&failure)
-	return nil, (fileGetter{user: user}).resultError(failure.Code)
+	return nil, fileError(failure.Code)
 }
 
 func fileError(code int) error {
@@ -156,15 +146,7 @@ func fileError(code int) error {
 }
 
 type fileGetter struct {
-	get  func(context.Context, string) (*http.Response, error)
-	user bool
-}
-
-func (f fileGetter) resultError(code int) error {
-	if f.user && (code == 99991663 || code == 99991668 || code == 99991677) {
-		return drive.ErrPreviewAuthorization
-	}
-	return fileError(code)
+	get func(context.Context, string) (*http.Response, error)
 }
 
 func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
@@ -188,7 +170,7 @@ func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
 		return drive.ErrUnavailable
 	}
 	if *env.Code != 0 {
-		return f.resultError(*env.Code)
+		return fileError(*env.Code)
 	}
 	if len(env.Data) == 0 || string(env.Data) == "null" || json.Unmarshal(env.Data, out) != nil {
 		return drive.ErrUnavailable
@@ -198,22 +180,6 @@ func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
 
 func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
 	return (fileGetter{get: s.fileRequest}).readFile(ctx, r, probe)
-}
-
-func (s *ChatSource) userFiles(token string) fileGetter {
-	return fileGetter{user: true, get: func(ctx context.Context, path string) (*http.Response, error) {
-		return s.fetchFile(ctx, path, token, true, false)
-	}}
-}
-
-func (s *ChatSource) ReadPreviewFile(ctx context.Context, r drive.Ref, token string) (drive.Snapshot, error) {
-	if r.Kind == "image" || r.Kind == "attachment" {
-		return s.ReadFile(ctx, r, false)
-	}
-	if token == "" {
-		return drive.Snapshot{}, drive.ErrPreviewAuthorization
-	}
-	return s.userFiles(token).readFile(ctx, r, false)
 }
 
 func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
@@ -246,16 +212,14 @@ func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (driv
 		return result, nil
 	case "minutes":
 		path = "minutes/v1/minutes/" + id
-		if !s.user {
-			var meta struct{ Minute *struct{ Title string } }
-			if err := s.fileJSON(ctx, path, &meta); err != nil {
-				return result, err
-			}
-			if meta.Minute == nil {
-				return result, drive.ErrUnavailable
-			}
-			result.Name = meta.Minute.Title
+		var meta struct{ Minute *struct{ Title string } }
+		if err := s.fileJSON(ctx, path, &meta); err != nil {
+			return result, err
 		}
+		if meta.Minute == nil {
+			return result, drive.ErrUnavailable
+		}
+		result.Name = meta.Minute.Title
 		path += "/transcript?file_format=txt"
 	case "attachment", "image", "video":
 		kind := "file"
@@ -292,7 +256,7 @@ func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (driv
 			_ = json.Unmarshal(head, &fields)
 			if envelope.Msg != nil || len(fields) == 1 {
 				resp.Body.Close()
-				return result, s.resultError(envelope.Code)
+				return result, fileError(envelope.Code)
 			}
 		}
 		resp.Body = struct {
@@ -388,25 +352,9 @@ func (s fileGetter) baseFile(ctx context.Context, id string, probe bool) (drive.
 }
 
 func (s *ChatSource) ResolveWiki(ctx context.Context, token string) (drive.Ref, error) {
-	var result struct {
-		Node *struct {
-			Kind  string `json:"obj_type"`
-			Token string `json:"obj_token"`
-		}
+	target, err := s.ResolveDocumentWiki(ctx, drive.Ref{Kind: "wiki", Token: token})
+	if errors.Is(err, drive.ErrPreviewUnsupported) || target.Kind == "sheets" {
+		return drive.Ref{}, drive.ErrRevoked
 	}
-	if err := (fileGetter{get: s.fileRequest}).fileJSON(ctx, "wiki/v2/spaces/get_node?token="+url.QueryEscape(token), &result); err != nil {
-		return drive.Ref{}, err
-	}
-	if result.Node == nil || result.Node.Token == "" {
-		return drive.Ref{}, drive.ErrUnavailable
-	}
-	kind := result.Node.Kind
-	if kind == "bitable" {
-		kind = "base"
-	}
-	switch kind {
-	case "docx", "file", "base", "minutes":
-		return drive.Ref{Kind: kind, Token: result.Node.Token}, nil
-	}
-	return drive.Ref{}, drive.ErrRevoked
+	return target, err
 }

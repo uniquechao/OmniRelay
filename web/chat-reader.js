@@ -1,7 +1,7 @@
 import { assignmentAPI, editAssignment } from './chat-assignment.js';
 import { renderChatCard } from './chat-card.js';
 import { mountChatComposer } from './chat-composer.js';
-import { messageResources, openMessagePreview, previewReturn, renderMessageResource } from './chat-preview.js';
+import { messageResources, openMessagePreview, renderMessageResource } from './chat-preview.js';
 import { fileIcon } from './file-format.js';
 
 const chatBase = '/api/v1/feishu/chats';
@@ -208,9 +208,9 @@ export function mountChatReader(host, api, {
   let statusTimer;
   let listTrigger;
   let pendingListFocus;
-  const previewRoute = (chat, message) => [projectId ? '#/projects/' + projectId + '/chats' : chatHash, chat, message].join('/');
-  let returnedPreview = chatId && messageId ? previewReturn(previewRoute(chatId, messageId)) : undefined;
   let currentPreview;
+  let documentTimer;
+  let nextDocument = 0;
 
   const composer = api.capabilities && mountChatComposer(get('[data-composer-host]'), api, {
     signal, draftScope, onConfirmed: () => loadMessages({ preserve: true })
@@ -225,6 +225,7 @@ export function mountChatReader(host, api, {
     clearTimeout(listTimer);
     clearTimeout(messageTimer);
     clearTimeout(statusTimer);
+    clearTimeout(documentTimer);
     for (const dialog of dialogs) if (dialog.open) dialog.close();
   }, { once: true });
 
@@ -264,6 +265,8 @@ export function mountChatReader(host, api, {
     cancel('assignment-dialog');
     cancel('project-name');
     get('.chat-project-meta').hidden = true;
+    clearTimeout(documentTimer);
+    cancel('document-cards');
     cancel('selection');
     cancel('messages');
     cancel('members');
@@ -297,19 +300,10 @@ export function mountChatReader(host, api, {
     return text.split(new RegExp('(' + find + ')', 'giu'))
       .map((part, i) => i % 2 ? '<mark>' + esc(part) + '</mark>' : esc(part)).join('');
   }
-  function previewText(text, query, resources, inlineResources) {
-    const urls = resources.flatMap((resource, index) => resource.url ? [[resource.url, index]] : []);
-    if (!urls.length) return highlight(text, query);
-    const byURL = new Map(urls);
-    const pattern = [...byURL.keys()].sort((a, b) => b.length - a.length)
-      .map(url => url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    return text.split(new RegExp('(' + pattern + ')', 'gu')).map((part, index) => {
-      const label = highlight(part, query);
-      if (index % 2 === 0) return label;
-      const resource = byURL.get(part);
-      inlineResources.add(resource);
-      return `<button class="chat-resource-inline" type="button" data-action="preview" data-resource="${resource}" aria-haspopup="dialog">${label}</button>`;
-    }).join('');
+  function documentCopy(text, resources) {
+    const urls = resources.map(resource => resource.url).filter(Boolean).sort((a,b) => b.length-a.length);
+    for (const url of urls) text = text.replaceAll(url, '');
+    return text.trim();
   }
   function paintSelection() {
     for (const row of directory.querySelectorAll('[data-chat-id]')) {
@@ -420,16 +414,14 @@ export function mountChatReader(host, api, {
       });
       const content = messageBody(item);
       const resources = api.preview ? messageResources(item) : [];
-      const standalone = resources.some(resource => (resource.url && resource.url === content.trim()) ||
-        (item.type === 'image' && resource.kind === 'image') || (item.type === 'file' && resource.kind === 'attachment'));
+      const copy = documentCopy(content, resources);
+      const standalone = resources.some(resource => (item.type === 'image' && resource.kind === 'image') ||
+        (item.type === 'file' && resource.kind === 'attachment'));
       const icons = resources.length ? '' : (item.file_formats ?? []).map(format => fileIcon(format.key, format.label)).join('');
-      const inlineResources = new Set();
-      const bubble = !standalone && (!card || icons) ? `<p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}${
-        card ? '' : `<span>${previewText(content, query, resources, inlineResources)}</span>`}</p>` : '';
-      const attachments = resources.map((resource, index) => {
-        if (inlineResources.has(index) || (resource.url && card && card.includes('href="' + esc(new URL(resource.url).href) + '"'))) return '';
-        return renderMessageResource(resource, index, api.resourceURL(item.chat_id, item.id, resource), name => highlight(name, query));
-      }).join('');
+      const bubble = !standalone && ((!card && copy) || icons) ? `<p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}${
+        card ? '' : `<span>${highlight(copy, query)}</span>`}</p>` : '';
+      const attachments = resources.map((resource, index) =>
+        renderMessageResource(resource, index, api.resourceURL(item.chat_id, item.id, resource), name => highlight(name, query))).join('');
       return separator + `<li class="chat-message" data-message="${esc(item.id)}" tabindex="-1"
         data-author="${fromBot ? 'bot' : 'person'}" ${item.id === anchor ? 'data-source-message' : ''}>
         ${fromBot ? botAvatar : personButton(person, personAvatar(name, person.person_key || name), 'chat-person-button')}
@@ -456,27 +448,67 @@ export function mountChatReader(host, api, {
     } else {
       timeline.scrollTop = timeline.scrollHeight;
     }
-    if (currentPreview) {
-      const { id, resource, dialog } = currentPreview;
-      const item = messages.find(message => message.id === id);
-      if (!item || !messageResources(item).some(candidate => candidate.kind === resource.kind && candidate.key === resource.key)) {
-        dialog.close();
+    checkOpenDocument();
+    scheduleDocumentCheck();
+  }
+
+  function checkOpenDocument() {
+    if (!currentPreview) return;
+    const {id, resource, dialog} = currentPreview;
+    const item = messages.find(message => message.id === id);
+    if (!item || !messageResources(item).some(other => other.kind === resource.kind && other.key === resource.key &&
+      (!other.url || other.state === 'ready'))) dialog.close();
+  }
+
+  function scheduleDocumentCheck() {
+    clearTimeout(documentTimer);
+    const waiting = messages.filter(item => messageResources(item).some(resource => resource.state === 'pending'));
+    const open = currentPreview?.resource.url && messages.find(item => item.id === currentPreview.id);
+    const retrying = messages.filter(item => messageResources(item).some(resource =>
+      ['source_unavailable', 'resource_forbidden'].includes(resource.state)));
+    const candidates = waiting.length ? waiting : retrying;
+    const target = open || candidates[nextDocument++ % (candidates.length || 1)];
+    if (target) documentTimer = setTimeout(() => refreshDocumentCards(target), open || !waiting.length ? 30000 : 4000);
+  }
+
+  async function refreshDocumentCards(target) {
+    if (document.hidden) { scheduleDocumentCheck(); return; }
+    const {scope, current} = requestSlot('document-cards');
+    try {
+      const result = await api.context(target.chat_id, target.id, scope);
+      if (!current() || !messages.includes(target)) return;
+      const updates = new Map(result.items.map(item => [item.id, item]));
+      const scrollTop = timeline.scrollTop;
+      const changed = messages.some(item => {
+        const update = updates.get(item.id);
+        return update && (update.state !== item.state || update.body !== item.body ||
+          JSON.stringify(update.resources) !== JSON.stringify(item.resources));
+      });
+      if (changed) {
+        const focused = timeline.contains(document.activeElement) ? document.activeElement.closest('[data-resource]') : null;
+        const messageID = focused?.closest('[data-message]')?.dataset.message;
+        messages = messages.map(item => updates.get(item.id) || item);
+        paintTimeline();
+        timeline.scrollTop = scrollTop;
+        if (messageID) get('[data-message="' + CSS.escape(messageID) + '"] [data-resource="' + focused.dataset.resource + '"]')?.focus({preventScroll:true});
       }
-    }
-    if (returnedPreview && anchor) {
-      const saved = returnedPreview;
-      returnedPreview = undefined;
-      const item = messages.find(message => message.id === anchor);
-      const index = item && messageResources(item).findIndex(resource => resource.kind === saved.kind && resource.key === saved.key);
-      if (item && index >= 0) showPreview(item, index, undefined, saved.result);
+    } catch (error) {
+      if (!current() || !messages.includes(target)) return;
+      if (accessLost(error) || error.status === 401) { loseSelection(error); return; }
+      if (['message_deleted','message_not_found'].includes(error.data?.error)) {
+        target.state = 'deleted';
+        paintTimeline();
+      }
+    } finally {
+      if (current()) scheduleDocumentCheck();
     }
   }
 
-  function showPreview(item, index, trigger, authorizationResult) {
+  function showPreview(item, index, trigger) {
     const resource = messageResources(item)[index];
-    if (!resource || !api.preview) return;
+    if (!resource || !api.preview || (resource.url && resource.state !== 'ready')) return;
     const dialog = openMessagePreview({
-      resource, route:previewRoute(item.chat_id, item.id), signal, authorizationResult,
+      resource, signal,
       restoreFocus: () => trigger?.isConnected ? trigger : get('[data-message="' + CSS.escape(item.id) + '"] [data-resource="' + index + '"]') ?? title,
       read: (params, active) => api.preview(item.chat_id, item.id, resource, params, active),
       onClose() {
@@ -486,6 +518,7 @@ export function mountChatReader(host, api, {
     });
     currentPreview = {id:item.id, resource, dialog};
     dialogs.add(dialog);
+    scheduleDocumentCheck();
   }
 
   function loseDirectory(error) {
@@ -923,7 +956,7 @@ export function mountChatReader(host, api, {
     if (link && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
       const item = messages.find(row => row.id === link.closest('[data-message]')?.dataset.message);
       const index = item && messageResources(item).findIndex(resource => resource.url && new URL(resource.url).href === link.href);
-      if (item && index >= 0 && api.preview) {
+      if (item && index >= 0 && messageResources(item)[index].state === 'ready' && api.preview) {
         event.preventDefault();
         showPreview(item, index, link);
       }

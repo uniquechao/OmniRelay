@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/base64"
-	"errors"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,37 +17,37 @@ import (
 type previewFixture struct {
 	checks, reads int
 	checkError    error
+	onDocument    func()
 }
 
 func (f *previewFixture) CheckPreviewShare(_ context.Context, ref drive.Ref, chat string) error {
 	f.checks++
-	if ref.MessageID == "" || chat != "oc_preview" {
+	if ref.MessageID == "" || (chat != "oc_preview" && chat != "oc_private") {
 		return drive.ErrRevoked
 	}
 	return f.checkError
 }
 
-func (*previewFixture) ResolvePreviewWiki(_ context.Context, ref drive.Ref, token string) (drive.Ref, error) {
-	if token != "wiki-session" {
-		return drive.Ref{}, drive.ErrRevoked
-	}
+func (*previewFixture) ResolveDocumentWiki(_ context.Context, ref drive.Ref) (drive.Ref, error) {
 	ref.Kind, ref.Token = "sheets", "linked_sheet"
 	return ref, nil
 }
-
-func (f *previewFixture) ReadPreviewSheet(_ context.Context, ref drive.Ref, token string, options drive.MessagePreviewOptions) (drive.MessagePreviewResult, error) {
+func (f *previewFixture) ReadDocument(_ context.Context, ref drive.Ref) (drive.Snapshot, error) {
 	f.reads++
-	if ref.Token != "linked_sheet" || token != "sheet-session" || options.Page != 2 {
-		return drive.MessagePreviewResult{}, drive.ErrRevoked
+	if f.onDocument != nil {
+		f.onDocument()
 	}
-	return drive.MessagePreviewResult{Stage: "ready", Kind: "xlsx", Data: []byte(`[["第二页"]]`)}, nil
+	if ref.Token == "direct_doc" {
+		return drive.Snapshot{Name: "讨论记录", Content: []byte("已同步的私聊文档")}, nil
+	}
+	if ref.Token != "linked_sheet" {
+		return drive.Snapshot{}, drive.ErrRevoked
+	}
+	content, err := json.Marshal([]drive.ChatSheet{{Name: "明细", Rows: 51, Pages: []json.RawMessage{[]byte(`[]`), []byte(`[["第二页"]]`)}}})
+	return drive.Snapshot{Name: "归档表格", Content: content}, err
 }
-
-func (f *previewFixture) ReadPreviewFile(_ context.Context, ref drive.Ref, token string) (drive.Snapshot, error) {
+func (f *previewFixture) ReadFile(_ context.Context, ref drive.Ref, probe bool) (drive.Snapshot, error) {
 	f.reads++
-	if token != "" {
-		return drive.Snapshot{}, errors.New("unexpected user grant for a message resource")
-	}
 	if ref.Kind == "image" {
 		if ref.Token == "active_content" {
 			return drive.Snapshot{Content: []byte(`<svg onload="alert(1)"></svg>`)}, nil
@@ -82,8 +82,13 @@ func TestMessagePreviewAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := &previewFixture{}
-	grants := map[string]string{}
-	s.ConfigurePreview(fixture, func(_ *http.Request, _ identity.Principal, kind string) string { return grants[kind] })
+	s.ConfigurePreview(fixture)
+	if err := s.indexDocuments(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := s.syncDocument(ctx); err != nil || !worked {
+		t.Fatal("未提前同步文档", worked, err)
+	}
 	mux := http.NewServeMux()
 	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
 		return p, true
@@ -110,17 +115,18 @@ func TestMessagePreviewAuthorization(t *testing.T) {
 		get(prefix+"/oc_preview/messages/om_file/resources/attachment/file_demo", 200, "聊天附件预览")
 		get(prefix+"/oc_preview/messages/om_unsupported/resources/attachment/file_unsupported", 200, `"stage":"unsupported"`)
 		get(prefix+"/oc_preview/messages/om_active/resources/image/active_content", 415, `"error":"unsupported"`)
-		clear(grants)
-		get(prefix+wiki, 403, `"kind":"wiki"`)
-		grants["wiki"] = "wiki-session"
-		get(prefix+wiki, 403, `"kind":"sheets"`)
-		grants["sheets"] = "sheet-session"
+		get(prefix+"/oc_preview/messages", 200, `"name":"归档表格"`)
+		reads := fixture.reads
 		get(prefix+wiki, 200, "第二页")
+		if reads != fixture.reads {
+			t.Fatal("点击时重新读取了飞书文档正文")
+		}
 	}
 	checks, reads := fixture.checks, fixture.reads
 	get(global+image+"_forged", 404, "resource_not_found")
 	get(project+"/oc_unlinked/messages/om_unlinked/resources/image/img_demo", 404, "chat_access_lost")
 	p.AccountID, p.OpenID = "bob", "ou_bob"
+	get(global+wiki, 404, "chat_access_lost")
 	get(global+image, 404, "chat_access_lost")
 	get(project+image, 404, "chat_access_lost")
 	if fixture.checks != checks || fixture.reads != reads {
@@ -130,6 +136,55 @@ func TestMessagePreviewAuthorization(t *testing.T) {
 	fixture.checkError = drive.ErrPreviewMessageDeleted
 	get(project+image, 410, "message_deleted")
 	fixture.checkError = nil
+	archive("oc_preview", "om_wiki", "text", "", true)
+	get(global+wiki, 410, "message_deleted")
+	var count int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM feishu_chat_documents WHERE message_id='om_wiki'`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("撤回后仍有文档快照", count, err)
+	}
 	archive("oc_preview", "om_image", "image", "", true)
 	get(global+image, 410, "message_deleted")
+}
+
+func TestPrivateDocumentSnapshotInvalidation(t *testing.T) {
+	s, ctx := testChat(t, &fakeSource{})
+	fixture := &previewFixture{}
+	s.ConfigurePreview(fixture)
+	const message = "om_private_document"
+	archive := func(token string, deleted bool) {
+		t.Helper()
+		msg := exampleMessage("oc_private", message, "https://example.feishu.cn/docx/"+token, 1)
+		msg.Deleted = deleted
+		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: "oc_private", Kind: orchestrator.ChatPrivate, PeerOpenID: "ou_alice", Message: &msg})
+	}
+	work := func() {
+		t.Helper()
+		if err := s.indexDocuments(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if worked, err := s.syncDocument(ctx); !worked || err != nil {
+			t.Fatal("私聊文档同步失败", worked, err)
+		}
+	}
+	meta := func(token, state, title string) {
+		t.Helper()
+		item := messageItem{Resources: []messageResource{{Key: token, Kind: "docx"}}}
+		if err := s.projectDocuments(ctx, map[string]*messageItem{message: &item}); err != nil {
+			t.Fatal(err)
+		}
+		if r := item.Resources[0]; r.State != state || r.Name != title {
+			t.Fatalf("卡片状态或标题不符：%+v", r)
+		}
+	}
+	archive("direct_doc", false)
+	work()
+	meta("direct_doc", "ready", "讨论记录")
+	archive("denied", false)
+	meta("direct_doc", "", "")
+	work()
+	meta("denied", "resource_forbidden", "")
+	archive("direct_doc", false)
+	fixture.onDocument = func() { archive("direct_doc", true) }
+	work()
+	meta("direct_doc", "", "")
 }

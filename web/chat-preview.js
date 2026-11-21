@@ -4,7 +4,18 @@ import { previewCanvas, renderResult } from './drive-preview.js';
 const labels = {
   image: '图片', docx: '飞书文档', wiki: '飞书知识库', sheets: '飞书表格', minutes: '飞书妙记', base: '多维表格', file: '飞书文件', attachment: '文件'
 };
-const icons = {docx:'docs', wiki:'docs', sheets:'excel', minutes:'minutes', base:'base'};
+const documentIcons = {
+  docx: new URL('./feishu-icons/docx.png', import.meta.url).href,
+  sheets: new URL('./feishu-icons/sheets.png', import.meta.url).href,
+  base: new URL('./feishu-icons/base.png', import.meta.url).href,
+  minutes: new URL('./feishu-icons/minutes.png', import.meta.url).href,
+  wiki: new URL('./feishu-icons/wiki.png', import.meta.url).href,
+  file: new URL('./feishu-icons/file.png', import.meta.url).href,
+};
+const documentStates = {
+  pending:'正在同步', resource_forbidden:'机器人无法读取此文档', source_unavailable:'来源暂时不可用，稍后自动重试',
+  unsupported:'此类型暂不支持预览', over_limit:'文档超出预览大小限制'
+};
 const extensions = {pdf:'pdf', docx:'word', xlsx:'excel', pptx:'slides', zip:'zip'};
 const errors = {
   message_deleted:'这条消息已撤回。', resource_not_found:'找不到此消息资源。',
@@ -15,7 +26,6 @@ const errors = {
   failed:'无法加载预览，请重试。'
 };
 const retryable = new Set(['source_unavailable', 'conversion_busy', 'failed']);
-const storedPreview = 'omnirelay.session.chat-preview';
 const esc = value => window.OmniRelayUI.escape(value);
 
 export function messageResources(item) {
@@ -30,32 +40,29 @@ export function renderMessageResource(resource, index, src, highlight) {
       <span class="chat-image-fallback" hidden>图片无法显示，点击查看</span>
       <img src="${esc(src)}" width="240" height="160" alt="" loading="lazy" decoding="async"></button>`;
   }
+  if (resource.url) {
+    const kind = resource.object_kind || resource.kind;
+    const type = labels[kind] || '飞书文件';
+    const title = resource.name && resource.name !== resource.url ? resource.name : '';
+    const detail = [title && type, resource.state !== 'ready' && (documentStates[resource.state] || '正在同步')].filter(Boolean).join(' · ');
+    const disabled = resource.state !== 'ready' ? ' disabled' : '';
+    return `<button class="chat-resource chat-document" ${attrs}${disabled}>
+      <img src="${esc(documentIcons[kind] || documentIcons.file)}" width="32" height="32" alt="">
+      <span><strong>${highlight(title || type)}</strong><small>${esc(detail)}</small></span></button>`;
+  }
   const name = resource.name || label;
-  const iconKey = icons[resource.kind] ?? extensions[name.split('.').pop().toLowerCase()];
+  const iconKey = extensions[name.split('.').pop().toLowerCase()];
   return `<button class="chat-bubble chat-file chat-resource" ${attrs}>${fileIcon(iconKey, label)}<span>${highlight(name)}</span></button>`;
-}
-
-export function previewReturn(route) {
-  const url = new URL(location.href);
-  const result = url.searchParams.get('document_preview');
-  if (!result || url.hash !== route) return;
-  url.searchParams.delete('document_preview');
-  history.replaceState(history.state, '', url);
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(storedPreview) ?? 'null');
-    sessionStorage.removeItem(storedPreview);
-    if (saved?.route === route && saved.expires > Date.now()) return {...saved, result};
-  } catch { /* 浏览器关闭存储时仍可回到消息。 */ }
 }
 
 function control(name, label, disabled = false) {
   return `<button type="button" class="button" data-preview-action="${name}"${disabled ? ' disabled' : ''}>${label}</button>`;
 }
 
-export function openMessagePreview({resource, route, restoreFocus, read, signal, authorizationResult, onClose}) {
+export function openMessagePreview({resource, restoreFocus, read, signal, onClose}) {
   const label = labels[resource.kind] ?? '文件';
   const dialog = window.OmniRelayUI.openDialog({
-    title: resource.url ? label : resource.name || label, drawer:'wide', restoreFocus,
+    title: resource.name || label, drawer:'wide', restoreFocus,
     body: '<section class="drive-preview-content chat-preview"><p role="status" tabindex="-1"></p>' +
       '<div data-preview-controls></div><div data-preview-body></div></section>',
     onClose() { lifetime.abort(); onClose(); }
@@ -74,16 +81,8 @@ export function openMessagePreview({resource, route, restoreFocus, read, signal,
     return `<a class="button" href="${esc(resource.url)}" target="_blank" rel="noopener noreferrer">在飞书中打开</a>`;
   }
 
-  function failure(code, kind) {
-    if (code === 'document_authorization_required') {
-      status.textContent = authorizationResult === 'cancelled' ? '已取消飞书授权。' :
-        authorizationResult === 'unavailable' ? '飞书授权未完成，请重试或在飞书中打开。' : '授权后可在此查看飞书内容。';
-      authorizationResult = undefined;
-      const url = '/auth/feishu/preview?' + new URLSearchParams({kind, return_to: '/' + route});
-      controls.innerHTML = `<a class="button primary" data-authorize href="${esc(url)}">授权飞书</a>` + sourceLink();
-      return;
-    }
-    status.textContent = errors[code] ?? errors.failed;
+  function failure(code) {
+    status.textContent = (resource.url && documentStates[code]) || errors[code] || errors.failed;
     if (retryable.has(code)) controls.insertAdjacentHTML('beforeend', control('retry', '重试'));
     if (!['message_deleted', 'chat_access_lost', 'resource_not_found'].includes(code)) {
       controls.insertAdjacentHTML('beforeend', sourceLink());
@@ -129,17 +128,11 @@ export function openMessagePreview({resource, route, restoreFocus, read, signal,
       if (meta.pages > 1) controls.insertAdjacentHTML('beforeend', control('prev', '上一页', page === 1) + control('next', '下一页', page === meta.pages));
       controls.insertAdjacentHTML('beforeend', sourceLink());
     } catch (error) {
-      if (!active.aborted && dialog.open) failure(error.data?.error ?? 'failed', error.data?.kind);
+      if (!active.aborted && dialog.open) failure(error.data?.error ?? 'failed');
     }
   }
 
   dialog.addEventListener('click', event => {
-    if (event.target.closest('[data-authorize]')) {
-      try {
-        sessionStorage.setItem(storedPreview, JSON.stringify({route, kind:resource.kind, key:resource.key, expires:Date.now() + 300000}));
-      } catch { /* 无法保存时仍可授权。 */ }
-      return;
-    }
     const action = event.target.closest('[data-preview-action]')?.dataset.previewAction;
     if (!action) return;
     if (action === 'prev') page--;

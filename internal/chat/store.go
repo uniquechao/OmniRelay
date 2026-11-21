@@ -17,7 +17,6 @@ import (
 type Service struct {
 	files           *drive.Service
 	preview         MessagePreviewSource
-	previewToken    previewTokenLookup
 	pool            *pgxpool.Pool
 	tenant, app     string
 	generation      int64

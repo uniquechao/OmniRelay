@@ -84,7 +84,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	}
 	fileService := drive.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, roles, objects, chatService.CanReadConversation)
 	chatService.ConfigureFiles(fileService)
-	chatService.ConfigurePreview(chatSource, identityService.DocumentPreviewToken)
+	chatService.ConfigurePreview(chatSource)
 	chatService.ConfigureDelivery(chatSource, cfg.botSendEnabled && cfg.appSecret != "")
 	projectService := project.New(pool, roles, botStore.Status, chatSource, chatService,
 		cfg.botSendEnabled && cfg.appSecret != "")
@@ -171,6 +171,7 @@ func (w *backendWorkers) Run(ctx context.Context) {
 	running.Go(func() { w.bot.Run(ctx) })
 	if w.chat != nil {
 		running.Go(func() { w.chat.Run(ctx) })
+		running.Go(func() { w.chat.RunDocuments(ctx) })
 	}
 	if w.files != nil {
 		running.Go(func() { w.files.Run(ctx) })
