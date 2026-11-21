@@ -16,11 +16,13 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
-const visibleMessages = `m.tenant_key=$1 AND m.app_id=$2 AND m.chat_id=ANY($3::text[])
+const visibleMessageRows = `m.tenant_key=$1 AND m.app_id=$2
 	AND (m.thread_id='' OR m.visible_in_chat OR NOT EXISTS (
 		SELECT 1 FROM feishu_chat_sync t WHERE (t.tenant_key,t.app_id,t.chat_id,t.thread_id)=
 			(m.tenant_key,m.app_id,m.chat_id,m.thread_id) AND t.source_blocked
 	))`
+
+const visibleMessages = visibleMessageRows + ` AND m.chat_id=ANY($3::text[])`
 
 type conversationItem struct {
 	conversation
@@ -251,7 +253,27 @@ func parseCursor(encoded string) (*time.Time, string, bool) {
 }
 
 func (s *Service) getMessageCount(w http.ResponseWriter, r *http.Request, p identity.Principal, scope authorizedScope) {
-	ctx := r.Context()
+	s.writeMessageCount(w, r.Context(), p, `SELECT count(*) FROM feishu_chat_messages m WHERE `+
+		visibleMessages+` AND NOT m.deleted`, s.tenant, s.app, scope.ids())
+}
+
+func (s *Service) getPersonalMessageCount(w http.ResponseWriter, r *http.Request, p identity.Principal) {
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	s.writeMessageCount(w, ctx, p, `SELECT count(*) FROM feishu_chat_messages m
+		JOIN feishu_chat_conversations c USING (tenant_key,app_id,chat_id)
+		WHERE `+visibleMessageRows+` AND NOT m.deleted
+		AND NOT EXISTS (SELECT FROM feishu_chat_sync t
+			WHERE (t.tenant_key,t.app_id,t.chat_id)=(c.tenant_key,c.app_id,c.chat_id)
+			AND t.thread_id='' AND t.source_blocked)
+		AND ((c.kind='p2p' AND c.peer_open_id=$4) OR (c.kind='group' AND EXISTS (
+			SELECT FROM feishu_drive_group_memberships gm
+			WHERE (gm.tenant_key,gm.app_id,gm.chat_id)=(c.tenant_key,c.app_id,c.chat_id)
+			AND `+currentGroupMembership+`)))`,
+		s.tenant, s.app, s.generation, p.OpenID)
+}
+
+func (s *Service) writeMessageCount(w http.ResponseWriter, ctx context.Context, p identity.Principal, query string, args ...any) {
 	tx, err := s.readTx(ctx, p)
 	if err != nil {
 		sourceError(w, err)
@@ -259,8 +281,7 @@ func (s *Service) getMessageCount(w http.ResponseWriter, r *http.Request, p iden
 	}
 	defer tx.Rollback(ctx)
 	var total int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM feishu_chat_messages m WHERE `+visibleMessages+
-		` AND NOT m.deleted`, s.tenant, s.app, scope.ids()).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, query, args...).Scan(&total); err != nil {
 		sourceError(w, err)
 		return
 	}

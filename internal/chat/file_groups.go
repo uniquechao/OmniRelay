@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const currentGroupMembership = `generation=$3 AND verified_at>now()-interval '26 hours' AND $4=ANY(members)`
+
 // NotifyFileGroupChange wakes the snapshot worker after the event transaction commits.
 func (s *Service) NotifyFileGroupChange() {
 	select {

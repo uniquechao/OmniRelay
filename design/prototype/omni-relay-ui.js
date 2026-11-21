@@ -320,7 +320,7 @@ window.OmniRelayUI = (() => {
     const states = config.states ?? listStates;
     if (!states.has(config.key)) {
       const initial = {
-        query: '', filters: {}, page: 0, pageSize: pageSizes[0], selected: new Set(),
+        query: '', filters: { ...config.defaultFilters }, page: 0, pageSize: pageSizes[0], selected: new Set(),
         sort: config.defaultSort ?? null, mode: config.selection === false ? 'none' : 'multiple', columnWidths: null
       };
       states.set(config.key, initial);
@@ -721,11 +721,11 @@ window.OmniRelayUI = (() => {
       }
       if (button.matches('[data-reset-filters]')) {
         state.query = '';
-        state.filters = {};
+        state.filters = { ...config.defaultFilters };
         state.page = 0;
         state.selected.clear();
         find('[data-search]').value = '';
-        root.querySelectorAll('[data-filter]').forEach(field => { field.value = ''; });
+        root.querySelectorAll('[data-filter]').forEach(field => { field.value = state.filters[field.dataset.filter] ?? ''; });
         paint();
       }
       if (button.matches('[data-sort]')) {

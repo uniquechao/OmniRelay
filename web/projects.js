@@ -72,6 +72,7 @@ function table(headers, rows, missing) {
 }
 const heading = (title) => `<h1 id="page-heading" tabindex="-1">${esc(title)}</h1>`;
 const withQuery = (path, params) => path + (params.size ? '?' + params : '');
+const directoryStatus = (params) => params.get('status') ?? 'active';
 export function projectRoute(hash) {
   if (!hash || !/^#\/projects(?:[/?]|$)/.test(hash)) return;
   const [path, query = ''] = hash.split('?');
@@ -113,7 +114,7 @@ function filters(route, directory, extra = '') {
         projectStatuses
           .map(
             (s) =>
-              `<option value="${s}"${s === route.params.get('status') ? ' selected' : ''}>${label(s)}</option>`,
+              `<option value="${s}"${s === directoryStatus(route.params) ? ' selected' : ''}>${label(s)}</option>`,
           )
           .join('') +
         '</select>'
@@ -128,7 +129,7 @@ function wireFilters(host, route) {
     const params = new URLSearchParams();
     for (const [key, value] of new FormData(event.currentTarget))
       if (key === 'milestone_id' && value === '@none') params.set('milestone_unassigned', 'true');
-      else if (value.trim()) params.set(key, value.trim());
+      else if (value.trim() || (!route.id && key === 'status')) params.set(key, value.trim());
     location.hash = withQuery(route.hash.split('?')[0], params);
   });
 }
@@ -564,7 +565,8 @@ function endpoint(route) {
   }
   if (tab !== 'members' && params.get('q')) query.set('q', params.get('q'));
   if (!id) {
-    if (params.get('status')) query.set('status', params.get('status'));
+    const status = directoryStatus(params);
+    if (status) query.set('status', status);
     return withQuery(root, query);
   }
   let path = root + '/' + id + '/' + tab;

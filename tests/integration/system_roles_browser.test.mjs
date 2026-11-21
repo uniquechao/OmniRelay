@@ -13,7 +13,7 @@ const sync = system + '/directory/sync-runs';
 const mePath = '/api/v1/me';
 const permissionKeys = [
   'account.read', 'account.manage', 'role.read', 'role.manage', 'directory.read',
-  'directory.sync', 'system.read', 'system.configure', 'system.operate', 'audit.read', 'chat.read_all'
+  'directory.sync', 'system.read', 'system.configure', 'system.operate', 'audit.read', 'chat.read_all', 'project.create'
 ];
 const operatorPermissions = [
   'account.read', 'role.read', 'directory.read', 'directory.sync',
@@ -78,6 +78,11 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     assert.equal(access.default_route, '/#/' + route);
     assert.deepEqual(await page.locator('#system-nav [data-system]:not([hidden])').evaluateAll(nodes => nodes.map(n => n.dataset.system)), sections);
     assert.equal(await page.locator('[data-nav=workbench]').isVisible(), workbench);
+    if (route === 'workbench') {
+      const main = page.getByRole('main');
+      assert.equal(await main.getByRole('heading', { name: '系统管理' }).count(), 0);
+      assert.equal(await main.getByRole('link', { name: /连接设置|启用用户/ }).count(), 0);
+    }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('#mobile-nav').waitFor();
     assert.deepEqual(await page.locator('#mobile-nav option:not([hidden])').evaluateAll(nodes => nodes.map(n => n.value)),

@@ -348,6 +348,15 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 		t.Fatalf("count returned other fields: %v", count)
 	}
 	expect(request("admin", "GET", "/messages/count", 200), "total", "5")
+	if _, err := s.pool.Exec(ctx, `INSERT INTO feishu_drive_group_memberships
+		(tenant_key,app_id,chat_id,generation,members,verified_at)
+		VALUES ('tenant_chat','cli_chat','oc_group',1,ARRAY['ou_alice','ou_admin'],now()),
+		       ('tenant_chat','cli_chat','oc_other',1,ARRAY['ou_bob'],now())`); err != nil {
+		t.Fatal(err)
+	}
+	expect(request("alice", "GET", "/messages/count/mine", 200), "total", "3")
+	expect(request("bob", "GET", "/messages/count/mine", 200), "total", "2")
+	expect(request("admin", "GET", "/messages/count/mine", 200), "total", "2")
 	direct := request("alice", "GET", "/oc_private", 200)
 	expect(direct, "total", "1")
 	members := request("alice", "GET", "/oc_private/members", 200)
@@ -373,6 +382,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	src.unavailable["oc_group"] = true
 	expect(request("alice", "GET", "/oc_group/messages", 503), "error", `"chat_unavailable"`)
 	expect(request("alice", "GET", "/messages/count", 503), "error", `"chat_unavailable"`)
+	expect(request("alice", "GET", "/messages/count/mine", 200), "total", "3")
 	src.unavailable["oc_group"] = false
 	expect(request("alice", "POST", "/oc_group/sync", 202), "total", "1")
 	first := request("alice", "GET", "/oc_group/messages?limit=1", 200)
@@ -393,6 +403,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 410), "error", `"message_deleted"`)
 	expect(request("alice", "GET", "/oc_group/search?q=会议", 200), "total", "1")
 	expect(request("alice", "GET", "/messages/count", 200), "total", "2")
+	expect(request("alice", "GET", "/messages/count/mine", 200), "total", "2")
 	src.members["oc_group"] = nil
 	expect(request("alice", "GET", "/oc_group", 404), "error", `"chat_access_lost"`)
 	expect(request("alice", "GET", "/oc_group/messages/om_a/context", 404), "error", `"chat_access_lost"`)
@@ -403,6 +414,20 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	src.lost["oc_group"] = true
 	expect(request("admin", "GET", "/oc_group/messages/om_b/context", 404), "error", `"chat_access_lost"`)
 	expect(request("admin", "GET", "", 200), "total", "3")
+	if _, err := s.pool.Exec(ctx, `UPDATE feishu_drive_group_memberships SET members=ARRAY['ou_admin']
+		WHERE chat_id='oc_group'; UPDATE feishu_drive_group_memberships SET verified_at=now()-interval '27 hours'
+		WHERE chat_id='oc_other'`); err != nil {
+		t.Fatal(err)
+	}
+	expect(request("alice", "GET", "/messages/count/mine", 200), "total", "1")
+	expect(request("bob", "GET", "/messages/count/mine", 200), "total", "1")
+	expect(request("admin", "GET", "/messages/count/mine", 200), "total", "1")
+	if _, err := s.pool.Exec(ctx, `UPDATE feishu_chat_sync SET source_blocked=true WHERE chat_id='oc_group' AND thread_id='';
+		UPDATE accounts SET active=false WHERE id='alice'`); err != nil {
+		t.Fatal(err)
+	}
+	expect(request("admin", "GET", "/messages/count/mine", 200), "total", "0")
+	expect(request("alice", "GET", "/messages/count/mine", 404), "error", `"chat_access_lost"`)
 }
 
 func TestProjectChatReaderScope(t *testing.T) {

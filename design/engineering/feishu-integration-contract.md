@@ -192,6 +192,8 @@ OmniRelay 使用本地 PostgreSQL 管理项目资料与业务权限。项目目�
 
 项目列表返回 `project_types`，项目概览在 `data.workspace.project_types` 返回同一份类型目录。每项含 `name` 和 `tone`，用 `name` 写入 `project_type`。空串表示未分类，编辑时省略字段会保留已有值。目录外的历史值可随原档案保留，新增或替换时须选择目录中的类型或未分类。
 
+工作台总览通过 `GET /api/v1/feishu/chats/messages/count/mine` 读取个人可见消息数量，响应为 `{"total": n}`。查询使用 PostgreSQL 中当前账号的 Bot 私聊归属和有效群成员快照，排除已撤回消息与已失去来源权限的会话。系统角色不扩大该统计范围。
+
 群关联和目标群按租户及应用区分。选择目标群会建立关联，换目标群保留原群的关联。接入设置要求 `project.settings`，写入携带原 `version`，首次使用 0。计划记录 IANA 时区、本地执行时间和启用状态。计划存储和手动发布是独立动作。
 
 `POST feishu/check` 要求 `project.settings`，检查其它账号还要求 `account.read`。输入包含 `account_id`（缺省为自己）、`action`（`project.read`、`project.assign`、`project.settings`）和 `public_scope`（`project_only` 或 `submission_count`）。结果独立报告 Bot、群成员、账号、项目动作和公开范围。校验保持只读，账号和项目动作读取 OmniRelay，飞书探测采用读取接口。

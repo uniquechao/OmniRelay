@@ -83,6 +83,17 @@ func (s *Service) Register(mux *http.ServeMux,
 		}
 	}
 	mux.HandleFunc("GET "+route+"/messages/count", protect(s.getMessageCount))
+	mux.HandleFunc("GET "+route+"/messages/count/mine", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := auth(w, r, identity.ValidateSession)
+		if !ok {
+			return
+		}
+		if p.TenantKey != s.tenant || p.AppID != s.app || p.AccountID == "" || p.OpenID == "" {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		s.getPersonalMessageCount(w, r, p)
+	})
 	for _, prefix := range []string{route, "/api/v1/projects/{projectID}/chat-reader"} {
 		mux.HandleFunc("GET "+prefix, protect(s.getConversations))
 		mux.HandleFunc("GET "+prefix+"/search", protect(s.getMessages))
@@ -137,9 +148,8 @@ func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, pr
 	}
 	var member bool
 	err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM feishu_drive_group_memberships
-		WHERE tenant_key=$1 AND app_id=$2 AND chat_id=$3 AND generation=$4
-		    AND verified_at>now()-interval '26 hours' AND $5=ANY(members))`,
-		s.tenant, s.app, chatID, s.generation, p.OpenID).Scan(&member)
+		WHERE tenant_key=$1 AND app_id=$2 AND chat_id=$5 AND `+currentGroupMembership+`)`,
+		s.tenant, s.app, s.generation, p.OpenID, chatID).Scan(&member)
 	return member, err
 }
 

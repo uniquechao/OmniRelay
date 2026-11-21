@@ -558,10 +558,10 @@ function projectOverview(project, id, settings) {
     panel('当前关注', concerns ? '<ul class="attention">' + concerns + '</ul>' : empty('当前没有记录的关注事项。'));
 }
 
-function renderProject(id, tab, html) {
+function renderProject(id, tab, html, listHref) {
   const project = projects[id];
   return '<header class="head"><div class="project-title"><span class="kind">' + project.kind + '</span>' + heading(project.name) +
-    chip(project.status) + '</div><a class="button" href="#/projects">返回项目列表</a></header>' +
+    chip(project.status) + '</div><a class="button" href="' + listHref + '">返回项目列表</a></header>' +
     '<div class="tabs" role="tablist" aria-label="项目工作台">' + Object.entries(tabs).map(([key,label]) =>
       '<button type="button" id="tab-' + key + '" data-tab="' + key + '" role="tab" aria-controls="project-panel" aria-selected="' +
       (key === tab) + '" tabindex="' + (key === tab ? '0' : '-1') + '">' + label + '</button>').join('') + '</div>' +
@@ -572,10 +572,11 @@ function renderProject(id, tab, html) {
 const column = (key, label, render, sort, secondary = false) => ({ key, label, render, sort, secondary });
 const stageOptions = { progress:statuses.progress, pending:statuses.pending, success:statuses.success, danger:statuses.danger };
 
-function projectListConfig() {
+function projectListConfig(allProjectStatuses) {
   const rows = Object.entries(projects).map(([id, project]) => ({ id, ...project }));
   return {
-    key:'projects', label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
+    key:allProjectStatuses ? 'projects-all' : 'projects', label:'项目列表', itemLabel:'项目', rows, rowLabel:row => row.name,
+    defaultFilters:allProjectStatuses ? {} : {status:'progress'},
     search:row => [row.name, row.lead].join(' '),
     filters:[
       { key:'status', label:'项目阶段', options:stageOptions },
@@ -627,10 +628,9 @@ function renderOverview() {
   const number = new Intl.NumberFormat('zh-CN');
   const entries = Object.entries(projects);
   const sample = [
-    ['#/projects', 'nav-projects', '项目总数', entries.length, '当前可访问的项目'],
-    ['#/feishu/bot-chats', 'nav-bot-chat', '归档消息', 1286, '可查看且未撤回的消息'],
-    ['#/feishu/drive', 'file-grid', '文件总数', 47, '当前可见的网盘文件'],
-    ['#/system/users', 'nav-team', '启用用户', 26, '已启用的工作台账号']
+    ['#/projects?status=', 'nav-projects', '可见项目', entries.length, '当前账号可访问的项目'],
+    ['#/feishu/bot-chats', 'nav-bot-chat', '可见消息', 1286, '当前账号的群聊与 Bot 私聊'],
+    ['#/feishu/drive', 'file-grid', '可见文件', 47, '当前账号可访问的网盘资源']
   ];
   const summary = sample.map(([href, symbol, label, count, detail]) =>
     '<a class="overview-metric" href="' + href + '"><span class="overview-metric-label">' +
@@ -643,14 +643,11 @@ function renderOverview() {
     '<div class="overview-project-table">' + table('项目速览', [['项目名称'], ['类型'], ['阶段']], rows) + '</div>' +
     (entries.length > rows.length ? '<p class="aux overview-project-note">显示前 ' + rows.length + ' 个项目</p>' : ''),
     '<a class="button primary" href="#/projects">查看项目列表</a>');
-  const shortcuts = [...systemNav.querySelectorAll('a[data-system]')].map(link =>
-    '<li><a href="' + link.hash + '">' + link.textContent + chevron + '</a></li>').join('');
   return '<div class="overview"><header class="head overview-heading"><div class="overview-title">' + heading(labels.workbench) +
     '<span class="sample">示例数据</span></div><button class="button neutral overview-refresh" type="button" data-overview-refresh>' +
     icon('chat-refresh') + '刷新数据</button></header>' +
     '<section class="overview-metrics" aria-label="工作台统计">' + summary + '</section>' +
-    '<div class="overview-content" data-has-shortcuts="true">' + projectPanel +
-    panel('系统管理', '<ul class="overview-shortcuts">' + shortcuts + '</ul>') + '</div></div>';
+    projectPanel + '</div>';
 }
 function renderGlobal(area) {
   if (area === 'workbench') return renderOverview();
@@ -658,7 +655,8 @@ function renderGlobal(area) {
 }
 
 function getRoute() {
-  const [area, id, tab, subview] = location.hash.slice(2).split('/');
+  const [path, query] = location.hash.slice(2).split('?');
+  const [area, id, tab, subview] = path.split('/');
   if (area === 'login') return { area };
   if (area === 'bot-chats') return {area:'feishu',feishuPage:'bot-chats'};
   if (area === 'feishu') return {area,feishuPage:Object.hasOwn(feishuPages,id) ? id : 'bot-chats',chatGroup:tab,chatMessage:subview};
@@ -670,16 +668,19 @@ function getRoute() {
     if (tab === 'brief') return {area,id,tab:'reports',subview:'brief'};
     return { area, id, tab: Object.hasOwn(tabs, tab) ? tab : 'overview', subview };
   }
-  return { area: Object.hasOwn(labels, area) ? area : 'workbench' };
+  const allProjectStatuses = area === 'projects' && new URLSearchParams(query).get('status') === '';
+  return { area: Object.hasOwn(labels, area) ? area : 'workbench', allProjectStatuses };
 }
 
 function render() {
   if (OmniRelayTaskEditor.guardRoute()) return;
-  const {area,id,tab,subview,developerPage,systemPage,feishuPage,chatGroup,chatMessage} = getRoute();
-  const projectListScroller = page.querySelector('#standard-list .list-scroll');
+  const {area,id,tab,subview,developerPage,systemPage,feishuPage,chatGroup,chatMessage,allProjectStatuses} = getRoute();
+  const previousList = page.querySelector('#standard-list');
+  const projectListScroller = previousList?.querySelector('.list-scroll');
   if (id && projectListScroller?.querySelector('a[href^="#/projects/"]') &&
       crumbs.querySelector('[aria-current="page"]')?.textContent === '项目列表') {
-    projectListReturn = {id, top:projectListScroller.scrollTop, left:projectListScroller.scrollLeft};
+    projectListReturn = {id, href:previousList.dataset.projectListHref,
+      top:projectListScroller.scrollTop, left:projectListScroller.scrollLeft};
   }
   const projectView = id ? OmniRelayProject.render(projects[id],id,tab,subview,{
     chip, empty, panel, facts, cardLink, projects, overview:projectOverview,
@@ -729,16 +730,18 @@ function render() {
       page.innerHTML = systemPage ? OmniRelaySystem.render(systemPage) : OmniRelayDeveloper.render(developerPage);
     }
   } else {
+    const listHref = projectListReturn?.href || '#/projects';
     crumbs.innerHTML = id
-      ? '<a href="#/projects">项目列表</a><span aria-hidden="true">/</span><span aria-current="page">' + projects[id].name + '</span>'
+      ? '<a href="' + listHref + '">项目列表</a><span aria-hidden="true">/</span><span aria-current="page">' + projects[id].name + '</span>'
       : '<span>工作空间</span><span aria-hidden="true">/</span><span aria-current="page">' + labels[area] + '</span>';
-    page.innerHTML = id ? renderProject(id, tab, projectView.html) : renderGlobal(area);
+    page.innerHTML = id ? renderProject(id, tab, projectView.html, listHref) : renderGlobal(area);
   }
   const list = document.getElementById('standard-list');
   const listLayout = list || (systemPage && !settingsView) || developerPage === 'list';
   page.dataset.layout = id ? 'project' : listLayout || feishuPage === 'drive' ? 'list' : feishuPage === 'bot-chats' ? 'bot-chat' : developerPage === 'colors' ? 'palette' : 'content';
   page.scrollTop = 0;
-  if (list) OmniRelayUI.mountList(list, area === 'runs' ? runListConfig() : projectListConfig());
+  if (list) OmniRelayUI.mountList(list, area === 'runs' ? runListConfig() : projectListConfig(allProjectStatuses));
+  if (list && area === 'projects') list.dataset.projectListHref = allProjectStatuses ? '#/projects?status=' : '#/projects';
   if (developerPage) OmniRelayDeveloper.mount(page, developerPage);
   if (feishuPage === 'bot-chats') OmniRelayBotChat.mount(page,projects,undefined,chatGroup,chatMessage);
   if (feishuPage === 'drive') OmniRelayDrive.mount(page,projects);

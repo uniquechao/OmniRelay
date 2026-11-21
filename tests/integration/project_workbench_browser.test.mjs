@@ -159,7 +159,10 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
         access: { navigation: { workbench: true }, default_route: '/#/workbench' },
       });
       if (url.pathname === '/api/v1/projects') {
-        if (req.method() === 'GET') return reply({ ...list(item ? [item] : []), can_create: canCreate, project_types: projectTypes });
+        if (req.method() === 'GET') {
+          const status = url.searchParams.get('status');
+          return reply({ ...list(item && (!status || item.status === status) ? [item] : []), can_create: canCreate, project_types: projectTypes });
+        }
         const values = req.postDataJSON();
         assert.match(req.headers()['idempotency-key'], /^[a-f\d-]{36}$/);
         assert.equal(req.headers()['x-csrf-token'], 'token');
@@ -271,9 +274,74 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       await page.getByText('已归档', { exact: true }).waitFor();
       assert.equal(await settings.count(), 0);
       await page.getByRole('link', { name: '返回项目列表' }).click();
+      await page.getByText('没有符合条件的项目。').waitFor();
+      await page.getByRole('combobox', { name: '项目状态' }).selectOption('');
+      await page.getByRole('button', { name: '查询' }).click();
       await page.getByRole('link', { name: '已编辑项目' }).waitFor();
       await page.getByRole('cell', { name: '已归档', exact: true }).waitFor();
       await page.getByRole('cell', { name: '销售', exact: true }).locator('[data-project-type-tone="purple"]').waitFor();
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+test('总览只请求个人可见统计，项目列表默认进行中并可查看全部', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const planned = { id: 'p-planned', name: '规划示例', project_type: '研发', status: 'planned' };
+  for (const admin of [false, true]) for (const { width, theme } of [
+    { width: 1366, theme: 'light' }, { width: 390, theme: 'dark' },
+  ]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: width === 390, colorScheme: theme });
+    const requested = [];
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(origin + '/**', async (route) => {
+      const url = new URL(route.request().url());
+      const reply = (json) => route.fulfill({ json });
+      if (url.pathname.startsWith('/api/')) requested.push(url.pathname + url.search);
+      if (url.pathname === '/api/v1/me') return reply({
+        principal: { account_id: admin ? 'admin' : 'member' }, csrf_token: 'token',
+        access: { navigation: { workbench: true, bot_chats: true, system: admin },
+          admin: { users: admin, settings: admin }, default_route: '/#/workbench' },
+      });
+      if (url.pathname === '/api/v1/projects') {
+        const status = url.searchParams.get('status');
+        return reply(list([project, planned].filter(row => !status || row.status === status)));
+      }
+      if (url.pathname === '/api/v1/feishu/chats/messages/count/mine') return reply({ total: admin ? 3 : 2 });
+      if (url.pathname === '/api/v1/feishu/files') return reply({ total: 1 });
+      return route.fulfill(await browserAsset(url.pathname));
+    });
+    try {
+      await page.goto(origin + '/?theme=' + theme + '#/workbench');
+      const main = page.getByRole('main');
+      await main.getByRole('link', { name: /可见消息/ }).getByText(admin ? '3' : '2', { exact: true }).waitFor();
+      await main.getByRole('link', { name: /可见文件/ }).getByText('1', { exact: true }).waitFor();
+      assert.equal(await main.getByRole('heading', { name: '系统管理' }).count(), 0);
+      assert.equal(await main.getByRole('link', { name: /连接设置|用户管理|启用用户/ }).count(), 0);
+      assert.ok(!requested.some(path => path.startsWith('/api/v1/system/') || path === '/api/v1/feishu/chats/messages/count'));
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await main.getByRole('link', { name: '查看项目列表' }).click();
+      await main.getByRole('link', { name: project.name }).waitFor();
+      const filter = main.getByRole('combobox', { name: '项目状态' });
+      assert.equal(await filter.inputValue(), 'active');
+      assert.equal(await main.getByRole('link', { name: planned.name }).count(), 0);
+      assert.ok(requested.includes('/api/v1/projects?page=1&page_size=25&status=active'));
+      await filter.selectOption('');
+      await main.getByRole('button', { name: '查询' }).click();
+      await main.getByRole('link', { name: planned.name }).waitFor();
+      await page.waitForURL(/#\/projects\?status=$/);
+      await page.reload();
+      await main.getByRole('link', { name: planned.name }).waitFor();
+      assert.equal(await filter.inputValue(), '');
+      await filter.selectOption('planned');
+      await main.getByRole('button', { name: '查询' }).click();
+      await page.waitForURL(/#\/projects\?status=planned$/);
+      await main.getByText('共 1 条', { exact: false }).waitFor();
+      assert.equal(await main.getByRole('link', { name: project.name }).count(), 0);
       assert.deepEqual(errors, []);
     } finally {
       await page.close();
