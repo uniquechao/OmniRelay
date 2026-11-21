@@ -19,6 +19,14 @@ import (
 )
 
 func (s *ChatSource) CheckShare(ctx context.Context, r drive.Ref, chatID string) error {
+	return s.checkShare(ctx, r, chatID, drive.References, drive.ErrRevoked, true)
+}
+
+func (s *ChatSource) CheckPreviewShare(ctx context.Context, r drive.Ref, chatID string) error {
+	return s.checkShare(ctx, r, chatID, drive.MessageReferences, drive.ErrPreviewMessageDeleted, false)
+}
+
+func (s *ChatSource) checkShare(ctx context.Context, r drive.Ref, chatID string, references func(string, string) []drive.Ref, deleted error, resolveWiki bool) error {
 	if r.ChatKind == "group" {
 		if _, err := s.Group(ctx, chatID); err != nil {
 			if errors.Is(err, chat.ErrAccessLost) {
@@ -36,14 +44,23 @@ func (s *ChatSource) CheckShare(ctx context.Context, r drive.Ref, chatID string)
 		return drive.ErrUnavailable
 	}
 	for _, m := range data.Items {
-		if m == nil || value(m.MessageId) != r.MessageID || value(m.ChatId) != chatID || m.Body == nil || (m.Deleted != nil && *m.Deleted) {
+		if m == nil || value(m.MessageId) != r.MessageID || value(m.ChatId) != chatID {
 			continue
 		}
-		refs := drive.References(value(m.MsgType), value(m.Body.Content))
+		if m.Deleted != nil && *m.Deleted {
+			return deleted
+		}
+		if m.Body == nil {
+			continue
+		}
+		refs := references(value(m.MsgType), value(m.Body.Content))
 		for _, live := range refs {
 			if r.Kind == live.Kind && r.Token == live.Token {
 				return nil
 			}
+		}
+		if !resolveWiki {
+			continue
 		}
 		var unavailable error
 		for _, live := range refs {
@@ -76,12 +93,19 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 	if err != nil {
 		return nil, drive.ErrUnavailable
 	}
+	return s.fetchFile(ctx, path, token, false, retryToken)
+}
+
+func (s *ChatSource) fetchFile(ctx context.Context, path, token string, user, retryToken bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://open.feishu.cn/open-apis/"+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := http.Client{Transport: s.check.client.Transport, CheckRedirect: s.check.client.CheckRedirect}
+	if user {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, drive.ErrUnavailable
@@ -94,6 +118,9 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 		return nil, drive.ErrRevoked
 	}
 	if resp.StatusCode == 401 {
+		if user {
+			return nil, drive.ErrPreviewAuthorization
+		}
 		s.mu.Lock()
 		if s.token == token {
 			s.token = ""
@@ -117,19 +144,31 @@ func (s *ChatSource) fileRequestWithToken(ctx context.Context, path string, retr
 	}
 	var failure struct{ Code int }
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&failure)
-	return nil, fileError(failure.Code)
+	return nil, (fileGetter{user: user}).resultError(failure.Code)
 }
 
 func fileError(code int) error {
 	switch code {
-	case 91402, 91403, 90303, 90304, 90305, 99991672, 1770032, 1770033, 1254302, 1254040, 1254041, 1061003, 1061004, 230006, 230011, 230027:
+	case 91402, 91403, 90303, 90304, 90305, 99991672, 1770032, 1770033, 1254302, 1254040, 1254041, 1061003, 1061004, 2091005, 230006, 230011, 230027:
 		return drive.ErrRevoked
 	}
 	return drive.ErrUnavailable
 }
 
-func (s *ChatSource) fileJSON(ctx context.Context, path string, out any) error {
-	resp, err := s.fileRequest(ctx, path)
+type fileGetter struct {
+	get  func(context.Context, string) (*http.Response, error)
+	user bool
+}
+
+func (f fileGetter) resultError(code int) error {
+	if f.user && (code == 99991663 || code == 99991668 || code == 99991677) {
+		return drive.ErrPreviewAuthorization
+	}
+	return fileError(code)
+}
+
+func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
+	resp, err := f.get(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -149,7 +188,7 @@ func (s *ChatSource) fileJSON(ctx context.Context, path string, out any) error {
 		return drive.ErrUnavailable
 	}
 	if *env.Code != 0 {
-		return fileError(*env.Code)
+		return f.resultError(*env.Code)
 	}
 	if len(env.Data) == 0 || string(env.Data) == "null" || json.Unmarshal(env.Data, out) != nil {
 		return drive.ErrUnavailable
@@ -158,6 +197,26 @@ func (s *ChatSource) fileJSON(ctx context.Context, path string, out any) error {
 }
 
 func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
+	return (fileGetter{get: s.fileRequest}).readFile(ctx, r, probe)
+}
+
+func (s *ChatSource) userFiles(token string) fileGetter {
+	return fileGetter{user: true, get: func(ctx context.Context, path string) (*http.Response, error) {
+		return s.fetchFile(ctx, path, token, true, false)
+	}}
+}
+
+func (s *ChatSource) ReadPreviewFile(ctx context.Context, r drive.Ref, token string) (drive.Snapshot, error) {
+	if r.Kind == "image" || r.Kind == "attachment" {
+		return s.ReadFile(ctx, r, false)
+	}
+	if token == "" {
+		return drive.Snapshot{}, drive.ErrPreviewAuthorization
+	}
+	return s.userFiles(token).readFile(ctx, r, false)
+}
+
+func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
 	result := drive.Snapshot{Name: r.Name}
 	id := url.PathEscape(r.Token)
 	var path string
@@ -187,31 +246,34 @@ func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (dri
 		return result, nil
 	case "minutes":
 		path = "minutes/v1/minutes/" + id
-		var meta struct{ Minute *struct{ Title string } }
-		if err := s.fileJSON(ctx, path, &meta); err != nil {
-			return result, err
+		if !s.user {
+			var meta struct{ Minute *struct{ Title string } }
+			if err := s.fileJSON(ctx, path, &meta); err != nil {
+				return result, err
+			}
+			if meta.Minute == nil {
+				return result, drive.ErrUnavailable
+			}
+			result.Name = meta.Minute.Title
 		}
-		if meta.Minute == nil {
-			return result, drive.ErrUnavailable
-		}
-		result.Name = meta.Minute.Title
 		path += "/transcript?file_format=txt"
 	case "attachment", "image", "video":
-		path = "im/v1/messages/" + url.PathEscape(r.MessageID) + "/resources/" + id + "?type=file"
+		kind := "file"
 		if r.Kind == "image" {
-			path = "im/v1/messages/" + url.PathEscape(r.MessageID) + "/resources/" + id + "?type=image"
+			kind = "image"
 		}
+		path = "im/v1/messages/" + url.PathEscape(r.MessageID) + "/resources/" + id + "?type=" + kind
 	case "file":
 		path = "drive/v1/files/" + id + "/download"
 	default:
 		return result, drive.ErrUnavailable
 	}
-	resp, err := s.fileRequest(ctx, path)
+	resp, err := s.get(ctx, path)
 	if err != nil {
 		return result, err
 	}
 	_, params, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
-	if name := params["filename"]; name != "" && r.Kind == "file" {
+	if name := params["filename"]; name != "" && (r.Kind == "file" || (r.Kind == "attachment" && r.Name == "")) {
 		result.Name = name
 	}
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") && params["filename"] == "" {
@@ -230,7 +292,7 @@ func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (dri
 			_ = json.Unmarshal(head, &fields)
 			if envelope.Msg != nil || len(fields) == 1 {
 				resp.Body.Close()
-				return result, fileError(envelope.Code)
+				return result, s.resultError(envelope.Code)
 			}
 		}
 		resp.Body = struct {
@@ -246,7 +308,7 @@ func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (dri
 	return result, nil
 }
 
-func (s *ChatSource) basePages(ctx context.Context, path string, visit func(json.RawMessage) error) error {
+func (s fileGetter) basePages(ctx context.Context, path string, visit func(json.RawMessage) error) error {
 	seen := map[string]bool{}
 	cursor := ""
 	for {
@@ -280,7 +342,7 @@ func (s *ChatSource) basePages(ctx context.Context, path string, visit func(json
 		seen[cursor] = true
 	}
 }
-func (s *ChatSource) baseFile(ctx context.Context, id string, probe bool) (drive.Snapshot, error) {
+func (s fileGetter) baseFile(ctx context.Context, id string, probe bool) (drive.Snapshot, error) {
 	path := "bitable/v1/apps/" + id
 	var meta struct{ App *struct{ Name string } }
 	var result drive.Snapshot
@@ -332,7 +394,7 @@ func (s *ChatSource) ResolveWiki(ctx context.Context, token string) (drive.Ref, 
 			Token string `json:"obj_token"`
 		}
 	}
-	if err := s.fileJSON(ctx, "wiki/v2/spaces/get_node?token="+url.QueryEscape(token), &result); err != nil {
+	if err := (fileGetter{get: s.fileRequest}).fileJSON(ctx, "wiki/v2/spaces/get_node?token="+url.QueryEscape(token), &result); err != nil {
 		return drive.Ref{}, err
 	}
 	if result.Node == nil || result.Node.Token == "" {

@@ -1,5 +1,5 @@
 // @ts-check
-/** @typedef {{method?:string, activity?:'user'|'poll', body?:unknown, signal?:AbortSignal, ifMatch?:string, idempotencyKey?:string, includeETag?:boolean, acceptPNG?:boolean}} RequestOptions */
+/** @typedef {{method?:string, activity?:'user'|'poll', body?:unknown, signal?:AbortSignal, ifMatch?:string, idempotencyKey?:string, includeETag?:boolean, acceptPNG?:boolean, acceptImage?:boolean}} RequestOptions */
 /** @typedef {{roles?:string[], admin?:Record<string,boolean>, navigation?:Record<string,boolean>, permissions?:Record<string,boolean>, default_route?:string, permission_version?:string}} Access */
 /** @typedef {{csrf_token?:string, csrfToken?:string, user:{id:string, adminCapabilities?:Access['admin'], navigation?:Access['navigation'], permissions?:Access['permissions'], roles?:string[]}, access?:Access}} Session */
 /** @typedef {'checking'|'active'|'anonymous'|'unverified'|'revoked'} Phase */
@@ -19,7 +19,7 @@ export class ApiError extends Error {
 }
 
 /** @param {string} path @param {RequestOptions} options @param {string} csrfToken */
-async function request(path, { method = 'GET', activity = 'user', body, signal, ifMatch, idempotencyKey, includeETag = false, acceptPNG = false }, csrfToken) {
+async function request(path, { method = 'GET', activity = 'user', body, signal, ifMatch, idempotencyKey, includeETag = false, acceptPNG = false, acceptImage = false }, csrfToken) {
   const url = new URL(path, location.origin);
   if (url.origin !== location.origin ||
       !(url.pathname.startsWith(apiBase) || url.pathname.startsWith(authBase))) {
@@ -30,7 +30,7 @@ async function request(path, { method = 'GET', activity = 'user', body, signal, 
   if (method === 'POST' && ['/auth/login', '/auth/password'].includes(url.pathname) && !hasHTTPS()) {
     throw new ApiError(403, { error: 'https_required' });
   }
-  const headers = new Headers({ Accept: acceptPNG ? 'application/json, image/png' : 'application/json' });
+  const headers = new Headers({ Accept: acceptImage ? 'application/json, image/*' : acceptPNG ? 'application/json, image/png' : 'application/json' });
   if (activity === 'poll') {
     if (method !== 'GET') throw new TypeError('后台轮询只支持读取操作。');
     headers.set('X-OmniRelay-Activity', 'poll');
@@ -55,8 +55,9 @@ async function request(path, { method = 'GET', activity = 'user', body, signal, 
   /** @param {unknown} data */
   const result = data => includeETag ? { data, etag: response.headers.get('ETag') } : data;
   if (response.status === 204) return result(null);
-  if (acceptPNG && response.ok && response.headers.get('Content-Type') === 'image/png') return response.blob();
-  const isJson = response.headers.get('Content-Type')?.includes('application/json');
+  const type = response.headers.get('Content-Type');
+  if (response.ok && ((acceptPNG && type === 'image/png') || (acceptImage && type?.startsWith('image/')))) return response.blob();
+  const isJson = type?.includes('application/json');
   let data = null;
   if (isJson) {
     try { data = await response.json(); }

@@ -62,6 +62,10 @@ func (s *SetupOAuth) Resolve(ctx context.Context, code, verifier string) (Princi
 }
 
 func (s *Service) authorizationURL(state, verifier string) string {
+	return s.authorizationURLForScope(state, verifier, "")
+}
+
+func (s *Service) authorizationURLForScope(state, verifier, scope string) string {
 	query := url.Values{
 		"client_id":             {s.cfg.AppID},
 		"response_type":         {"code"},
@@ -75,10 +79,25 @@ func (s *Service) authorizationURL(state, verifier string) string {
 	} else {
 		query.Set("target_tenant", s.cfg.TenantKey)
 	}
+	if scope != "" {
+		query.Set("scope", scope)
+		query.Set("prompt", "consent")
+	}
 	return authorizeEndpoint + "?" + query.Encode()
 }
 
+type feishuUserToken struct {
+	Code        *int   `json:"code"`
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
 func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Principal, error) {
+	return s.feishuIdentityWithToken(ctx, code, verifier, nil)
+}
+
+func (s *Service) feishuIdentityWithToken(ctx context.Context, code, verifier string, grant *feishuUserToken) (Principal, error) {
 	payload, err := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     s.cfg.AppID,
@@ -95,11 +114,7 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		return Principal{}, errFeishu
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	var token struct {
-		Code        *int   `json:"code"`
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-	}
+	var token feishuUserToken
 	status, err := s.feishuJSON(req, &token)
 	if status >= http.StatusInternalServerError || status == http.StatusTooManyRequests {
 		return Principal{}, oauthFailure("token_exchange", status, token.Code, errFeishu)
@@ -160,6 +175,9 @@ func (s *Service) feishuIdentity(ctx context.Context, code, verifier string) (Pr
 		data.Disabled || (data.Active != nil && !*data.Active) ||
 		data.Status.Frozen || data.Status.Resigned || (data.Status.Activated != nil && !*data.Status.Activated) {
 		return Principal{}, oauthFailure("identity_validation", status, user.Code, ErrNotAdmitted)
+	}
+	if grant != nil {
+		*grant = token
 	}
 	return Principal{
 		TenantKey: data.TenantKey, AppID: s.cfg.AppID, OpenID: data.OpenID,

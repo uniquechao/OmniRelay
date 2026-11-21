@@ -65,8 +65,9 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   const get = selector => form.querySelector(selector);
   const editor = get('textarea'), send = get('[type=submit]'), chooser = get('[type=file]');
   const list = get('ul'), panel = get('[role=group]'), recover = get('[data-recover]');
+  const mentionButton = get('[data-tool=mention]');
   const drafts = draftScope?.drafts ?? new Map();
-  let active, menu, beforeEdit;
+  let active, menu, mentionPicker, beforeEdit;
   let composing = false;
   // 编辑器共享会话内存，整页刷新时从已核验的会话恢复。
   const editorKey = id => 'chat.' + id;
@@ -91,9 +92,9 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     send.disabled = Boolean(reason);
     send.title = reason || '发送消息';
     get('[data-identity]').textContent = cap?.sender ? '发送身份：机器人 ' + (cap.sender.name || cap.sender.open_id) : '';
-    get('[role=status]').textContent = [d.notice, reason].filter(Boolean).join(' ') || '可发送到当前会话。';
+    get('.chat-delivery-info [role=status]').textContent = [d.notice, reason].filter(Boolean).join(' ') || '可发送到当前会话。';
     get('[data-tool=file]').disabled = locked || !cap?.can_send;
-    get('[data-tool=mention]').disabled = locked || !cap?.mentions;
+    mentionButton.disabled = locked || !cap?.can_send || !cap.mentions;
     for (const key of ['format','emoji']) get('[data-tool=' + key + ']').disabled = locked;
     recover.hidden = d.busy || !(locked || !cap?.can_send && active.loaded);
     recover.textContent = locked ? (d.operation.failedParts ? '编辑未发送部分' : d.operation.missing ? '按原操作重试' : '查询发送结果') : '重新检查';
@@ -109,10 +110,12 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   function closeMenu() {
     menu?.setAttribute('aria-expanded', 'false');
     menu = null;
+    mentionPicker = null;
     panel.hidden = true;
     panel.replaceChildren();
   }
   async function capabilities(view) {
+    if (active === view && menu === mentionButton) closeMenu();
     view.loaded = false;
     view.cap = null;
     view.reason = '正在检查发送权限…';
@@ -158,7 +161,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     d.notice = '';
   }
   editor.addEventListener('beforeinput', () => { beforeEdit = [editor.selectionStart, editor.selectionEnd]; });
-  editor.addEventListener('input', () => {
+  editor.addEventListener('input', event => {
     const d = active.draft, next = editor.value;
     const [selectionStart, selectionEnd] = beforeEdit || [0, d.text.length];
     beforeEdit = null;
@@ -170,9 +173,10 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     const end = d.text.length - tail;
     edit(d, start, end, next.slice(start, next.length - (d.text.length - end)));
     changed(d);
+    if (!composing && !event.isComposing) updateMentionInput(event.data);
   });
-  function insert(value, mention, marker) {
-    const d = active.draft, start = editor.selectionStart, end = editor.selectionEnd;
+  function insert(value, mention, marker, start = editor.selectionStart) {
+    const d = active.draft, end = editor.selectionEnd;
     if (marker) value = (editor.value.slice(start, end) || '文字').split('\n')
       .map(line => line ? marker + line + marker : '').join('\n');
     edit(d, start, end, value);
@@ -196,10 +200,26 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     panel.append(button);
     return button;
   }
-  async function openMenu(button, kind) {
+  function mentionQuery(start) {
+    if (start === null) return '';
+    const end = editor.selectionEnd;
+    if (editor.selectionStart !== end || end <= start) return;
+    return /^[@＠]([^\s@＠]*)$/u.exec(editor.value.slice(start, end))?.[1].toLocaleLowerCase();
+  }
+  function updateMentionInput(data) {
+    if ((data === '@' || data === '＠') && !mentionButton.disabled && editor.selectionEnd > 0 &&
+        editor.value[editor.selectionEnd - 1] === data) {
+      const start = editor.selectionEnd - 1;
+      if (mentionPicker?.start !== start) void openMenu(mentionButton, 'mention', start);
+    } else if (mentionPicker && mentionPicker.start !== null) {
+      if (mentionQuery(mentionPicker.start) === undefined) closeMenu();
+      else mentionPicker.filter();
+    }
+  }
+  async function openMenu(button, kind, mentionStart = null) {
     const previous = menu;
     closeMenu();
-    if (previous === button) return;
+    if (previous === button && mentionStart === null) return;
     menu = button;
     panel.hidden = false;
     button.setAttribute('aria-expanded','true');
@@ -207,30 +227,56 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     panel.dataset.composeKind = kind;
     if (kind === 'mention') {
       const view = active;
-      const token = Symbol();
-      view.mentionRequest = token;
+      const notice = document.createElement('span');
+      notice.setAttribute('role', 'status');
+      panel.append(notice);
+      const picker = { start: mentionStart, loading: false, hasMore: false, error: false, filter };
+      mentionPicker = picker;
+      function filter() {
+        const query = mentionQuery(mentionStart);
+        let matches = 0;
+        for (const option of panel.querySelectorAll('[data-mention-name]')) {
+          option.hidden = query === undefined || !option.dataset.mentionName.includes(query);
+          if (!option.hidden) matches++;
+        }
+        notice.textContent = picker.loading ? '正在读取群成员…' : picker.error ? '无法读取群成员。' :
+          matches ? '' : picker.hasMore ? '已加载成员中没有匹配项。' :
+          query ? '没有匹配的群成员。' : '暂无可提及成员。';
+        notice.hidden = !notice.textContent;
+      }
       async function page(offset) {
-        const pending = document.createElement('span');
-        pending.textContent = '正在读取群成员…';
-        panel.append(pending);
+        picker.loading = true;
+        picker.error = false;
+        filter();
         try {
           const data = await api.mentionMembers(view.draft.id, offset, signal);
-          if (active !== view || menu !== button || token !== view.mentionRequest || signal?.aborted) return;
-          pending.remove();
-          for (const p of data.items) choice(p.name, () => insert('@' + p.name + ' ', p.mention_open_id));
-          const next = offset + data.items.length;
-          if (next > offset && next < data.total) {
-            const more = choice('更多成员', () => { more.remove(); void page(next); });
+          if (mentionPicker !== picker || signal.aborted) return;
+          for (const member of data.items) {
+            const option = choice(member.name, () => {
+              if (mentionQuery(mentionStart) !== undefined) {
+                insert('@' + member.name + ' ', member.mention_open_id, null, mentionStart ?? editor.selectionStart);
+              } else closeMenu();
+            });
+            option.dataset.mentionName = member.name.toLocaleLowerCase();
           }
-          if (!next) panel.textContent = '暂无可提及成员。';
+          const next = offset + data.items.length;
+          picker.hasMore = next > offset && next < data.total;
+          if (picker.hasMore) {
+            const more = choice('更多成员', () => { editor.focus(); more.remove(); void page(next); });
+          }
         } catch {
-          if (active !== view || menu !== button || token !== view.mentionRequest) return;
-          pending.remove();
-          const retry = choice('重试读取成员', () => { retry.remove(); void page(offset); });
+          if (mentionPicker !== picker || signal.aborted) return;
+          picker.error = true;
+          const retry = choice('重试读取成员', () => { editor.focus(); retry.remove(); void page(offset); });
+        } finally {
+          if (mentionPicker === picker) {
+            picker.loading = false;
+            filter();
+          }
         }
       }
       await page(0);
-      if (view !== active || menu !== button || token !== view.mentionRequest) return;
+      if (mentionPicker !== picker || mentionStart !== null) return;
     } else if (kind === 'format') {
       choice('加粗', () => insert('', null, '**'));
       choice('斜体', () => insert('', null, '*'));
@@ -355,16 +401,38 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     } else if (kind) void openMenu(button, kind);
   };
   editor.addEventListener('compositionstart', () => { composing = true; });
-  editor.addEventListener('compositionend', () => { composing = false; });
+  editor.addEventListener('compositionend', event => {
+    composing = false;
+    updateMentionInput(event.data);
+  });
+  editor.addEventListener('click', () => updateMentionInput());
   form.onkeydown = event => {
     if (composing || event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape' && menu) { menu.focus(); closeMenu(); }
+    if (event.key === 'Escape' && menu) {
+      event.preventDefault();
+      (mentionPicker?.start != null ? editor : menu).focus();
+      closeMenu();
+    }
+    if (event.target === editor && event.key === 'ArrowDown' && mentionPicker) {
+      const first = panel.querySelector('button:not([hidden])');
+      if (first) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
     if (event.target === editor && event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (!send.disabled) form.requestSubmit();
+      if (mentionPicker) {
+        const option = panel.querySelector('[data-mention-name]:not([hidden])');
+        if (option) option.click();
+        else closeMenu();
+      } else if (!send.disabled) form.requestSubmit();
     }
   };
-  document.addEventListener('click', event => { if (!form.contains(event.target)) closeMenu(); }, { signal });
+  document.addEventListener('click', event => {
+    // 翻页或重试按钮可能已在点击处理过程中移除，沿用事件原有的传播路径。
+    if (!event.composedPath().includes(form)) closeMenu();
+  }, { signal });
   signal.addEventListener('abort', () => { active = null; form.remove(); }, { once: true });
   return { show, dispose: () => lifetime.abort() };
 }

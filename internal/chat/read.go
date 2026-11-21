@@ -130,6 +130,7 @@ func (s *Service) getConversations(w http.ResponseWriter, r *http.Request, p ide
 
 type messageItem struct {
 	FileFormats          []drive.FileFormat         `json:"file_formats,omitempty"`
+	Resources            []messageResource          `json:"resources,omitempty"`
 	ID                   string                     `json:"id"`
 	ChatID               string                     `json:"chat_id"`
 	ThreadID             string                     `json:"thread_id,omitempty"`
@@ -188,6 +189,9 @@ func (s *Service) projectMessages(ctx context.Context, p identity.Principal, sco
 		item := &items[i]
 		if item.State == "deleted" {
 			continue
+		}
+		for _, ref := range drive.MessageReferences(item.Type, item.Body) {
+			item.Resources = append(item.Resources, messageResource{ref.Kind, ref.Token, ref.Name, ref.URL})
 		}
 		for _, ref := range drive.References(item.Type, item.Body) {
 			if ref.Kind == "file" {

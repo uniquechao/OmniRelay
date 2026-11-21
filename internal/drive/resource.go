@@ -24,8 +24,8 @@ func (e *RetryAfterError) Error() string { return "飞书请求受到限流" }
 func (e *RetryAfterError) Unwrap() error { return ErrUnavailable }
 
 type Ref struct {
-	Kind, Token, Name, MessageID, ChatKind string
-	Size                                   *int64
+	Kind, Token, Name, MessageID, ChatKind, URL string
+	Size                                        *int64
 }
 type Snapshot struct {
 	Name    string

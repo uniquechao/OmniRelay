@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -331,10 +330,8 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 	}
 	kind := q.file.FormatKey
 	if q.file.Category == "files" {
-		kind = strings.TrimPrefix(strings.ToLower(filepath.Ext(q.file.Name)), ".")
-		switch kind {
-		case "pdf", "docx", "xlsx", "pptx", "zip":
-		default:
+		kind = previewFileKind(q.file.Name)
+		if kind == "" || kind == "txt" {
 			return previewOutput{Stage: "unsupported"}
 		}
 	}

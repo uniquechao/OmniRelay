@@ -1,5 +1,7 @@
 import { assignmentAPI, editAssignment } from './chat-assignment.js';
+import { renderChatCard } from './chat-card.js';
 import { mountChatComposer } from './chat-composer.js';
+import { messageResources, openMessagePreview, previewReturn, renderMessageResource } from './chat-preview.js';
 import { fileIcon } from './file-format.js';
 
 const chatBase = '/api/v1/feishu/chats';
@@ -36,6 +38,8 @@ export function chatAPI(request, base = chatBase) {
     return request(base + path + (query.size ? '?' + query : ''), { signal, activity });
   }
   const path = id => '/' + encodeURIComponent(id);
+  const resourceURL = (chat, message, resource) => base + path(chat) + '/messages' + path(message) +
+    '/resources' + path(resource.kind) + path(resource.key);
   return {
     assignments: assignmentAPI(request),
     conversations: (params, signal) => read('', params, signal),
@@ -43,6 +47,11 @@ export function chatAPI(request, base = chatBase) {
     messages: (id, { q, kind, cursor }, signal) => read(
       (id ? path(id) : '') + (q ? '/search' : '/messages'), { q, kind, cursor }, signal),
     context: (id, message, signal) => read(path(id) + '/messages' + path(message) + '/context', {}, signal),
+    resourceURL,
+    preview: (chat, message, resource, params, signal) => {
+      const image = resource.kind === 'image';
+      return request(resourceURL(chat, message, resource) + (image ? '' : '?' + params), {signal, acceptImage:image});
+    },
     members: (id, offset, signal) => read(path(id) + '/members', { offset }, signal),
     capabilities: (id, signal) => read(path(id) + '/send-capabilities', {}, signal),
     mentionMembers: (id, offset, signal) => read(path(id) + '/members', { purpose: 'mention', offset }, signal),
@@ -199,6 +208,9 @@ export function mountChatReader(host, api, {
   let statusTimer;
   let listTrigger;
   let pendingListFocus;
+  const previewRoute = (chat, message) => [projectId ? '#/projects/' + projectId + '/chats' : chatHash, chat, message].join('/');
+  let returnedPreview = chatId && messageId ? previewReturn(previewRoute(chatId, messageId)) : undefined;
+  let currentPreview;
 
   const composer = api.capabilities && mountChatComposer(get('[data-composer-host]'), api, {
     signal, draftScope, onConfirmed: () => loadMessages({ preserve: true })
@@ -284,6 +296,20 @@ export function mountChatReader(host, api, {
     const find = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return text.split(new RegExp('(' + find + ')', 'giu'))
       .map((part, i) => i % 2 ? '<mark>' + esc(part) + '</mark>' : esc(part)).join('');
+  }
+  function previewText(text, query, resources, inlineResources) {
+    const urls = resources.flatMap((resource, index) => resource.url ? [[resource.url, index]] : []);
+    if (!urls.length) return highlight(text, query);
+    const byURL = new Map(urls);
+    const pattern = [...byURL.keys()].sort((a, b) => b.length - a.length)
+      .map(url => url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    return text.split(new RegExp('(' + pattern + ')', 'gu')).map((part, index) => {
+      const label = highlight(part, query);
+      if (index % 2 === 0) return label;
+      const resource = byURL.get(part);
+      inlineResources.add(resource);
+      return `<button class="chat-resource-inline" type="button" data-action="preview" data-resource="${resource}" aria-haspopup="dialog">${label}</button>`;
+    }).join('');
   }
   function paintSelection() {
     for (const row of directory.querySelectorAll('[data-chat-id]')) {
@@ -389,14 +415,28 @@ export function mountChatReader(host, api, {
       const name = person.name || (fromBot ? '飞书 Bot' : '未知人员');
       const receipt = item.state !== 'deleted' && receiptLink(item.business_receipt);
       const org = orgOf(person);
-      const icons = (item.file_formats ?? []).map(format => fileIcon(format.key, format.label)).join('');
+      const card = item.type === 'interactive' && item.state !== 'deleted' && renderChatCard(item.body, {
+        escape: esc, text: value => highlight(value, query)
+      });
+      const content = messageBody(item);
+      const resources = api.preview ? messageResources(item) : [];
+      const standalone = resources.some(resource => (resource.url && resource.url === content.trim()) ||
+        (item.type === 'image' && resource.kind === 'image') || (item.type === 'file' && resource.kind === 'attachment'));
+      const icons = resources.length ? '' : (item.file_formats ?? []).map(format => fileIcon(format.key, format.label)).join('');
+      const inlineResources = new Set();
+      const bubble = !standalone && (!card || icons) ? `<p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}${
+        card ? '' : `<span>${previewText(content, query, resources, inlineResources)}</span>`}</p>` : '';
+      const attachments = resources.map((resource, index) => {
+        if (inlineResources.has(index) || (resource.url && card && card.includes('href="' + esc(new URL(resource.url).href) + '"'))) return '';
+        return renderMessageResource(resource, index, api.resourceURL(item.chat_id, item.id, resource), name => highlight(name, query));
+      }).join('');
       return separator + `<li class="chat-message" data-message="${esc(item.id)}" tabindex="-1"
         data-author="${fromBot ? 'bot' : 'person'}" ${item.id === anchor ? 'data-source-message' : ''}>
         ${fromBot ? botAvatar : personButton(person, personAvatar(name, person.person_key || name), 'chat-person-button')}
         <div class="chat-message-body"><div class="chat-message-meta">
         ${fromBot ? '<strong>' + esc(name) + '</strong><span class="chat-bot-label">Bot</span>' : personButton(person, esc(name), 'person-name')}
         ${org ? `<span class="person-org" title="${esc(org)}">${esc(org)}</span>` : ''}${time(item.sent_at)}</div>
-        <p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}<span>${highlight(messageBody(item), query)}</span></p>
+        ${card || ''}${bubble}${attachments ? `<div class="chat-resources">${attachments}</div>` : ''}
         ${receipt ? `<section class="chat-receipt"><div class="chat-receipt-type">Bot 回执</div><a href="${receipt[0]}">${receipt[1]}</a></section>` : ''}
         ${projectId && item.state !== 'deleted' && identifier.test(item.id) ? `<a class="button chat-page-action" href="#/projects/${esc(projectId)}/tasks/source/message/${esc(item.id)}?chat_id=${esc(selected.id)}">查看关联任务</a>` : ''}
         ${query ? `<button type="button" class="button chat-page-action" data-action="locate" data-message-id="${esc(item.id)}">定位消息</button>` : ''}
@@ -416,6 +456,36 @@ export function mountChatReader(host, api, {
     } else {
       timeline.scrollTop = timeline.scrollHeight;
     }
+    if (currentPreview) {
+      const { id, resource, dialog } = currentPreview;
+      const item = messages.find(message => message.id === id);
+      if (!item || !messageResources(item).some(candidate => candidate.kind === resource.kind && candidate.key === resource.key)) {
+        dialog.close();
+      }
+    }
+    if (returnedPreview && anchor) {
+      const saved = returnedPreview;
+      returnedPreview = undefined;
+      const item = messages.find(message => message.id === anchor);
+      const index = item && messageResources(item).findIndex(resource => resource.kind === saved.kind && resource.key === saved.key);
+      if (item && index >= 0) showPreview(item, index, undefined, saved.result);
+    }
+  }
+
+  function showPreview(item, index, trigger, authorizationResult) {
+    const resource = messageResources(item)[index];
+    if (!resource || !api.preview) return;
+    const dialog = openMessagePreview({
+      resource, route:previewRoute(item.chat_id, item.id), signal, authorizationResult,
+      restoreFocus: () => trigger?.isConnected ? trigger : get('[data-message="' + CSS.escape(item.id) + '"] [data-resource="' + index + '"]') ?? title,
+      read: (params, active) => api.preview(item.chat_id, item.id, resource, params, active),
+      onClose() {
+        dialogs.delete(dialog);
+        if (currentPreview?.dialog === dialog) currentPreview = undefined;
+      }
+    });
+    currentPreview = {id:item.id, resource, dialog};
+    dialogs.add(dialog);
   }
 
   function loseDirectory(error) {
@@ -808,6 +878,11 @@ export function mountChatReader(host, api, {
   }
 
   const actions = {
+    preview(trigger) {
+      const id = trigger.closest('[data-message]')?.dataset.message;
+      const item = messages.find(row => row.id === id);
+      if (item) showPreview(item, Number(trigger.dataset.resource), trigger);
+    },
     primary: edit, project: edit,
     filters(trigger) {
       const filters = get('.chat-filters');
@@ -844,6 +919,15 @@ export function mountChatReader(host, api, {
   };
 
   root.addEventListener('click', event => {
+    const link = event.target.closest('.chat-card a[href]');
+    if (link && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      const item = messages.find(row => row.id === link.closest('[data-message]')?.dataset.message);
+      const index = item && messageResources(item).findIndex(resource => resource.url && new URL(resource.url).href === link.href);
+      if (item && index >= 0 && api.preview) {
+        event.preventDefault();
+        showPreview(item, index, link);
+      }
+    }
     const action = event.target.closest('[data-action]');
     if (action && action.getAttribute('aria-disabled') !== 'true') {
       void actions[action.dataset.action]?.(action);
@@ -863,6 +947,12 @@ export function mountChatReader(host, api, {
       void choose(chatId, messageId, { record: conversations.find(item => item.id === chatId) });
     }
   }, { signal });
+  timeline.addEventListener('error', event => {
+    const image = event.target;
+    if (!image.matches?.('.chat-resource-image img')) return;
+    image.hidden = true;
+    image.previousElementSibling.hidden = false;
+  }, {capture:true, signal});
   listSearch.addEventListener('input', event => {
     if (!event.isComposing) resetDirectorySearch();
   }, { signal });

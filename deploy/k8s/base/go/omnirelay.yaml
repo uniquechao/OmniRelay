@@ -53,6 +53,8 @@ spec:
                 name: omnirelay-feishu
                 optional: true
           env:
+            - name: OMNIRELAY_FEISHU_BOT_SEND_ENABLED
+              value: "BOT_SEND_ENABLED_VALUE"
             - name: OMNIRELAY_OAUTH_PROXY_TOKEN
               valueFrom:
                 secretKeyRef:

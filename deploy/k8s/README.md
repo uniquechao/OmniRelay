@@ -54,6 +54,10 @@ deploy/k8s/scripts/configure-object-storage-access.sh "$context"
 
 Go 清单与脚本作为部署模板。使用待配置页面及 MinIO 就绪检查时，镜像须包含 `OMNIRELAY_SETUP_MODE` 和 `OMNIRELAY_S3_*` 的实现。构建上下文按 `.dockerignore` 清单提供 Go 源码、前端源码、原型共用资源、依赖锁和构建测试夹具。`private/` 留在目标主机。启用飞书 Bot 时，按下方说明合入 Lease 服务账号和 Pod 环境变量。
 
+## 机器人消息发送
+
+`scripts/apply-go.sh` 默认向 Go Pod 注入 `OMNIRELAY_FEISHU_BOT_SEND_ENABLED=true`。可在目标主机的 `private/route.env` 中设为 `false`，再运行发布脚本关闭发送。直接运行 Go 服务时须显式配置此开关。发送需要已配置并启用的飞书机器人、应用的消息发送权限和目标会话权限。群聊中的 @ 候选来自当前群成员，发送时会再次核验成员资格。
+
 ## 飞书 OAuth 入口来源
 
 Go 默认按 TCP 对端地址限制飞书登录发起。目标主机通过 Nginx、SSH 与私有 NodePort 转发时，多个用户可能共用同一个 TCP 对端。生产和预发布应在私有入口配置中启用以下信任方式。

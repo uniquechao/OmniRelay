@@ -91,6 +91,7 @@ func (s *Service) Register(mux *http.ServeMux,
 		mux.HandleFunc("GET "+prefix+"/{chatID}/messages", protect(s.getMessages))
 		mux.HandleFunc("GET "+prefix+"/{chatID}/search", protect(s.getMessages))
 		mux.HandleFunc("GET "+prefix+"/{chatID}/messages/{messageID}/context", protect(s.getContext))
+		mux.HandleFunc("GET "+prefix+"/{chatID}/messages/{messageID}/resources/{kind}/{resource}", protect(s.getMessagePreview))
 		mux.HandleFunc("GET "+prefix+"/{chatID}/sync", protect(s.getSync))
 	}
 	mux.HandleFunc("POST "+route+"/sync", protect(s.refresh))
@@ -381,12 +382,19 @@ type projectReadResponse struct {
 	validate func() error
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	if scoped, ok := w.(projectReadResponse); ok && status == http.StatusOK {
+func validateProjectRead(w http.ResponseWriter) bool {
+	if scoped, ok := w.(projectReadResponse); ok {
 		if err := scoped.validate(); err != nil {
 			sourceError(scoped.ResponseWriter, err)
-			return
+			return false
 		}
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	if status == http.StatusOK && !validateProjectRead(w) {
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
