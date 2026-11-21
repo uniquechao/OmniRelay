@@ -87,6 +87,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	const base = "/api/v1/projects"
 	const project = base + "/{projectID}"
 	handle("GET "+base, "", list)
+	handle("POST "+base, "", s.createProject)
 	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
 	handle("GET "+project+"/task-tags", "project.read", s.tags)
 	handle("PUT "+project+"/sources/{kind}/{sourceID}/readers", "project.delegate", s.setSourceReaders)
@@ -103,6 +104,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		})
 	}
 	handle("PUT "+project+"/profile", "project.settings", s.setProfile)
+	handle("POST "+project+"/archive", "project.settings", s.archiveProject)
 	handle("PUT "+project+"/reports/mine/{date}", "project.comment", s.saveReport)
 	handle("GET "+project+"/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		query, err := viewQuery("tasks", r.URL.Query())

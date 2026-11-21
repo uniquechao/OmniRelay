@@ -1,4 +1,5 @@
 import { chatAPI, mountChatReader } from './chat-reader.js';
+import { openProjectProfile } from './project-profile.js';
 
 const tabs = {
   overview: '项目概览',
@@ -12,6 +13,7 @@ const tabs = {
 };
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
 const sourceKinds = ['minutes', 'document', 'sheets', 'bitable', 'file', 'message'];
+const projectStatuses = ['planned', 'active', 'paused', 'blocked', 'completed', 'archived'];
 const memberRoles = { manager: '项目负责人', editor: '编辑者', member: '成员', reader: '只读成员' };
 const states = {
   planned: '规划中',
@@ -47,8 +49,8 @@ const esc = (value) =>
   );
 const empty = (message) => `<p class="empty" role="status">${esc(message)}</p>`;
 const link = (href, text) => `<a href="${esc(href)}">${esc(text)}</a>`;
-const panel = (title, body) =>
-  `<section class="panel"><header class="section-head"><h2>${esc(title)}</h2></header>${body}</section>`;
+const panel = (title, body, action = '') =>
+  `<section class="panel"><header class="section-head"><h2>${esc(title)}</h2>${action}</header>${body}</section>`;
 const facts = (rows) =>
   '<dl class="facts">' +
   rows.map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value ?? '暂无')}</dd></div>`).join('') +
@@ -99,12 +101,11 @@ function pageNumber(params) {
 
 function filters(route, directory, extra = '') {
   const q = route.params.get('q') || '';
-  const statuses = ['planned', 'active', 'paused', 'blocked', 'completed', 'archived'];
   return (
     `<form class="toolbar" data-filters><input type="search" class="search" name="q" aria-label="搜索" placeholder="${directory ? '搜索项目' : '搜索记录'}" maxlength="200" value="${esc(q)}">` +
     (directory
       ? '<select class="select" name="status" aria-label="项目状态"><option value="">全部状态</option>' +
-        statuses
+        projectStatuses
           .map(
             (s) =>
               `<option value="${s}"${s === route.params.get('status') ? ' selected' : ''}>${label(s)}</option>`,
@@ -387,9 +388,14 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
         '项目概况',
         facts([
           ['负责人', workspace.owner?.display_name],
-          ['项目类型', project.project_type],
-          ['进展速览', milestones.progress?.record?.title || project.background],
+          ['项目类型', project.project_type || '—'],
+          ['进展速览', milestones.progress?.record?.title || '待补充'],
+          ['计划开始日期', project.planned_start || '—'],
+          ['计划结束日期', project.planned_end || '—'],
+          ['业务时区', project.business_timezone || '—'],
+          ['项目背景', project.background || '—'],
         ]),
+        workspace.can_manage_profile ? '<button class="button" type="button" data-project-settings aria-haspopup="dialog">项目设置</button>' : '',
       ) +
       panel(
         '关键节点',
@@ -602,6 +608,13 @@ export async function mountProjects(host, route, request, { signal, memory, scop
   const { id, base, tab, parts } = route;
   const loading = (element) => window.OmniRelayLoading.mount(element, { size: 'page', label: '正在加载…' });
   const current = () => !signal.aborted && location.hash === route.hash;
+  const refresh = async () => {
+    await mountProjects(host, route, request, { signal, memory, scope, navigation });
+    if (current()) (host.querySelector('[data-project-settings]') || host.querySelector('#page-heading'))?.focus();
+  };
+  const openProfile = (trigger, project) => openProjectProfile({
+    project, trigger, statuses: projectStatuses, statusLabel: label, request, signal, navigation, refresh,
+  });
   const savedKey = history.state?.projectListKey;
   const saved = savedKey && scope?.read('project.' + savedKey);
   const savedRoute = typeof saved?.list === 'string' && projectRoute(saved.list);
@@ -659,6 +672,12 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (!id) {
       const data = await request(endpoint(route), { signal });
       if (!current()) return;
+      if (data.can_create) {
+        const toolbar = host.querySelector('[data-filters]');
+        toolbar.insertAdjacentHTML('beforeend', '<button class="button primary" type="button" data-project-create aria-haspopup="dialog">新建项目</button>');
+        const create = toolbar.querySelector('[data-project-create]');
+        create.onclick = () => openProfile(create);
+      }
       body.innerHTML = directoryRows(data.items) + pager(route, data.total, 25);
       body.onclick = (e) => {
         const a = e.target.closest('a');
@@ -741,6 +760,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
       contents(route, data, header.value?.data.milestones?.items || [],
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
+    const settings = body.querySelector('[data-project-settings]');
+    if (settings) settings.onclick = () => openProfile(settings, project);
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
       mountProjects(host, route, request, { signal, memory, scope, navigation }));
     wireFilters(body, route);

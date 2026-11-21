@@ -78,6 +78,7 @@ td a:hover { text-decoration: underline; }
 .attention strong { display: block; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 11px; }
 .toolbar label { font-size: .8125rem; }
+.project-profile-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
 .select, .search { max-width: 100%; }
 .search { width: min(220px, 100%); }
 .search::placeholder { color: var(--or-text-muted); }

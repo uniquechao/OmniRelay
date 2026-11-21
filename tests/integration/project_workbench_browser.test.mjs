@@ -137,6 +137,135 @@ async function fixture(page) {
     },
   };
 }
+test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const width of [1366, 390]) for (const theme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width, height: 844 }, colorScheme: theme, hasTouch: width === 390 });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    const id = 'p-created';
+    let item;
+    let canCreate = false;
+    let canManage = true;
+    let writes = 0;
+    await page.route(origin + '/**', async (route) => {
+      const req = route.request();
+      const url = new URL(req.url());
+      const reply = (json, status = 200) => route.fulfill({ json, status });
+      if (url.pathname === '/api/v1/me') return reply({
+        principal: { account_id: 'manager' }, csrf_token: 'token',
+        access: { navigation: { workbench: true }, default_route: '/#/workbench' },
+      });
+      if (url.pathname === '/api/v1/projects') {
+        if (req.method() === 'GET') return reply({ ...list(item ? [item] : []), can_create: canCreate });
+        const values = req.postDataJSON();
+        assert.match(req.headers()['idempotency-key'], /^[a-f\d-]{36}$/);
+        assert.equal(req.headers()['x-csrf-token'], 'token');
+        assert.equal(values.status, 'planned');
+        assert.equal(values.business_timezone, 'Asia/Shanghai');
+        assert.equal(values.planned_start, '2026-11-22');
+        item = { ...values, id, version: 1, board_version: 1 };
+        return reply({ project_id: id, version: 1 });
+      }
+      const prefix = '/api/v1/projects/' + id + '/';
+      if (url.pathname === prefix + 'overview') return reply({ data: {
+        workspace: { project: item, can_manage_profile: canManage && item.status !== 'archived' }, milestones: { items: [] },
+      }});
+      if (url.pathname === prefix + 'members') return reply({ data: { members: [] } });
+      if (url.pathname === prefix + 'profile') {
+        const values = req.postDataJSON();
+        assert.equal(values.name, '已编辑项目');
+        if (++writes === 1) {
+          assert.equal(values.expected_version, 1);
+          item = { ...item, version: 2, background: '\n同事更新的背景' };
+          return reply({ error: 'project_state_changed' }, 409);
+        }
+        assert.equal(values.expected_version, 2);
+        assert.equal(values.background, '\n同事更新的背景');
+        item = { ...item, ...values, version: 3 };
+        return reply({ project_id: id, version: 3 });
+      }
+      if (url.pathname === prefix + 'archive') {
+        assert.deepEqual(req.postDataJSON(), { expected_version: 3 });
+        item = { ...item, status: 'archived', version: 4 };
+        return reply({ project_id: id, version: 4 });
+      }
+      return route.fulfill(await browserAsset(url.pathname));
+    });
+    try {
+      const prototype = new URL('../../design/prototype/omni-relay-workbench.html', import.meta.url);
+      prototype.searchParams.set('theme', theme);
+      prototype.hash = '/projects/beichen/overview';
+      await page.goto(prototype.href);
+      await page.getByRole('button', { name: '项目设置' }).click();
+      const referenceWidth = (await page.getByRole('dialog').boundingBox()).width;
+
+      const directory = origin + '/?theme=' + theme + '#/projects';
+      await page.goto(directory);
+      const create = page.getByRole('button', { name: '新建项目' });
+      await page.getByText('没有符合条件的项目。').waitFor();
+      assert.equal(await create.count(), 0);
+      canCreate = true;
+      await page.reload();
+      await create.click();
+      const drawer = page.getByRole('dialog');
+      assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
+      assert.ok(Math.abs((await drawer.boundingBox()).width - referenceWidth) <= 1);
+      assert.ok(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
+      const name = drawer.getByRole('textbox', { name: '项目名称' });
+      await name.fill('新建项目试点');
+      await drawer.getByLabel('计划开始日期').fill('2026-11-22');
+      const end = drawer.getByLabel('计划结束日期');
+      await end.fill('2026-11-21');
+      await drawer.getByRole('button', { name: '新建项目' }).click();
+      await drawer.getByText('计划结束日期应晚于或等于开始日期。').waitFor();
+      await end.fill('2026-12-01');
+      await drawer.getByRole('button', { name: '新建项目' }).click();
+      await page.getByRole('heading', { name: '新建项目试点' }).waitFor();
+      const settings = page.getByRole('button', { name: '项目设置' });
+      canManage = false;
+      await page.reload();
+      await page.getByRole('heading', { name: '新建项目试点' }).waitFor();
+      assert.equal(await settings.count(), 0);
+      canManage = true;
+      await page.reload();
+      await settings.click();
+      await name.fill('已编辑项目');
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: '继续编辑' }).click();
+      assert.equal(await name.inputValue(), '已编辑项目');
+      await page.evaluate(() => { location.hash = '#/projects/p-created/members'; });
+      await page.getByRole('button', { name: '继续编辑' }).click();
+      await page.waitForURL(/#\/projects\/p-created\/overview$/);
+      assert.equal(await name.inputValue(), '已编辑项目');
+      await drawer.getByRole('button', { name: '保存设置' }).click();
+      await drawer.getByRole('button', { name: '读取最新档案' }).click();
+      await drawer.getByRole('heading', { name: '最新档案' }).waitFor();
+      assert.equal(await name.inputValue(), '已编辑项目');
+      assert.equal(await drawer.getByRole('textbox', { name: '项目背景' }).inputValue(), '\n同事更新的背景');
+      await drawer.getByRole('button', { name: '保存设置' }).click();
+      await page.getByRole('heading', { name: '已编辑项目' }).waitFor();
+      await settings.click();
+      const archive = page.getByRole('button', { name: '归档项目', exact: true });
+      await archive.click();
+      const confirm = page.getByRole('dialog', { name: '归档项目？' });
+      await confirm.getByRole('button', { name: '取消', exact: true }).click();
+      assert.equal(item.status, 'planned');
+      await archive.click();
+      await confirm.getByRole('button', { name: '确认归档' }).click();
+      await page.getByText('已归档', { exact: true }).waitFor();
+      assert.equal(await settings.count(), 0);
+      await page.getByRole('link', { name: '返回项目列表' }).click();
+      await page.getByRole('link', { name: '已编辑项目' }).waitFor();
+      await page.getByRole('cell', { name: '已归档', exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
 test('项目导航、来源深链、返回恢复与权限状态', { skip: !moduleName }, async (t) => {
   const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());

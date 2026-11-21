@@ -90,8 +90,14 @@ func (s *Service) setBoardTimezone(w http.ResponseWriter, r *http.Request, actor
 		if v != in.Expected {
 			return errConflict
 		}
-		_, err := tx.Exec(ctx, "UPDATE project_task_boards SET business_timezone=$4,version=version+1 WHERE "+projectWhere, k.args(in.Timezone)...)
-		return err
+		p, err := k.profile(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if p.Status == "archived" {
+			return errConflict
+		}
+		return k.setProfileTimezone(ctx, tx, in.Timezone, v)
 	})
 	return map[string]any{"version": in.Expected + 1, "business_timezone": in.Timezone}, err
 }
