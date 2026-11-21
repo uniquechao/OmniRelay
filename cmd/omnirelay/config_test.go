@@ -51,6 +51,31 @@ func TestConfigServeDefaultsAndMigrationCredentialBoundary(t *testing.T) {
 	}
 }
 
+func TestCandidateReceiverConfig(t *testing.T) {
+	env := goodEnvironment()
+	read := func() (configuration, error) {
+		return readConfig(func(key string) string { return env[key] }, true)
+	}
+	if cfg, err := read(); err != nil || cfg.candidateReceiverToken != "" {
+		t.Fatalf("candidate receiver should default off: %v", err)
+	}
+	previous := receiverSourceSHA
+	receiverSourceSHA = strings.Repeat("a", 40)
+	t.Cleanup(func() { receiverSourceSHA = previous })
+	env["OMNIRELAY_CANDIDATE_RECEIVER_TOKEN"] = strings.Repeat("b", 64)
+	env["OMNIRELAY_TLS_CERT_FILE"] = "/cert"
+	env["OMNIRELAY_TLS_KEY_FILE"] = "/key"
+	env["OMNIRELAY_FEISHU_BOT_LEASE_NAMESPACE"] = "fixture"
+	env["OMNIRELAY_FEISHU_BOT_POD_UID"] = "fixture-pod"
+	if _, err := read(); err == nil {
+		t.Fatal("receiver without a recorded rollback point")
+	}
+	env["OMNIRELAY_CANDIDATE_RECEIVER_ROLLBACK"] = "registry.example.test/omnirelay@sha256:" + strings.Repeat("c", 64)
+	if _, err := read(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func goodEnvironment() map[string]string {
 	return map[string]string{
 		"OMNIRELAY_DATABASE_URL":      "postgresql://user@db.example.test/relay?sslmode=verify-full",

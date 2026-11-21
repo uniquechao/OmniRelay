@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 )
@@ -34,6 +36,7 @@ type InboundEvent struct {
 	ChatKind                            ChatKind
 	ReplyToMessageID                    string
 	ReceivedAt                          time.Time
+	ProviderAt                          time.Time `json:",omitzero"`
 	Text                                string
 	Connection                          ConnectionFence
 	Archive                             *ArchiveEvent `json:",omitempty"`
@@ -50,6 +53,15 @@ type InboxAcceptor interface {
 	AcceptInbound(ctx context.Context, event InboundEvent) (AcceptResult, error)
 }
 
+func InboundReference(e InboundEvent) string {
+	id := e.EventID
+	if id == "" && e.Archive != nil {
+		id = e.Archive.EventID
+	}
+	sum := sha256.Sum256([]byte(e.TenantID + "\x00" + e.AppID + "\x00" + id))
+	return hex.EncodeToString(sum[:12])
+}
+
 // ChatMessage is the provider message used by the read-only archive.
 type ChatMessage struct {
 	ID, ChatID, ThreadID, ParentID   string
@@ -62,7 +74,9 @@ type ChatMessage struct {
 // ArchiveEvent travels over the existing trusted connection. A message can be
 // admitted to the archive and to the command inbox independently.
 type ArchiveEvent struct {
-	ChatID, PeerOpenID string
-	Kind               ChatKind
-	Message            *ChatMessage
+	ChatID, PeerOpenID      string
+	Kind                    ChatKind
+	Message                 *ChatMessage
+	EventID, VerifiedSender string
+	ProviderAt              time.Time `json:",omitzero"`
 }

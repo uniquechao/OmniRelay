@@ -270,6 +270,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 			member, err := resolver.HasProjectAccess(ctx, p)
 			view.Navigation["workbench"] = err == nil && member
 		}
+		view.Navigation["bot_chats"] = view.Navigation["workbench"] && p.OpenID != ""
 	case slices.Contains(roles, RoleAuditViewer):
 		view.DefaultRoute = "/#/system/audit"
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
 	"net/url"
@@ -92,14 +93,26 @@ type contactDepartment struct {
 	Name   string  `json:"name"`
 }
 
+type SampleSelection struct {
+	Department string
+	Person     string
+	Group      string
+}
+
+type SampleSnapshot = snapshot
+
 type snapshot struct {
-	ChatSenderChecks []chatSenderCheck
-	Scope            scope
-	Departments      map[string]department
-	People           map[string]contactPerson
-	Members          map[string]map[string]bool
-	Departures       []string
-	MissingExplicit  map[string]bool
+	ChatSenderChecks    []chatSenderCheck
+	MemberPages         int
+	MemberContinuations int
+	MultiPage           int
+	Pages               int
+	Scope               scope
+	Departments         map[string]department
+	People              map[string]contactPerson
+	Members             map[string]map[string]bool
+	Departures          []string
+	MissingExplicit     map[string]bool
 }
 
 type upstreamError struct {
@@ -197,9 +210,13 @@ func (s *Service) requestOnce(ctx context.Context, method, address, token string
 }
 
 type collector struct {
-	service *Service
-	token   string
-	left    int
+	service             *Service
+	token               string
+	memberPages         int
+	memberContinuations int
+	multiPage           int
+	pages               int
+	left                int
 }
 
 func (f *collector) get(ctx context.Context, endpoint string, params url.Values, out any) error {
@@ -226,6 +243,16 @@ func paginate[T any](ctx context.Context, f *collector, path string, query url.V
 		var page T
 		if err := f.get(ctx, path, query, &page); err != nil {
 			return err
+		}
+		f.pages++
+		if path == "/users/find_by_department" || (strings.HasSuffix(path, "/member/simplelist") && query.Get("member_type") == "user") {
+			f.memberPages++
+			if len(seen) > 0 {
+				f.memberContinuations++
+			}
+		}
+		if len(seen) == 1 {
+			f.multiPage++
 		}
 		pager, err := read(page)
 		if err != nil {
@@ -301,7 +328,22 @@ func (f *collector) readScope(ctx context.Context) (scope, error) {
 	if err != nil {
 		return scope{}, err
 	}
-	for id := range groups {
+	if sample := f.service.cfg.sample; sample != nil {
+		whole := slices.Contains(result.Departments, "0")
+		allowed := scope{Departments: []string{}, People: []string{}}
+		if sample.Department != "" && (whole || slices.Contains(result.Departments, sample.Department)) {
+			allowed.Departments = append(allowed.Departments, sample.Department)
+		}
+		if sample.Person != "" && (whole || slices.Contains(result.People, sample.Person)) {
+			allowed.People = append(allowed.People, sample.Person)
+		}
+		result = allowed
+		groups = map[string]bool{sample.Group: sample.Group != "" && groups[sample.Group]}
+	}
+	for id, enabled := range groups {
+		if !enabled {
+			continue
+		}
 		if err := f.readGroupMembers(ctx, id, &result); err != nil {
 			return scope{}, err
 		}
@@ -361,6 +403,23 @@ func personIDs() url.Values {
 func (s *Service) collect(ctx context.Context, progress func(scope, int, int) error,
 	verifyDepartures func(context.Context, *collector, *snapshot) error,
 ) (snapshot, error) {
+	if read := s.cfg.CandidateRead; read != nil {
+		scoped, err := read(ctx, "")
+		if err != nil {
+			return snapshot{}, err
+		}
+		if err := progress(scoped.Scope, 0, 0); err != nil {
+			return snapshot{}, err
+		}
+		result, err := read(ctx, scoped.Scope.hash())
+		if err != nil {
+			return snapshot{}, err
+		}
+		if err := progress(result.Scope, len(result.Departments), len(result.People)); err != nil {
+			return snapshot{}, err
+		}
+		return result, nil
+	}
 	if s.cfg.AppSecret == "" {
 		return snapshot{}, errors.New("Feishu credentials are missing")
 	}
@@ -389,6 +448,9 @@ func (s *Service) collect(ctx context.Context, progress func(scope, int, int) er
 		return snapshot{}, err
 	}
 	result := snapshot{Scope: authorization, Departments: map[string]department{}, People: map[string]contactPerson{}, Members: map[string]map[string]bool{}, MissingExplicit: map[string]bool{}}
+	if s.cfg.sample != nil && s.sampleScopeOnly {
+		return result, nil
+	}
 	if err := f.readDepartments(ctx, &result); err != nil {
 		return snapshot{}, err
 	}
@@ -408,9 +470,21 @@ func (s *Service) collect(ctx context.Context, progress func(scope, int, int) er
 		if err := progress(verified, len(result.Departments), len(result.People)); err != nil {
 			return snapshot{}, err
 		}
+		if s.cfg.sample != nil {
+			return snapshot{}, SampleReadDenied()
+		}
 		return snapshot{}, errors.New("Feishu authorization scope changed during sync")
 	}
-	if verifyDepartures != nil && s.db != nil {
+	if s.cfg.sample != nil {
+		for id, p := range result.People {
+			p.Departments = slices.DeleteFunc(p.Departments, func(d string) bool { _, found := result.Departments[d]; return !found })
+			result.People[id] = p
+		}
+		result.Pages = f.pages
+		result.MultiPage = f.multiPage
+		result.MemberPages = f.memberPages
+		result.MemberContinuations = f.memberContinuations
+	} else if verifyDepartures != nil && s.db != nil {
 		if err := s.checkChatSenders(ctx, &f, &result); err != nil {
 			return snapshot{}, err
 		}
@@ -638,3 +712,33 @@ func userDoesNotExist(err error) bool {
 	return errors.As(err, &upstream) && upstream.code == 40007 &&
 		(upstream.status == http.StatusBadRequest || upstream.status == http.StatusOK)
 }
+
+// ReadSample 在受控服务内执行，仅遍历登记样本与平台授权的交集。
+func ReadSample(ctx context.Context, pool *pgxpool.Pool, cfg Config, sample SampleSelection, expectedScope string) (SampleSnapshot, error) {
+	if (sample.Department == "" && sample.Person == "" && sample.Group == "") ||
+		(sample.Department != "" && (!validID(sample.Department) || sample.Department == "0")) ||
+		(sample.Person != "" && !validOpenID(sample.Person)) || (sample.Group != "" && !validID(sample.Group)) {
+		return snapshot{}, errors.New("目录样本绑定无效")
+	}
+	cfg.sample = &sample
+	s, err := New(pool, cfg)
+	if err != nil {
+		return snapshot{}, err
+	}
+	s.sampleScopeOnly = expectedScope == ""
+	return s.collect(ctx, func(actual scope, _, _ int) error {
+		if expectedScope != "" && actual.hash() != expectedScope {
+			return SampleReadDenied()
+		}
+		return nil
+	}, nil)
+}
+
+func SampleDenied(err error) bool {
+	var upstream upstreamError
+	return errors.As(err, &upstream) && upstream.denied()
+}
+
+func SampleReadDenied() error { return upstreamError{kind: "目录样本授权已撤回", status: 403} }
+
+func (s SampleSnapshot) ScopeDigest() string { return s.Scope.hash() }

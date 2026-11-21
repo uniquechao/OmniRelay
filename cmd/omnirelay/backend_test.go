@@ -162,7 +162,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatal("workbench or its content security policy is missing")
 	}
 	wantStatus(do("GET", "/omni-relay-workbench.html", "", nil, ""), http.StatusNotFound)
-	for _, pattern := range []string{`src="(/assets/[^"]+\.js)"`, `href="(/assets/[^"]+\.css)"`} {
+	for _, pattern := range []string{`<script type="module"[^>]+src="(/assets/[^"]+\.js)"`, `href="(/assets/[^"]+\.css)"`} {
 		asset := regexp.MustCompile(pattern).FindStringSubmatch(home.Body.String())
 		if len(asset) != 2 {
 			t.Fatalf("工作台首页缺少资源引用：%s", pattern)

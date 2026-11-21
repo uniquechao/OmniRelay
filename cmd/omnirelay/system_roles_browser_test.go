@@ -46,6 +46,10 @@ func TestSystemRolesBrowser(t *testing.T) {
 	runSystemBrowser(t, "system_roles_browser.test.mjs")
 }
 
+func TestCandidateRoleEntry(t *testing.T) {
+	runSystemBrowser(t, "candidate_roles_browser.test.mjs")
+}
+
 func TestAccountGrantsBrowser(t *testing.T) {
 	dir, err := filepath.Abs("../../web/dist")
 	if err != nil {
@@ -115,7 +119,7 @@ func runSystemBrowser(t *testing.T, suite string) {
 			t.Fatal(err)
 		}
 	}
-	if suite == "account_grants_browser.test.mjs" {
+	if suite == "account_grants_browser.test.mjs" || suite == "candidate_roles_browser.test.mjs" {
 		roles.ProjectAccess = access.LocalProjects{Pool: pool}
 		_, err := pool.Exec(ctx, `INSERT INTO directory_sources(tenant_key,app_id) VALUES ('tenant_fixture','cli_fixture');
         INSERT INTO directory_sync_runs(id,tenant_key,app_id,trigger,state) OVERRIDING SYSTEM VALUE VALUES(17,'tenant_fixture','cli_fixture','initial','succeeded');

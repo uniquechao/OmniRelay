@@ -129,7 +129,7 @@ func (s *Service) savePreviewGrant(key previewGrantKey, grant previewGrant) {
 
 // DocumentPreviewToken retrieves a grant for the session and principal already authenticated by the reader.
 func (s *Service) DocumentPreviewToken(r *http.Request, p Principal, kind string) string {
-	token := cookieSecret(r, sessionCookie)
+	token := cookieSecret(r, s.cookieName(sessionCookie))
 	if token == "" || p.TenantKey != s.cfg.TenantKey || p.AppID != s.cfg.AppID || p.OpenID == "" {
 		return ""
 	}

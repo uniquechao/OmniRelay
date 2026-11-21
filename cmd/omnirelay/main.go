@@ -26,7 +26,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if len(os.Args) == 2 && os.Args[1] == feishu.WorkerCommand {
-		if feishu.ServeSDKWorker(ctx) != nil {
+		if os.Getenv("OMNIRELAY_CANDIDATE") != "" || feishu.ServeSDKWorker(ctx) != nil {
 			os.Exit(1)
 		}
 		return
@@ -49,6 +49,10 @@ func run(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 	}
+	candidate := os.Getenv("OMNIRELAY_CANDIDATE")
+	if candidate != "" && (candidate != "1" || command != "serve" && command != "migrate") {
+		return errors.New("候选模式或命令无效")
+	}
 	if command == "setup-token" && len(args) == 1 {
 		key, err := parseSetupKey(os.Getenv("OMNIRELAY_SETUP_KEY"))
 		if err != nil {
@@ -59,10 +63,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	valid := (command == "serve" || command == "migrate") && len(args) <= 1 ||
 		command == "password" && len(args) == 3
-	if !valid {
+	if !valid && !(command == "candidate-operation" && len(args) == 1) {
 		return errors.New("usage: omnirelay [serve|migrate|setup-token|password <account-id> <username>]")
 	}
-	cfg, err := readConfig(os.Getenv, command == "serve")
+	cfg, err := readConfig(os.Getenv, (command == "serve" || command == "candidate-operation") && candidate == "")
 	if err != nil {
 		return err
 	}
@@ -91,6 +95,17 @@ func run(ctx context.Context, args []string) error {
 	if err := pool.Ping(startup); err != nil {
 		return errors.New("PostgreSQL is unavailable or failed TLS verification")
 	}
+	if command == "candidate-operation" {
+		if len(cfg.setupKey) == 0 {
+			return errors.New("需要网页配置的应用身份")
+		}
+		return candidateOperation(startup, pool, cfg.setupKey, cfg.publicOrigin, os.Stdin, os.Stdout, nil)
+	}
+	if candidate != "" {
+		if err := checkCandidateDatabase(startup, pool, command); err != nil {
+			return err
+		}
+	}
 	if command == "migrate" {
 		if err := migrations.Apply(startup, pool); err != nil {
 			return errors.New("PostgreSQL migration failed; inspect migration role and schema state")
@@ -107,7 +122,15 @@ func run(ctx context.Context, args []string) error {
 	var handler http.Handler
 	var workers *backendWorkers
 	var reload chan struct{}
-	if cfg.appID == "" {
+	if candidate != "" {
+		if addr := os.Getenv("OMNIRELAY_LISTEN_ADDR"); addr != "" {
+			cfg.listenAddr = addr
+		}
+		handler = candidateHandler(pool)
+		if os.Getenv("OMNIRELAY_CANDIDATE_ORIGIN") != "" {
+			handler = candidateWeb(ctx, pool, handler, candidateBridge)
+		}
+	} else if cfg.appID == "" {
 		store := newWebSetupStore(pool, cfg.setupKey)
 		credentials, configured, err := store.load(startup)
 		if err != nil {

@@ -582,3 +582,64 @@ func TestReturnRechecksResourceAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestCandidateSameOriginIsolation(t *testing.T) {
+	prodDB, candidateDB := identityPool(t), identityPool(t)
+	cfg := testConfig()
+	prod, err := New(prodDB, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AppSecret = ""
+	cfg.Candidate = &CandidateOAuth{Run: strings.Repeat("a", 32), StateKey: newSecret(), Resolve: func(context.Context, string, string) (Principal, error) {
+		return Principal{AppID: cfg.AppID, TenantKey: cfg.TenantKey, OpenID: "ou_member"}, nil
+	}}
+	candidate, err := New(candidateDB, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = candidateDB.Exec(t.Context(), "INSERT INTO accounts(tenant_key,app_id,open_id) VALUES($1,$2,'ou_member')", cfg.TenantKey, cfg.AppID); err != nil {
+		t.Fatal(err)
+	}
+	request := func(s *Service, path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		s.Register(mux)
+		r := httptest.NewRequest("GET", cfg.PublicOrigin+path, nil)
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	begin := func(s *Service) (string, *http.Cookie) {
+		w := request(s, "/auth/feishu/start")
+		if w.Code != 302 {
+			t.Fatal("登录事务未建立")
+		}
+		u, _ := url.Parse(w.Header().Get("Location"))
+		return callbackPath + "?state=" + url.QueryEscape(u.Query().Get("state")), w.Result().Cookies()[0]
+	}
+	fromProd, prodCookie := begin(prod)
+	path, cookie := begin(candidate)
+	if prodCookie.Name == cookie.Name || request(candidate, fromProd+"&code=x", prodCookie, cookie).Code != 400 || request(prod, path+"&code=x", cookie, prodCookie).Code != 400 {
+		t.Fatal("同源登录事务隔离失败")
+	}
+	done := request(candidate, path+"&code=x", cookie, prodCookie)
+	if done.Code != 303 || request(candidate, path+"&code=x", cookie).Code != 400 {
+		t.Fatal("候选换码或重放校验失败")
+	}
+	var session *http.Cookie
+	for _, c := range done.Result().Cookies() {
+		if c.Value != "" {
+			session = c
+		}
+	}
+	if session == nil || session.Name == sessionCookie || request(prod, "/api/v1/me", session).Code != 401 || request(candidate, "/api/v1/me", session).Code != 200 {
+		t.Fatal("同源会话隔离失败")
+	}
+	path, cookie = begin(candidate)
+	if w := request(candidate, path+"&error=access_denied", cookie); w.Code != 303 || !strings.Contains(w.Header().Get("Location"), "cancelled") {
+		t.Fatal("取消回跳失败")
+	}
+}

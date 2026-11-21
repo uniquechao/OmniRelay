@@ -114,9 +114,11 @@ func TestSDKWorkerWireACKAndReap(t *testing.T) {
 	seen, release := make(chan string, 1), make(chan struct{})
 	signals, done := make(chan string, 8), make(chan struct{})
 	var workerErr error
+	cfg := fixtureConfig
+	cfg.ObserveReceipts = true
 	go func() {
 		defer close(done)
-		workerErr = process.run(ctx, fixtureConfig, func(signal string) { signals <- signal },
+		workerErr = process.run(ctx, cfg, func(signal string) { signals <- signal },
 			func(callback context.Context, event orchestrator.InboundEvent) error {
 				switch event.MessageID {
 				case "om_success":

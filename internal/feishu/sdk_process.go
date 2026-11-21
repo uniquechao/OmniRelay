@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -105,6 +106,12 @@ func (p sdkProcess) run(ctx context.Context, cfg workerConfig, signal func(strin
 		switch frame.Kind {
 		case "ready", "pong":
 			signal(frame.Kind)
+		case "callback_return":
+			if !cfg.ObserveReceipts || frame.Ack == nil || len(frame.Ack.Reference) != 24 {
+				return errWorker
+			}
+			slog.InfoContext(ctx, "飞书 SDK 回调返回", "event_ref", frame.Ack.Reference,
+				"callback_returned_at", frame.Ack.ReturnedAt, "callback_millis", frame.Ack.Elapsed.Milliseconds(), "accepted", frame.Ack.OK)
 		case "event":
 			if frame.Event == nil || frame.ID == 0 || frame.Deadline.IsZero() {
 				return errWorker

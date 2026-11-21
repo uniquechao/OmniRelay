@@ -12,6 +12,7 @@ import (
 type workerConfig struct {
 	AppID, AppSecret, TenantKey, BotOpenID string
 	Archive                                bool
+	ObserveReceipts                        bool
 }
 
 func mapInbound(cfg workerConfig, incoming *im.P2MessageReceiveV1, received time.Time) (orchestrator.InboundEvent, bool) {
@@ -53,6 +54,7 @@ func mapInbound(cfg workerConfig, incoming *im.P2MessageReceiveV1, received time
 		MessageID: value(message.MessageId), ChatID: value(message.ChatId), ChatKind: kind,
 		ThreadID: value(message.ThreadId), ReplyToMessageID: value(message.ParentId),
 		SenderOpenID: value(sender.SenderId.OpenId), ReceivedAt: received.UTC(), Text: body,
+		ProviderAt: providerTime(value(message.CreateTime)),
 	}, true
 }
 
@@ -91,7 +93,10 @@ func mapArchive(cfg workerConfig, incoming *im.P2MessageReceiveV1, received time
 	}
 	kind := orchestrator.ChatKind(value(m.ChatType))
 	openID, senderKind := value(sender.SenderId.OpenId), value(sender.SenderType)
-	event := &orchestrator.ArchiveEvent{ChatID: *m.ChatId, Kind: kind}
+	event := &orchestrator.ArchiveEvent{ChatID: *m.ChatId, Kind: kind, EventID: incoming.EventV2Base.Header.EventID}
+	if senderKind == "user" && value(sender.TenantKey) == cfg.TenantKey && validIMID(openID, "ou_") && openID != cfg.BotOpenID {
+		event.VerifiedSender = openID
+	}
 	switch kind {
 	case orchestrator.ChatPrivate:
 		if senderKind != "user" || value(sender.TenantKey) != cfg.TenantKey ||
@@ -104,6 +109,7 @@ func mapArchive(cfg workerConfig, incoming *im.P2MessageReceiveV1, received time
 		return nil
 	}
 	sentAt := providerTime(value(m.CreateTime))
+	event.ProviderAt = sentAt
 	if sentAt.IsZero() {
 		sentAt = received.UTC()
 	}
@@ -127,7 +133,7 @@ func mapRecall(cfg workerConfig, incoming *im.P2MessageRecalledV1, received time
 	if at.IsZero() {
 		at = received.UTC()
 	}
-	return &orchestrator.ArchiveEvent{ChatID: *m.ChatId, Message: &orchestrator.ChatMessage{
+	return &orchestrator.ArchiveEvent{ChatID: *m.ChatId, EventID: incoming.EventV2Base.Header.EventID, Message: &orchestrator.ChatMessage{
 		ID: *m.MessageId, ChatID: *m.ChatId, SentAt: at, UpdatedAt: at, Deleted: true,
 	}}
 }
@@ -141,7 +147,9 @@ func mapPrivateEntry(cfg workerConfig, incoming *im.P2ChatAccessEventBotP2pChatE
 		!validIMID(value(m.OperatorId.OpenId), "ou_") || value(m.OperatorId.OpenId) == cfg.BotOpenID {
 		return nil
 	}
-	return &orchestrator.ArchiveEvent{ChatID: *m.ChatId, Kind: orchestrator.ChatPrivate, PeerOpenID: *m.OperatorId.OpenId}
+	return &orchestrator.ArchiveEvent{ChatID: *m.ChatId, Kind: orchestrator.ChatPrivate, PeerOpenID: *m.OperatorId.OpenId,
+		EventID: incoming.EventV2Base.Header.EventID, VerifiedSender: *m.OperatorId.OpenId,
+		ProviderAt: providerTime(incoming.EventV2Base.Header.CreateTime)}
 }
 
 func archiveInbound(cfg workerConfig, event *orchestrator.ArchiveEvent) orchestrator.InboundEvent {

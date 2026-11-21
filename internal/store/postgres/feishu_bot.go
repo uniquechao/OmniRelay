@@ -50,6 +50,12 @@ func (s *FeishuBot) Activate(ctx context.Context) error {
 		if err := s.lockGeneration(ctx, tx); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, `UPDATE feishu_candidate_message_runs SET
+			transfer=false,outbound=false,transfer_stopped_at=coalesce(transfer_stopped_at,clock_timestamp())
+			WHERE (tenant_key,app_id)=($1,$2) AND generation<$3 AND (transfer OR outbound)`,
+			s.config.TenantKey, s.config.AppID, s.generation); err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `WITH instant AS (SELECT clock_timestamp() AS at)
 			UPDATE feishu_bot_checks SET state='failed', lease_until=NULL,
 			started_at=coalesce(started_at, at), finished_at=at,

@@ -7,3 +7,5 @@
 `MODULE.md` 和当前 issue 过程页。遵循全局技能 `panda-issue`：实施中维护过程页，
 完成时只把长期有效的知识提炼回模块文档，不记录逐条终端流水。
 <!-- panda:module-guide:end -->
+
+后续 issue 需要候选验收时，从 [候选验收入口](deploy/k8s/candidate/README.md) 登记资源、核验版本并查询各场景就绪状态。

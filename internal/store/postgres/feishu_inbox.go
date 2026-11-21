@@ -60,13 +60,7 @@ func (s *FeishuInbox) AcceptInbound(ctx context.Context, event orchestrator.Inbo
 		}
 		// Account resolution or writes may have waited. Recheck the lease using
 		// database time before recording receipt in the same transaction.
-		tag, err := tx.Exec(ctx, `UPDATE feishu_bot_configs
-			SET last_message_at=GREATEST(last_message_at, clock_timestamp()) WHERE `+receivingConnection,
-			event.TenantID, event.AppID, event.Connection.ConfigVersion, event.Connection.ConnectionGeneration)
-		if err == nil && tag.RowsAffected() == 0 {
-			return orchestrator.ErrStaleConnection
-		}
-		return err
+		return recordMessageReceived(ctx, tx, event)
 	})
 	switch err {
 	case nil:
@@ -98,6 +92,16 @@ func checkLiveConnection(ctx context.Context, tx pgx.Tx, event orchestrator.Inbo
 	return err
 }
 
+func recordMessageReceived(ctx context.Context, tx pgx.Tx, event orchestrator.InboundEvent) error {
+	tag, err := tx.Exec(ctx, `UPDATE feishu_bot_configs
+		SET last_message_at=GREATEST(last_message_at, clock_timestamp()) WHERE `+receivingConnection,
+		event.TenantID, event.AppID, event.Connection.ConfigVersion, event.Connection.ConnectionGeneration)
+	if err == nil && tag.RowsAffected() == 0 {
+		return orchestrator.ErrStaleConnection
+	}
+	return err
+}
+
 func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orchestrator.InboundEvent) (orchestrator.WorkID, error) {
 	var account *string
 	state := "admission_denied"
@@ -119,7 +123,11 @@ func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orches
 		return "", err
 	}
 
-	_, err = tx.Exec(ctx, `INSERT INTO feishu_inbound_events
+	return recordInbound(ctx, tx, event, account, state)
+}
+
+func recordInbound(ctx context.Context, tx pgx.Tx, event orchestrator.InboundEvent, account *string, state string) (orchestrator.WorkID, error) {
+	_, err := tx.Exec(ctx, `INSERT INTO feishu_inbound_events
 		(app_id,tenant_id,message_id,event_id,chat_id,chat_kind,thread_id,reply_to_message_id,
 		sender_open_id,received_at,body,config_version,connection_generation)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
@@ -149,8 +157,23 @@ func (s *FeishuBot) AcceptChatArchive(ctx context.Context, event orchestrator.In
 		if err := checkLiveConnection(ctx, tx, event); err != nil {
 			return err
 		}
+		source, chat, _, _, _, recall := candidateSource(event)
+		if event.Archive.Message == nil && source != "" {
+			if _, err := tx.Exec(ctx, `INSERT INTO feishu_candidate_event_owners
+				(tenant_key,app_id,source_id,chat_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+				event.TenantID, event.AppID, source, chat); err != nil {
+				return err
+			}
+		}
 		if err := accept(ctx, tx, *event.Archive); err != nil {
 			return err
+		}
+		if event.Archive.Message != nil && !recall {
+			if _, err := tx.Exec(ctx, `UPDATE feishu_chat_messages SET sdk_received=true
+				WHERE (tenant_key,app_id,message_id,chat_id)=($1,$2,$3,$4) AND NOT sdk_received`,
+				event.TenantID, event.AppID, source, chat); err != nil {
+				return err
+			}
 		}
 		return checkLiveConnection(ctx, tx, event)
 	})

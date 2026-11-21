@@ -36,6 +36,14 @@ type workerFrame struct {
 	ID       uint64                     `json:",omitempty"`
 	Deadline time.Time                  `json:",omitzero"`
 	Event    *orchestrator.InboundEvent `json:",omitempty"`
+	Ack      *workerAck                 `json:",omitempty"`
+}
+
+type workerAck struct {
+	Reference  string
+	ReturnedAt time.Time
+	Elapsed    time.Duration
+	OK         bool
 }
 
 type workerReply struct {
@@ -70,7 +78,7 @@ func serveSDKWorker(ctx context.Context, input io.Reader, output io.Writer, opti
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	bridge := &workerBridge{out: make(chan workerFrame, 8), ready: make(chan struct{})}
+	bridge := &workerBridge{out: make(chan workerFrame, 8), ready: make(chan struct{}), observe: cfg.ObserveReceipts}
 	pulses := make(chan struct{}, 1)
 	go func() {
 		defer cancel()
@@ -191,8 +199,9 @@ func workerScanner(source io.Reader) *bufio.Scanner {
 }
 
 type workerBridge struct {
-	out   chan workerFrame
-	ready chan struct{}
+	out     chan workerFrame
+	ready   chan struct{}
+	observe bool
 
 	mu      sync.Mutex
 	id      uint64
@@ -206,7 +215,18 @@ func (b *workerBridge) signal(kind string) {
 	}
 }
 
-func (b *workerBridge) deliver(ctx context.Context, event orchestrator.InboundEvent, deadline time.Time) error {
+func (b *workerBridge) deliver(ctx context.Context, event orchestrator.InboundEvent, deadline time.Time) (result error) {
+	if b.observe {
+		defer func() {
+			returned := time.Now()
+			ack := workerAck{Reference: orchestrator.InboundReference(event), ReturnedAt: returned.UTC(),
+				Elapsed: returned.Sub(deadline.Add(-callbackBudget)), OK: result == nil}
+			select {
+			case b.out <- workerFrame{Kind: "callback_return", Ack: &ack}:
+			default:
+			}
+		}()
+	}
 	if len(event.Text) >= maxWorkerFrame {
 		return errWorker
 	}

@@ -473,6 +473,37 @@ func TestFileArchiveAccess(t *testing.T) {
 
 }
 
+func TestFileArchiveRespectsCandidateOwnership(t *testing.T) {
+	ctx, pool := archiveTestDB(t)
+	_, err := pool.Exec(ctx, `INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+		VALUES('t','a','m1','g1',now(),now(),'{"file_key":"test_file"}','file'),('t','a','m2','g1',now(),now(),'{"file_key":"regular_file"}','file')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := New(pool, "t", "a", 1, nil, nil, nil, testGroupAccess)
+	if worked, err := files.index(ctx); err != nil || !worked {
+		t.Fatal(worked, err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO feishu_candidate_message_runs
+		(id,tenant_key,app_id,generation,candidate_sha,candidate_pod,sender_open_id,project_id,group_chat,private_chat,file_token,expires_at,budget,outbound,may_reply,may_reconcile)
+		VALUES('run','t','a',1,'sha','pod','ou_alice','p','g1','','test_file',now()+interval '1 hour',0,false,false,false);
+		INSERT INTO feishu_candidate_event_owners VALUES('t','a','m1','g1','run')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM feishu_file_sources WHERE message_id IN ('m1','m2')`).Scan(&count)
+	if err != nil || count != 1 {
+		t.Fatalf("wrong count of visible production shares: %d, %v", count, err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE feishu_chat_messages SET files_indexed=false WHERE message_id='m1'`); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := files.index(ctx); err != nil || worked {
+		t.Fatal(worked, err)
+	}
+}
+
 func TestFileReferences(t *testing.T) {
 	refs := References("post", `{"content":[[{"tag":"a","href":"https://acme.feishu.cn/base/A12?table=1"},{"text":"https://acme.feishu.cn/base/A12 https://acme.larksuite.com/minutes/M1 https://acme.feishu.cn/file/F2"}]]}`)
 	if len(refs) != 3 {

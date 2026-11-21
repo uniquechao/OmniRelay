@@ -44,7 +44,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		}
 		return nil, nil, errors.New("administrator bootstrap failed")
 	}
-	directoryService, err := directory.New(pool, directory.Config{
+	directoryService, err := directory.New(pool, directory.Config{CandidateRead: cfg.candidateRead,
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, Interval: cfg.syncInterval, PageBudget: cfg.pageBudget,
 		HTTPClient: &http.Client{Transport: transport, Timeout: 12 * time.Second},
 	})
@@ -54,7 +54,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
 	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
 	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
-	identityService, err := identity.New(pool, identity.Config{
+	identityService, err := identity.New(pool, identity.Config{Candidate: cfg.candidateOAuth,
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, PublicOrigin: cfg.publicOrigin,
 		Transport: transport, Audit: roles.AuditIdentity, Access: roles.WorkbenchAccess,
 		ResourceRead: func(ctx context.Context, principal identity.Principal, projectID, chatID string) (bool, error) {
@@ -91,6 +91,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	chatService.ConfigureBusinessReceipts(projectService)
 	projectService.ConfigureFiles(fileService)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
+	var receiver *postgres.CandidateMessages
 	if cfg.appSecret != "" {
 		workers.chat = chatService
 		workers.files = fileService
@@ -109,16 +110,27 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 			return nil, nil, err
 		}
 		connection := feishu.NewConnection(executable, cfg.tenantKey, check, botStore, inbox, cfg.botHeartbeatTTL)
+		receiver = postgres.NewCandidateMessages(inbox, chatService.AcceptEvent, cfg.candidateReceiverToken != "")
+		connection.SetInboundInterceptor(receiver.Intercept, cfg.candidateReceiverToken != "")
 		connection.SetArchive(func(ctx context.Context, event orchestrator.InboundEvent) error {
 			return botStore.AcceptChatArchive(ctx, event, chatService.AcceptEvent)
 		})
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
 	mux := http.NewServeMux()
+	if run := cfg.candidateMessageRun; run != nil && run.MessageProject != "" {
+		registerCandidateReplies(mux, pool, identityService.AuthenticateWorkbench, roles, *run)
+	}
+	if receiver != nil && cfg.candidateReceiverToken != "" {
+		mux.Handle("POST "+candidateReceiverPath, candidateReceiver{
+			store: receiver, chat: chatService, source: chatSource, roles: roles,
+			token: cfg.candidateReceiverToken, rollback: cfg.candidateReceiverRollback,
+		})
+	}
 	workers.bot.Register(mux, identityService.AuthenticateManagement, roles)
-	fileService.Register(mux, identityService.Authenticate)
-	chatService.Register(mux, identityService.Authenticate)
-	projectService.Register(mux, identityService.Authenticate)
+	fileService.Register(mux, identityService.AuthenticateWorkbench)
+	chatService.Register(mux, identityService.AuthenticateWorkbench)
+	projectService.Register(mux, identityService.AuthenticateWorkbench)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
 	web.Register(mux)

@@ -29,6 +29,7 @@ type Connection struct {
 	store      ConnectionStore
 	inbox      orchestrator.InboxAcceptor
 	archive    func(context.Context, orchestrator.InboundEvent) error
+	intercept  func(context.Context, orchestrator.InboundEvent) (bool, error)
 	runner     connectionRunner
 	ttl        time.Duration
 	poll       time.Duration
@@ -54,7 +55,18 @@ func (c *Connection) SetArchive(accept func(context.Context, orchestrator.Inboun
 	c.archive = accept
 }
 
+func (c *Connection) SetInboundInterceptor(accept func(context.Context, orchestrator.InboundEvent) (bool, error), observe bool) {
+	c.intercept = accept
+	c.config.ObserveReceipts = observe
+}
+
 func (c *Connection) accept(ctx context.Context, event orchestrator.InboundEvent) error {
+	if c.intercept != nil {
+		handled, err := c.intercept(ctx, event)
+		if handled || err != nil {
+			return err
+		}
+	}
 	var archiveErr, commandErr error
 	if event.Archive == nil || event.MessageID != "" {
 		command := event
