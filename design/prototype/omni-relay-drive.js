@@ -33,14 +33,14 @@ window.OmniRelayDrive = (() => {
         ['用例/验收用例.xlsx','TC-001 验收账号登录，通过。TC-002 核心接口回归，待执行。']] },
     { id:'d2', category:'docs', format:'飞书文档', name:'启明试点范围说明', group:'qiming', source:'启明试点项目群', author:'林晓',
       projects:[qiming], bytes:22528, blocks:[['首批范围','交付一组参与试点，先验证项目查询、任务跟进和反馈收集。']] }
-  ];
+  ].map((row,index) => ({...row, sharedAt:'2026-11-18T15:' + String(10 + index * 3).padStart(2,'0') + ':00+08:00'}));
 
   const storageKey = 'omni-relay.file-projects';
   let activeCategory = 'all';
 
   function messagesForGroup(group) {
-    return records.map((row,index) => ({row,index})).filter(({row}) => row.group === group).map(({row,index}) => ({
-      id:row.id, at:'2026-11-18 15:' + String(10 + index * 3).padStart(2,'0'), author:row.author,
+    return records.filter(row => row.group === group).map(row => ({
+      id:row.id, at:row.sharedAt.slice(0,16).replace('T',' '), author:row.author,
       text:row.name, fileFormat:row.format, fileSize:formatSize(row.bytes)
     }));
   }
@@ -116,6 +116,7 @@ window.OmniRelayDrive = (() => {
       list.replaceChildren(table);
       listView = mountList(table,{
         key:'feishu-drive-' + category, label:'飞书文件', itemLabel:'文件', rows, rowLabel:row => row.name, selection:false,
+        defaultSort:{key:'shared_at',direction:'desc'},
         search:row => [row.name,row.source,row.author,...projectNames(row),row.format,categories[row.category]].join(' '),
         filters:[{key:'projects',label:'所属项目',options:Object.fromEntries(choices.map(({id,label}) => [id,label])),
           matches:(row,id) => projectIds(row).includes(id)}],
@@ -126,6 +127,8 @@ window.OmniRelayDrive = (() => {
           {key:'source',label:'来源群',sort:row => row.source,render:sourceLink},
           {key:'project',label:'所属项目',sort:row => projectNames(row).join('、'),render:projectsCell},
           {key:'size',label:'大小',sort:row => row.bytes,render:row => '<span class="drive-file-size">' + formatSize(row.bytes) + '</span>'},
+          {key:'shared_at',label:'分享时间',sort:row => row.sharedAt,render:row =>
+            `<time datetime="${row.sharedAt}">${escape(new Date(row.sharedAt).toLocaleString('zh-CN'))}</time>`},
           {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" data-drive-preview="' +
             escape(row.id) + '" aria-label="预览 ' + escape(row.name) + '">预览</button>'}
         ]

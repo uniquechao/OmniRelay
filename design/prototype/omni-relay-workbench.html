@@ -626,11 +626,11 @@ function renderOverview() {
     '<svg class="' + className + '" aria-hidden="true"><use href="#' + name + '"/></svg>';
   const chevron = icon('action-expand', 'icon overview-chevron');
   const number = new Intl.NumberFormat('zh-CN');
-  const entries = Object.entries(projects);
+  const entries = Object.entries(projects).filter(([, project]) => project.status === 'progress');
   const sample = [
-    ['#/projects?status=', 'nav-projects', '可见项目', entries.length, '当前账号可访问的项目'],
-    ['#/feishu/bot-chats', 'nav-bot-chat', '可见消息', 1286, '当前账号的群聊与 Bot 私聊'],
-    ['#/feishu/drive', 'file-grid', '可见文件', 47, '当前账号可访问的网盘资源']
+    ['#/projects', 'nav-projects', '项目数', entries.length, '当前账号可访问的进行中项目'],
+    ['#/feishu/bot-chats', 'nav-bot-chat', '消息数', 1286, '当前账号的群聊与 Bot 私聊'],
+    ['#/feishu/drive', 'file-grid', '文件数', 47, '当前账号可访问的网盘资源']
   ];
   const summary = sample.map(([href, symbol, label, count, detail]) =>
     '<a class="overview-metric" href="' + href + '"><span class="overview-metric-label">' +

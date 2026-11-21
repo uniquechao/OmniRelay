@@ -15,6 +15,7 @@ function sizeText(bytes) {
 
 export function mountDrive(page, request, signal, {preview, editProjects, memory = {}} = {}) {
   const { escape, mountList } = window.OmniRelayUI;
+  const renderTime = value => `<time datetime="${escape(value)}">${escape(new Date(value).toLocaleString('zh-CN'))}</time>`;
   const returning = memory.source && memory.source.key === history.state?.driveReturn ? memory.source : null;
   delete memory.source;
   const states = returning?.states ?? new Map();
@@ -107,6 +108,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
     for (const button of bar.children) button.setAttribute('aria-pressed', String(button.dataset.driveCategory === category));
     const view = mountList(root, {
       key:'feishu-drive-' + category, states, label:'飞书文件', itemLabel:'文件', selection:false, signal:lifetime,
+      defaultSort:{key:'shared_at',direction:'desc'},
       filters:[{key:'project_id',label:'所属项目',options:{}}, ...(category === 'files' ? [{key:'format',label:'格式',options:{pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'}}] : [])],
       async loadPage(state, pageSignal) {
         const params = new URLSearchParams({category, offset:state.page * state.pageSize, limit:state.pageSize});
@@ -141,11 +143,9 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
         {key:'project',label:'所属项目',sort:true,render:row => fileProjects(row, names)},
         {key:'size',label:'大小',sort:true,render:row => '<span class="drive-file-size" title="' +
           (row.size_source === 'original' ? '原件大小' : '大小未知') + '">' + sizeText(row.size_bytes) + '</span>'},
-        {key:'updated_at',label:'同步状态',sort:true,render:row => {
-          const updated = row.updated_at && new Date(row.updated_at);
-          return escape(syncStateLabel(row.sync_state)) + (updated ? '<br><time datetime="' +
-            escape(row.updated_at) + '">' + escape(updated.toLocaleString('zh-CN')) + '</time>' : '');
-        }},
+        {key:'shared_at',label:'分享时间',sort:true,render:row => row.sources?.[0]?.sent_at ? renderTime(row.sources[0].sent_at) : '—'},
+        {key:'updated_at',label:'同步状态',sort:true,render:row =>
+          escape(syncStateLabel(row.sync_state)) + (row.updated_at ? '<br>' + renderTime(row.updated_at) : '')},
         {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>' + (row.version_id ? ' <a class="row-action" download href="/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/content?download=1">下载</a>' : '')}
       ]
     });

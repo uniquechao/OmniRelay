@@ -105,9 +105,9 @@ func TestFileArchiveAccess(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
- VALUES('t','a','m1','g1',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
- ('t','a','m2','g2',now(),now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
- ('t','a','m3','g1',now(),now(),'{"file_key":"file1","file_name":"空.pdf"}','file')`)
+ VALUES('t','a','m1','g1',now()-interval '3 days',now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
+ ('t','a','m2','g2',now()-interval '1 day',now(),'{"text":"https://example.feishu.cn/docx/Token"}','text'),
+ ('t','a','m3','g1',now()-interval '2 days',now(),'{"file_key":"file1","file_name":"空.pdf"}','file')`)
 	src := &testSource{text: "第一版"}
 	roles := access.New(pool, "t", "a")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
@@ -124,6 +124,7 @@ func TestFileArchiveAccess(t *testing.T) {
 		}
 	}
 	refresh(3)
+	exec(`UPDATE feishu_file_shares SET synced_at=CASE WHEN message_id='m3' THEN now() ELSE now()-interval '1 hour' END`)
 	mux := http.NewServeMux()
 	account := "alice"
 	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
@@ -152,6 +153,15 @@ func TestFileArchiveAccess(t *testing.T) {
 	total, items := page("?sort=size&order=desc&limit=1")
 	if total != 2 || len(items) != 1 || items[0].Format != "PDF" || items[0].Size == nil || *items[0].Size != 0 {
 		t.Fatal(total, items)
+	}
+	_, first := page("?limit=1")
+	_, next := page("?offset=1&limit=1&sort=shared_at&order=desc")
+	_, oldest := page("?limit=1&sort=shared_at&order=asc")
+	_, lastSynced := page("?limit=1&sort=updated_at&order=desc")
+	if len(first) != 1 || first[0].Category != "docs" || first[0].Sources[0].MessageID != "m2" ||
+		len(next) != 1 || next[0].Format != "PDF" || len(oldest) != 1 || oldest[0].ID != next[0].ID ||
+		len(lastSynced) != 1 || lastSynced[0].ID != next[0].ID {
+		t.Fatalf("share order or sync order changed: %v %v %v %v", first, next, oldest, lastSynced)
 	}
 	_, docs := page("?category=docs")
 	if len(docs) != 1 || len(docs[0].Sources) != 2 || docs[0].Size != nil || docs[0].SizeSource != "unknown" {

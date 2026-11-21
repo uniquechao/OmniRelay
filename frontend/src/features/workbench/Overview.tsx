@@ -14,12 +14,12 @@ type Metric = {route: string; label: string; detail: string; icon: string; endpo
 const projectLimit = 10;
 const number = new Intl.NumberFormat('zh-CN');
 const projectMetric = {
-  route: 'projects', label: '可见项目', detail: '当前账号可访问的项目', icon: 'nav-projects',
-  endpoint: '/api/v1/projects?page=1&page_size=' + projectLimit,
+  route: 'projects', label: '项目数', detail: '当前账号可访问的进行中项目', icon: 'nav-projects',
+  endpoint: '/api/v1/projects?page=1&page_size=' + projectLimit + '&status=active',
 };
 const otherMetrics: Metric[] = [
-  {route: 'bot-chats', label: '可见消息', detail: '当前账号的群聊与 Bot 私聊', icon: 'nav-bot-chat', endpoint: '/api/v1/feishu/chats/messages/count/mine'},
-  {route: 'drive', label: '可见文件', detail: '当前账号可访问的网盘资源', icon: 'file-grid', endpoint: '/api/v1/feishu/files?limit=1'},
+  {route: 'bot-chats', label: '消息数', detail: '当前账号的群聊与 Bot 私聊', icon: 'nav-bot-chat', endpoint: '/api/v1/feishu/chats/messages/count/mine'},
+  {route: 'drive', label: '文件数', detail: '当前账号可访问的网盘资源', icon: 'file-grid', endpoint: '/api/v1/feishu/files?limit=1'},
 ];
 const queryOptions = {
   retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false,
@@ -88,7 +88,7 @@ export function Overview({links}: {links: Route[]}) {
       </Button>
     </header>
     <section className="overview-metrics" aria-label="工作台统计">
-      {projectHref && <MetricLink metric={projectMetric} href={projectHref + '?status='} result={projectResult}/>}
+      {projectHref && <MetricLink metric={projectMetric} href={projectHref} result={projectResult}/>}
       {metrics.map(({metric, href}, index) =>
         <MetricLink key={metric.route} metric={metric} href={href} result={counts[index]}/>)}
     </section>
@@ -100,7 +100,7 @@ export function Overview({links}: {links: Route[]}) {
       </header>
       {projectResult.isPending || projectResult.isFetching ? <Loading size="compact" label="正在加载项目…"/>
         : projectResult.isError ? <p className="aux">暂时无法加载项目。</p>
-        : projectResult.data.items.length === 0 ? <p className="aux">当前没有可访问的项目。</p>
+        : projectResult.data.items.length === 0 ? <p className="aux">当前没有可访问的进行中项目。</p>
         : <>
           <div className="table-box overview-project-table">
             <table aria-labelledby="overview-projects">

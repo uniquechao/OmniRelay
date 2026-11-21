@@ -318,8 +318,14 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
     try {
       await page.goto(origin + '/?theme=' + theme + '#/workbench');
       const main = page.getByRole('main');
-      await main.getByRole('link', { name: /可见消息/ }).getByText(admin ? '3' : '2', { exact: true }).waitFor();
-      await main.getByRole('link', { name: /可见文件/ }).getByText('1', { exact: true }).waitFor();
+      await main.getByRole('link', { name: /消息数/ }).getByText(admin ? '3' : '2', { exact: true }).waitFor();
+      await main.getByRole('link', { name: /文件数/ }).getByText('1', { exact: true }).waitFor();
+      const projectMetric = main.getByRole('link', { name: /项目数/ });
+      await projectMetric.getByText('1', { exact: true }).waitFor();
+      assert.equal(await projectMetric.getAttribute('href'), '#/projects');
+      await main.getByRole('table', { name: '项目速览' }).getByRole('link', { name: project.name }).waitFor();
+      assert.equal(await main.getByRole('link', { name: planned.name }).count(), 0);
+      assert.ok(requested.includes('/api/v1/projects?page=1&page_size=10&status=active'));
       assert.equal(await main.getByRole('heading', { name: '系统管理' }).count(), 0);
       assert.equal(await main.getByRole('link', { name: /连接设置|用户管理|启用用户/ }).count(), 0);
       assert.ok(!requested.some(path => path.startsWith('/api/v1/system/') || path === '/api/v1/feishu/chats/messages/count'));

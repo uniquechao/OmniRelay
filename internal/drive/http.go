@@ -375,9 +375,15 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 	}
 	key := q.Get("sort")
 	order := q.Get("order")
-	if !slices.Contains([]string{"", "name", "size", "category", "project", "format", "updated_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
+	if !slices.Contains([]string{"", "name", "size", "category", "project", "format", "shared_at", "updated_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
 		problem(w, 400, "invalid_sort")
 		return
+	}
+	if key == "" {
+		key = "shared_at"
+	}
+	if key == "shared_at" && order == "" {
+		order = "desc"
 	}
 	projectOptions := map[string]string{}
 	selected := []item{}
@@ -417,7 +423,10 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 			} else {
 				ordering = cmp.Compare(*a.Size, *b.Size)
 			}
-		case "updated_at", "":
+		case "shared_at":
+			// Each file's authorized sources are already sorted by share time.
+			ordering = a.Sources[0].SentAt.Compare(b.Sources[0].SentAt)
+		case "updated_at":
 			if a.Updated == nil || b.Updated == nil {
 				if a.Updated != b.Updated {
 					return a.Updated != nil
@@ -439,7 +448,7 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 		if ordering == 0 {
 			return a.ID < b.ID
 		}
-		if order == "desc" || (order == "" && key == "") {
+		if order == "desc" {
 			return ordering > 0
 		}
 		return ordering < 0
