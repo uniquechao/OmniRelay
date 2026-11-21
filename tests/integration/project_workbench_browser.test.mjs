@@ -10,6 +10,7 @@ const project = { id: 'p-21', name: '联调项目', project_type: '交付', stat
 const task = { id: 't-99', project_id: project.id, title: '联调验收', status: 'done' };
 const root = '/api/v1/projects/' + project.id;
 const list = (items) => ({ items, total: items.length });
+const projectTypes = [{ name: '研发', tone: 'blue' }, { name: '销售', tone: 'purple' }, { name: '售后', tone: 'amber' }];
 
 async function fixture(page) {
   const errors = [];
@@ -158,11 +159,12 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
         access: { navigation: { workbench: true }, default_route: '/#/workbench' },
       });
       if (url.pathname === '/api/v1/projects') {
-        if (req.method() === 'GET') return reply({ ...list(item ? [item] : []), can_create: canCreate });
+        if (req.method() === 'GET') return reply({ ...list(item ? [item] : []), can_create: canCreate, project_types: projectTypes });
         const values = req.postDataJSON();
         assert.match(req.headers()['idempotency-key'], /^[a-f\d-]{36}$/);
         assert.equal(req.headers()['x-csrf-token'], 'token');
         assert.equal(values.status, 'planned');
+        assert.equal(values.project_type, '研发');
         assert.equal(values.business_timezone, 'Asia/Shanghai');
         assert.equal(values.planned_start, '2026-11-22');
         item = { ...values, id, version: 1, board_version: 1 };
@@ -170,15 +172,16 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       }
       const prefix = '/api/v1/projects/' + id + '/';
       if (url.pathname === prefix + 'overview') return reply({ data: {
-        workspace: { project: item, can_manage_profile: canManage && item.status !== 'archived' }, milestones: { items: [] },
+        workspace: { project: item, project_types: projectTypes, can_manage_profile: canManage && item.status !== 'archived' }, milestones: { items: [] },
       }});
       if (url.pathname === prefix + 'members') return reply({ data: { members: [] } });
       if (url.pathname === prefix + 'profile') {
         const values = req.postDataJSON();
         assert.equal(values.name, '已编辑项目');
+        assert.equal(values.project_type, '销售');
         if (++writes === 1) {
           assert.equal(values.expected_version, 1);
-          item = { ...item, version: 2, background: '\n同事更新的背景' };
+          item = { ...item, version: 2, project_type: '售后', background: '\n同事更新的背景' };
           return reply({ error: 'project_state_changed' }, 409);
         }
         assert.equal(values.expected_version, 2);
@@ -214,6 +217,13 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       assert.ok(Math.abs((await drawer.boundingBox()).width - referenceWidth) <= 1);
       assert.ok(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
       const name = drawer.getByRole('textbox', { name: '项目名称' });
+      const type = drawer.getByRole('combobox', { name: '项目类型' });
+      assert.equal(await type.inputValue(), '');
+      assert.equal(await type.getByRole('option').count(), projectTypes.length + 1);
+      await type.focus();
+      await type.press('ArrowDown');
+      assert.equal(await type.inputValue(), '研发');
+      assert.equal(await type.getAttribute('data-project-type-tone'), 'blue');
       await name.fill('新建项目试点');
       await drawer.getByLabel('计划开始日期').fill('2026-11-22');
       const end = drawer.getByLabel('计划结束日期');
@@ -223,6 +233,7 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       await end.fill('2026-12-01');
       await drawer.getByRole('button', { name: '新建项目' }).click();
       await page.getByRole('heading', { name: '新建项目试点' }).waitFor();
+      await page.locator('.project-title [data-project-type-tone="blue"]').getByText('研发').waitFor();
       const settings = page.getByRole('button', { name: '项目设置' });
       canManage = false;
       await page.reload();
@@ -231,6 +242,8 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       canManage = true;
       await page.reload();
       await settings.click();
+      assert.equal(await type.inputValue(), '研发');
+      await type.selectOption('销售');
       await name.fill('已编辑项目');
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: '继续编辑' }).click();
@@ -243,6 +256,7 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       await drawer.getByRole('button', { name: '读取最新档案' }).click();
       await drawer.getByRole('heading', { name: '最新档案' }).waitFor();
       assert.equal(await name.inputValue(), '已编辑项目');
+      assert.equal(await type.inputValue(), '销售');
       assert.equal(await drawer.getByRole('textbox', { name: '项目背景' }).inputValue(), '\n同事更新的背景');
       await drawer.getByRole('button', { name: '保存设置' }).click();
       await page.getByRole('heading', { name: '已编辑项目' }).waitFor();
@@ -259,6 +273,7 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       await page.getByRole('link', { name: '返回项目列表' }).click();
       await page.getByRole('link', { name: '已编辑项目' }).waitFor();
       await page.getByRole('cell', { name: '已归档', exact: true }).waitFor();
+      await page.getByRole('cell', { name: '销售', exact: true }).locator('[data-project-type-tone="purple"]').waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await page.close();

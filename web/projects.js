@@ -53,8 +53,13 @@ const panel = (title, body, action = '') =>
   `<section class="panel"><header class="section-head"><h2>${esc(title)}</h2>${action}</header>${body}</section>`;
 const facts = (rows) =>
   '<dl class="facts">' +
-  rows.map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value ?? '暂无')}</dd></div>`).join('') +
+  rows.map(([name, value, render = esc]) => `<div><dt>${esc(name)}</dt><dd>${render(value ?? '暂无')}</dd></div>`).join('') +
   '</dl>';
+function projectTypeBadge(type, projectTypes) {
+  if (!type) return '—';
+  const tone = projectTypes?.find(({ name }) => name === type)?.tone || 'neutral';
+  return `<span class="kind" data-project-type-tone="${esc(tone)}">${esc(type)}</span>`;
+}
 function table(headers, rows, missing) {
   if (!rows.length) return empty(missing);
   return (
@@ -157,12 +162,12 @@ function briefings(base, items) {
     '暂无项目简报。',
   );
 }
-function directoryRows(items) {
+function directoryRows(items, projectTypes) {
   return table(
     ['项目名称', '类型', '阶段'],
     items.map((row) => [
       link('#/projects/' + row.id + '/overview', row.name),
-      esc(row.project_type),
+      projectTypeBadge(row.project_type, projectTypes),
       label(row.status),
     ]),
     '没有符合条件的项目。',
@@ -172,7 +177,7 @@ export async function mountProjectSummary(host, request, signal) {
   window.OmniRelayLoading.mount(host, { size: 'page', label: '正在加载项目…' });
   try {
     const data = await request('/api/v1/projects?page=1&page_size=10', { signal });
-    if (!signal.aborted) host.innerHTML = panel('项目列表', directoryRows(data.items));
+    if (!signal.aborted) host.innerHTML = panel('项目列表', directoryRows(data.items, data.project_types));
   } catch (error) {
     if (!signal.aborted) host.innerHTML = empty(failure(error));
   } finally {
@@ -388,7 +393,7 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
         '项目概况',
         facts([
           ['负责人', workspace.owner?.display_name],
-          ['项目类型', project.project_type || '—'],
+          ['项目类型', project.project_type || '', (type) => projectTypeBadge(type, workspace.project_types)],
           ['进展速览', milestones.progress?.record?.title || '待补充'],
           ['计划开始日期', project.planned_start || '—'],
           ['计划结束日期', project.planned_end || '—'],
@@ -612,8 +617,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     await mountProjects(host, route, request, { signal, memory, scope, navigation });
     if (current()) (host.querySelector('[data-project-settings]') || host.querySelector('#page-heading'))?.focus();
   };
-  const openProfile = (trigger, project) => openProjectProfile({
-    project, trigger, statuses: projectStatuses, statusLabel: label, request, signal, navigation, refresh,
+  const openProfile = (trigger, projectTypes, project) => openProjectProfile({
+    project, projectTypes, trigger, statuses: projectStatuses, statusLabel: label, request, signal, navigation, refresh,
   });
   const savedKey = history.state?.projectListKey;
   const saved = savedKey && scope?.read('project.' + savedKey);
@@ -676,9 +681,9 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         const toolbar = host.querySelector('[data-filters]');
         toolbar.insertAdjacentHTML('beforeend', '<button class="button primary" type="button" data-project-create aria-haspopup="dialog">新建项目</button>');
         const create = toolbar.querySelector('[data-project-create]');
-        create.onclick = () => openProfile(create);
+        create.onclick = () => openProfile(create, data.project_types);
       }
-      body.innerHTML = directoryRows(data.items) + pager(route, data.total, 25);
+      body.innerHTML = directoryRows(data.items, data.project_types) + pager(route, data.total, 25);
       body.onclick = (e) => {
         const a = e.target.closest('a');
         if (a?.hash.startsWith('#/projects/')) {
@@ -710,12 +715,13 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (!current()) return;
     if (header.status === 'rejected' && [403, 404].includes(header.reason.status)) throw header.reason;
     if (result.status === 'rejected') throw result.reason;
-    const project = header.value?.data.workspace.project;
+    const workspace = header.value?.data.workspace;
+    const project = workspace?.project;
     if (project) {
       const title = host.querySelector('#page-heading');
       title.textContent = project.name || project.id;
       if (project.project_type)
-        title.insertAdjacentHTML('beforebegin', `<span class="kind">${esc(project.project_type)}</span>`);
+        title.insertAdjacentHTML('beforebegin', projectTypeBadge(project.project_type, workspace.project_types));
       const tone =
         { active: 'progress', completed: 'success', blocked: 'danger', paused: 'warning' }[project.status] ||
         'pending';
@@ -761,7 +767,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
     const settings = body.querySelector('[data-project-settings]');
-    if (settings) settings.onclick = () => openProfile(settings, project);
+    if (settings) settings.onclick = () => openProfile(settings, workspace.project_types, project);
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
       mountProjects(host, route, request, { signal, memory, scope, navigation }));
     wireFilters(body, route);

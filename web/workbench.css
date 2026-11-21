@@ -46,6 +46,20 @@ h2 { font-size: 1.0625rem; line-height: 1.35; overflow-wrap: anywhere; }
 .chip[data-tone="important"] { background: var(--or-important-bg); color: var(--or-important-text); }
 .button, .select, .search { min-height: 32px; padding: 5px 9px; border: 1px solid; border-radius: 6px; }
 .select, .search { border-color: var(--or-control-border); background: var(--or-surface); color: var(--or-text); }
+[data-project-type-tone="blue"] { --project-type-bg: var(--or-progress-bg); --project-type-text: var(--or-progress-text); }
+[data-project-type-tone="purple"] { --project-type-bg: var(--or-important-bg); --project-type-text: var(--or-important-text); }
+[data-project-type-tone="amber"] { --project-type-bg: var(--or-warning-bg); --project-type-text: var(--or-warning-text); }
+[data-project-type-tone="green"] { --project-type-bg: var(--or-success-bg); --project-type-text: var(--or-success-text); }
+[data-project-type-tone="rose"] { --project-type-bg: var(--or-danger-bg); --project-type-text: var(--or-danger-text); }
+[data-project-type-tone="teal"] { --project-type-bg: var(--or-agent-bg); --project-type-text: var(--or-agent-text); }
+[data-project-type-tone="neutral"] { --project-type-bg: var(--or-pending-bg); --project-type-text: var(--or-pending-text); }
+[data-project-type-tone="indigo"] { --project-type-bg: var(--or-secondary-fill); --project-type-text: var(--or-secondary-ink); }
+.kind[data-project-type-tone], .project-type-select[data-project-type-tone], .project-type-select option {
+  background-color: var(--project-type-bg, var(--or-surface));
+  color: var(--project-type-text, var(--or-text));
+}
+.project-type-select[data-project-type-tone] { min-height: 36px; font-weight: 600; }
+.project-type-select:disabled { cursor: default; }
 .button { display: inline-flex; align-items: center; text-decoration: none; justify-content: center; font-weight: 600; font-size: .8125rem; }
 .tabs { display: flex; gap: 11px; overflow-x: auto; border-bottom: 1px solid var(--or-border); margin-bottom: 14px; }
 .tabs button { position: relative; display: flex; flex: none; align-items: center; justify-content: center; min-height: 38px; background: none; border: 0; border-bottom: 2px solid transparent; padding: 5px 4px; color: var(--or-text-secondary); transition: background-color 110ms; }

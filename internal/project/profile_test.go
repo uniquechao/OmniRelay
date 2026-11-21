@@ -12,6 +12,29 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
+func TestProjectTypeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, existing, want string
+		input                *string
+		invalid              bool
+	}{
+		{name: "catalog choice", input: new("研发"), want: "研发"},
+		{name: "arbitrary new type", input: new("自定义类型"), invalid: true},
+		{name: "existing custom type", existing: "自定义类型", input: new("自定义类型"), want: "自定义类型"},
+		{name: "missing type preserves existing", existing: "自定义类型", want: "自定义类型"},
+		{name: "explicitly clear", existing: "销售", input: new("")},
+		{name: "replace legacy", existing: "自定义类型", input: new("销售"), want: "销售"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := profileInput{Name: "项目", Status: "planned", Type: tc.input}
+			got, err := in.apply(Project{Type: tc.existing})
+			if (err == errInput) != tc.invalid || got.Type != tc.want {
+				t.Fatalf("type = %q, error = %v, want type %q, invalid=%t", got.Type, err, tc.want, tc.invalid)
+			}
+		})
+	}
+}
+
 func TestProjectProfileLifecycle(t *testing.T) {
 	pool := testProjectPool(t, "project_profile_lifecycle")
 	ctx := t.Context()

@@ -14,6 +14,22 @@ var (
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$`)
 
+type projectTypeOption struct {
+	Name string `json:"name"`
+	Tone string `json:"tone"`
+}
+
+var projectTypeOptions = []projectTypeOption{
+	{Name: "研发", Tone: "blue"},
+	{Name: "销售", Tone: "purple"},
+	{Name: "售后", Tone: "amber"},
+	{Name: "生产", Tone: "green"},
+	{Name: "人力资源", Tone: "rose"},
+	{Name: "市场活动", Tone: "teal"},
+	{Name: "公共归集", Tone: "neutral"},
+	{Name: "交付", Tone: "indigo"},
+}
+
 type Project struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`

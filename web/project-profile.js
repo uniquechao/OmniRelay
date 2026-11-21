@@ -20,7 +20,7 @@ function profileFields(project) {
   };
 }
 
-export function openProjectProfile({ project, trigger, statuses, statusLabel, request, signal, navigation, refresh }) {
+export function openProjectProfile({ project, projectTypes, trigger, statuses, statusLabel, request, signal, navigation, refresh }) {
   const { escape: esc, openDialog, toast } = window.OmniRelayUI;
   const creating = !project;
   const key = creating ? crypto.randomUUID() : undefined;
@@ -38,6 +38,11 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
 
   const input = (name, attrs) => `<label class="field pr-form"><span>${fields[name]}</span>
     <input name="${name}" value="${esc(baseline[name])}" ${attrs}></label>`;
+  const typeOptions = (current) => {
+    const choices = [{ name: '', tone: 'neutral' }, ...(projectTypes || [])];
+    if (current && !choices.some(({ name }) => name === current)) choices.push({ name: current, tone: 'neutral' });
+    return choices.map(({ name, tone }) => `<option value="${esc(name)}" data-project-type-tone="${esc(tone)}"${name === current ? ' selected' : ''}>${esc(name || '未分类')}</option>`).join('');
+  };
   const read = (form) => Object.fromEntries(new FormData(form));
   const dirty = (form) => Object.keys(fields).some((name) => form.elements[name].value !== baseline[name]);
 
@@ -49,7 +54,9 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
     confirm: creating ? '新建项目' : '保存设置',
     body: `<fieldset class="project-profile-fields" data-profile-fields>
       ${input('name', 'required maxlength="200"')}
-      ${input('project_type', 'maxlength="60"')}
+      <label class="field pr-form"><span>${fields.project_type}</span>
+        <select class="select project-type-select" name="project_type">${typeOptions(baseline.project_type)}</select>
+      </label>
       <label class="field pr-form"><span>${fields.status}</span><select class="select" name="status">
         ${statuses.filter((status) => status !== 'archived').map((status) =>
           `<option value="${status}"${status === baseline.status ? ' selected' : ''}>${statusLabel(status)}</option>`).join('')}
@@ -120,6 +127,7 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
   });
   const form = dialog.querySelector('form');
   form.autocomplete = 'off';
+  const typeSelect = form.elements.project_type;
   const editor = form.querySelector('[data-profile-fields]');
   const submit = form.querySelector('button[type=submit]');
   const message = form.querySelector('[data-profile-message]');
@@ -135,6 +143,7 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
   }
 
   function syncActions() {
+    typeSelect.dataset.projectTypeTone = typeSelect.selectedOptions[0]?.dataset.projectTypeTone || 'neutral';
     submit.disabled = busy || conflict;
     reload.disabled = busy;
     if (archive) {
@@ -164,7 +173,7 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
     } else if (error.status === 409) {
       show('此次创建已使用其他项目内容提交。请检查项目列表。');
     } else if (error.status === 400) {
-      show('请检查项目名称、计划日期和业务时区。时区可填写 Asia/Shanghai 或 UTC。');
+      show('请检查项目名称、类型、计划日期和业务时区。时区可填写 Asia/Shanghai 或 UTC。');
     } else {
       show('暂时无法保存，请重试。');
     }
@@ -184,7 +193,12 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
         return;
       }
       const values = profileFields(workspace.project);
+      const typeDraft = typeSelect.value === baseline.project_type ? values.project_type : typeSelect.value;
+      projectTypes = workspace.project_types || projectTypes;
+      typeSelect.innerHTML = typeOptions(values.project_type);
+      typeSelect.value = typeDraft;
       for (const name of Object.keys(fields)) {
+        if (name === 'project_type') continue;
         const field = form.elements[name];
         if (field.value === baseline[name]) field.value = values[name];
       }
@@ -270,6 +284,7 @@ export function openProjectProfile({ project, trigger, statuses, statusLabel, re
   }
   protectPending(dialog);
   form.addEventListener('input', syncActions);
+  syncActions();
   form.addEventListener('invalid', cancelNavigation, true);
   window.addEventListener('beforeunload', warn);
   signal.addEventListener('abort', onAbort, { once: true });

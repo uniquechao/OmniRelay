@@ -18,7 +18,7 @@ import (
 type profileInput struct {
 	Name         string  `json:"name"`
 	Status       string  `json:"status"`
-	Type         string  `json:"project_type"`
+	Type         *string `json:"project_type"`
 	Background   string  `json:"background"`
 	PlannedStart *string `json:"planned_start"`
 	PlannedEnd   *string `json:"planned_end"`
@@ -26,7 +26,17 @@ type profileInput struct {
 }
 
 func (in profileInput) apply(p Project) (Project, error) {
-	p.Name, p.Type = strings.TrimSpace(in.Name), strings.TrimSpace(in.Type)
+	p.Name = strings.TrimSpace(in.Name)
+	if in.Type != nil {
+		projectType := strings.TrimSpace(*in.Type)
+		// Preserve existing custom values when editing unrelated settings.
+		if projectType != "" && projectType != p.Type && !slices.ContainsFunc(projectTypeOptions, func(option projectTypeOption) bool {
+			return option.Name == projectType
+		}) {
+			return Project{}, errInput
+		}
+		p.Type = projectType
+	}
 	p.Status, p.Background = in.Status, in.Background
 	if in.PlannedStart != nil {
 		p.PlannedStart = *in.PlannedStart
@@ -131,7 +141,7 @@ func (s *Service) createProject(w http.ResponseWriter, r *http.Request, actor id
 			return err
 		}
 		return k.auditProfile(ctx, tx, actor, "project.create", p.Version, map[string]string{
-			"status": p.Status, "request_fingerprint": fingerprint,
+			"status": p.Status, "project_type": p.Type, "request_fingerprint": fingerprint,
 		})
 	})
 	return profileResult{ID: id, Version: p.Version}, err
@@ -207,7 +217,7 @@ func (s *Service) changeProject(r *http.Request, actor identity.Principal, expec
 		}
 		version = p.Version
 		return k.auditProfile(ctx, tx, actor, action, version, map[string]string{
-			"previous_status": prior.Status, "status": p.Status,
+			"previous_status": prior.Status, "status": p.Status, "previous_project_type": prior.Type, "project_type": p.Type,
 		})
 	})
 	return profileResult{ID: k.project, Version: version}, err

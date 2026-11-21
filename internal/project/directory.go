@@ -18,7 +18,7 @@ const profileColumns = `coalesce(p.status,'active'), coalesce(p.project_type,'')
 	coalesce(to_char(p.planned_start,'YYYY-MM-DD'),''), coalesce(to_char(p.planned_end,'YYYY-MM-DD'),''), coalesce(b.version,0)`
 
 func (s *Service) directory(ctx context.Context, actor identity.Principal, filter url.Values, page, size int) (ProjectPage, error) {
-	result := ProjectPage{Items: []Project{}, Page: page, PageSize: size}
+	result := ProjectPage{Items: []Project{}, Page: page, PageSize: size, Types: projectTypeOptions}
 	const visible = ` FROM project_members m
 		JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
 		LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(m.tenant_key,m.app_id,m.project_id)
@@ -62,7 +62,9 @@ func (s *Service) overview(ctx context.Context, actor identity.Principal, id str
 	}
 	nodes, err := s.milestones(ctx, k, time.Now())
 	return panelView{Project: id, Panel: "overview", Data: map[string]any{
-		"workspace":  map[string]any{"project": project, "can_manage_profile": canManage && project.Status != "archived"},
+		"workspace": map[string]any{
+			"project": project, "project_types": projectTypeOptions, "can_manage_profile": canManage && project.Status != "archived",
+		},
 		"milestones": map[string]any{"items": nodes},
 	}}, err
 }
