@@ -1151,6 +1151,37 @@ test('网盘显示未关联项目的文件，按真实同步状态刷新列表',
   }
 });
 
+test('网盘的每个来源分别定位对应群的原消息', {skip:!packageName}, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const second = {id:'oc_second_group', kind:'group', name:'启明试点群'};
+  const secondMessage = {...oldMessage, id:'om_second_group', chat_id:second.id, body:JSON.stringify({text:'来自启明的分享'})};
+  for (const mobile of [false,true]) {
+    const page = await browser.newPage({viewport:{width:mobile ? 390 : 1366,height:850}, isMobile:mobile, hasTouch:mobile});
+    await mountFixture(page);
+    await page.route(origin + base + '/' + second.id, route => route.fulfill({json:{items:[second],total:1}}));
+    await page.route(origin + base + '/' + second.id + '/messages/' + secondMessage.id + '/context',
+      route => route.fulfill({json:{items:[secondMessage], anchor_id:secondMessage.id}}));
+    await page.route(origin + '/api/v1/feishu/files?*', route => route.fulfill({json:{total:1,projects:{},items:[{
+      id:31,name:'同一文件.pdf',category:'files',format:'PDF',format_key:'pdf',project_ids:[],sync_state:'pending',
+      sources:[{chat_id:group.id,chat_name:group.name,message_id:oldMessage.id,sender_name:person.name,sent_at},
+        {chat_id:second.id,chat_name:second.name,message_id:secondMessage.id,sender_name:person.name,sent_at}]
+    }]}}));
+    await page.goto(origin + '/?theme=' + (mobile ? 'dark' : 'light') + '#/feishu/drive');
+    const links = page.locator('tbody .drive-source');
+    await links.last().waitFor();
+    assert.deepEqual(await links.locator('.drive-source-action').allTextContents(), ['定位原消息','定位原消息']);
+    const open = link => mobile ? link.tap() : link.click();
+    await open(links.first());
+    await page.locator('[data-source-message]:focus').getByText('会议纪要').waitFor();
+    await page.goBack();
+    await open(links.last());
+    await page.locator('[data-source-message]:focus').getByText('来自启明的分享').waitFor();
+    assert.ok(page.url().endsWith('#/feishu/bot-chats/' + second.id + '/' + secondMessage.id));
+    await page.close();
+  }
+});
+
 test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -1440,17 +1471,23 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
   const source = {chat_id:group.id, message_id:oldMessage.id, chat_name:group.name};
   const rows = ['image','video'].map((kind,i) => ({
     id:i+1, version_id:10+i, format_key:kind, name:i ? '项目视频' : '项目图片', format:i ? '视频' : '图片',
-    category:'files', sync_state:'complete', project_ids:['p'], inherited_project_ids:['p'], manual_project_ids:[], sources:[source]
+    category:i ? 'videos' : 'images', sync_state:'complete', project_ids:['p'], inherited_project_ids:['p'], manual_project_ids:[], sources:[source]
   }));
+  const pdf = {...rows[0], id:3, name:'普通附件.pdf', category:'files', format_key:'pdf', format:'PDF', version_id:12};
+  rows.push(pdf);
   let revoked = false;
   await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/v1/feishu/files/sync') return route.fulfill({json:{
       groups:Number(!revoked), history_pending:0, history_attention:0, unindexed_messages:0,
-      unresolved_wiki:0, pending_sources:0, complete_sources:revoked ? 0 : 2, attention_sources:0
+      unresolved_wiki:0, pending_sources:0, complete_sources:revoked ? 0 : 3, attention_sources:0
     }});
-    if (path.endsWith('/files')) return route.fulfill({json:{items:revoked ? [] : rows,total:revoked ? 0 : 2,projects:{p:'项目'}}});
+    if (path.endsWith('/files')) {
+      const category = new URL(route.request().url()).searchParams.get('category');
+      const items = revoked ? [] : rows.filter(row => category === 'all' || category === row.category);
+      return route.fulfill({json:{items,total:items.length,projects:{p:'项目'}}});
+    }
     if (revoked) return route.fulfill({status:404,json:{error:'file_unavailable'}});
     const row = rows.find(item => path.startsWith('/api/v1/feishu/files/' + item.id + '/'));
     if (path.endsWith('/versions')) return route.fulfill({json:{items:[{id:row.version_id}]}});
@@ -1458,6 +1495,15 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
     return route.fulfill({status:415});
   });
   await page.goto(origin + '/#/feishu/drive');
+  const names = page.locator('.drive-file-name strong');
+  await page.getByText('普通附件.pdf', {exact:true}).waitFor();
+  assert.deepEqual(await names.allTextContents(), ['项目图片','项目视频','普通附件.pdf']);
+  await page.getByRole('button', {name:'文件', exact:true}).click();
+  await page.getByText('普通附件.pdf', {exact:true}).waitFor();
+  assert.deepEqual(await names.allTextContents(), ['普通附件.pdf']);
+  await page.getByRole('button', {name:'图片', exact:true}).click();
+  await page.getByText('项目图片', {exact:true}).waitFor();
+  assert.deepEqual(await names.allTextContents(), ['项目图片']);
   const trigger = page.locator('.drive-file-name').first();
   await trigger.click();
   const img = page.getByRole('img',{name:'项目图片',exact:true});
@@ -1469,7 +1515,10 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
   const download = page.waitForEvent('download');
   await link.click();
   assert.match((await download).url(),/versions\/10\/content\?download=1$/);
-  await page.locator('.drive-file-name').last().click();
+  await page.getByRole('button', {name:'视频', exact:true}).click();
+  await page.getByText('项目视频', {exact:true}).waitFor();
+  assert.deepEqual(await names.allTextContents(), ['项目视频']);
+  await page.locator('.drive-file-name').first().click();
   await page.locator('video[controls]').waitFor();
   await page.getByText('暂时无法预览此格式，可返回文件列表下载原件。').waitFor();
   revoked = true;

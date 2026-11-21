@@ -143,14 +143,26 @@ func TestUnboundFileGroupRequiresCurrentMembership(t *testing.T) {
 	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || !allowed {
 		t.Fatalf("reader bypassed the database snapshot: allowed=%v err=%v", allowed, err)
 	}
-	if _, err := service.pool.Exec(ctx, "UPDATE feishu_drive_group_memberships SET next_at=now()"); err != nil {
-		t.Fatal(err)
+	applyEvent(t, ctx, service, orchestrator.ArchiveEvent{ChatID: "oc_group", EventID: "member_left", GroupMembersChanged: true})
+	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || allowed {
+		t.Fatalf("membership event left a stale snapshot active: allowed=%v err=%v", allowed, err)
 	}
 	if worked, err := service.refreshFileGroup(ctx); err != nil || !worked {
 		t.Fatalf("could not refresh the membership snapshot: worked=%v err=%v", worked, err)
 	}
 	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || allowed {
 		t.Fatalf("membership was revoked: allowed=%v err=%v", allowed, err)
+	}
+}
+
+func TestFileGroupNightlyScheduleUsesBeijingTime(t *testing.T) {
+	for _, tt := range []struct{ now, want time.Time }{
+		{time.Date(2026, 11, 21, 18, 59, 0, 0, time.UTC), time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC)},
+		{time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC), time.Date(2026, 11, 22, 19, 0, 0, 0, time.UTC)},
+	} {
+		if got := nextFileGroupNightlySync(tt.now); !got.Equal(tt.want) {
+			t.Fatalf("nightly sync after %s: %s, want %s", tt.now, got, tt.want)
+		}
 	}
 }
 

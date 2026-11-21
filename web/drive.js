@@ -3,7 +3,7 @@ import { fileIcon } from './file-format.js';
 import { assignmentAPI } from './chat-assignment.js';
 import { fileSources, fileProjects, editFileProjects, mountFileMetadata, syncStateLabel } from './drive-metadata.js';
 
-const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', files:'文件' };
+const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', images:'图片', videos:'视频', files:'文件' };
 const decimal = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:1});
 
 function sizeText(bytes) {
@@ -107,7 +107,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
     for (const button of bar.children) button.setAttribute('aria-pressed', String(button.dataset.driveCategory === category));
     const view = mountList(root, {
       key:'feishu-drive-' + category, states, label:'飞书文件', itemLabel:'文件', selection:false, signal:lifetime,
-      filters:[{key:'project_id',label:'所属项目',options:{}}, ...(category === 'files' ? [{key:'format',label:'格式',options:{image:'图片',video:'视频',pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'}}] : [])],
+      filters:[{key:'project_id',label:'所属项目',options:{}}, ...(category === 'files' ? [{key:'format',label:'格式',options:{pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'}}] : [])],
       async loadPage(state, pageSignal) {
         const params = new URLSearchParams({category, offset:state.page * state.pageSize, limit:state.pageSize});
         if (state.query.trim()) params.set('q', state.query.trim());
@@ -137,7 +137,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
         {key:'name',label:'名称',sort:true,render:row => '<button class="drive-file-name" type="button" ' + previewAttrs(row) + '>' +
           fileIcon(row.format_key,row.format) + '<span><strong>' + escape(row.name) + '</strong><small>' + escape(row.format) + '</small></span></button>'},
         {key:'category',label:'分类',sort:true,render:row => escape(categories[row.category] || '文件')},
-        {key:'source',label:'来源',sort:true,render:fileSources},
+        {key:'source',label:'来源群',sort:true,render:fileSources},
         {key:'project',label:'所属项目',sort:true,render:row => fileProjects(row, names)},
         {key:'size',label:'大小',sort:true,render:row => '<span class="drive-file-size" title="' +
           (row.size_source === 'original' ? '原件大小' : '大小未知') + '">' + sizeText(row.size_bytes) + '</span>'},

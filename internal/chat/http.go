@@ -138,7 +138,7 @@ func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, pr
 	var member bool
 	err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM feishu_drive_group_memberships
 		WHERE tenant_key=$1 AND app_id=$2 AND chat_id=$3 AND generation=$4
-		    AND verified_at>now()-interval '2 minutes' AND $5=ANY(members))`,
+		    AND verified_at>now()-interval '26 hours' AND $5=ANY(members))`,
 		s.tenant, s.app, chatID, s.generation, p.OpenID).Scan(&member)
 	return member, err
 }

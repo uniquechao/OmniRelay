@@ -25,7 +25,7 @@ func candidateSource(e orchestrator.InboundEvent) (source, chat, sender string, 
 	if e.MessageID != "" {
 		return e.MessageID, e.ChatID, e.SenderOpenID, e.ChatKind, e.ProviderAt, false
 	}
-	if a := e.Archive; a != nil {
+	if a := e.Archive; a != nil && !a.GroupMembersChanged {
 		if a.Message != nil {
 			return a.Message.ID, a.ChatID, a.VerifiedSender, a.Kind, a.ProviderAt, a.Message.Deleted
 		}

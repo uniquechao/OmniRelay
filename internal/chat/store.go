@@ -22,6 +22,7 @@ type Service struct {
 	generation      int64
 	source          Source
 	people          *directory.Service
+	fileGroupsWake  chan struct{}
 	receipts        ReceiptSources
 	delivery        DeliverySource
 	deliveryEnabled bool
@@ -31,7 +32,7 @@ type Service struct {
 func New(pool *pgxpool.Pool, tenant, app string, generation int64, source Source,
 	people *directory.Service, check func(context.Context, identity.Principal, string, string) (bool, error), receipts ReceiptSources,
 ) *Service {
-	return &Service{pool: pool, tenant: tenant, app: app, generation: generation, source: source, people: people, check: check, receipts: receipts}
+	return &Service{pool: pool, tenant: tenant, app: app, generation: generation, source: source, people: people, check: check, receipts: receipts, fileGroupsWake: make(chan struct{}, 1)}
 }
 
 func (s *Service) ConfigureFiles(files *drive.Service) { s.files = files }
@@ -66,6 +67,9 @@ func (s *Service) ensureCursor(ctx context.Context, tx pgx.Tx, chatID, threadID 
 
 // AcceptEvent runs in the SDK connection's fenced archive transaction.
 func (s *Service) AcceptEvent(ctx context.Context, tx pgx.Tx, event orchestrator.ArchiveEvent) error {
+	if event.GroupMembersChanged {
+		return s.scheduleFileGroupRefresh(ctx, tx, event.ChatID)
+	}
 	if event.Kind != "" {
 		if err := s.upsertConversation(ctx, tx, event.ChatID, event.Kind, event.PeerOpenID, ""); err != nil {
 			return err

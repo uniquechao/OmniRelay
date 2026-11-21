@@ -19,6 +19,22 @@ type chatTransport func(*http.Request) (*http.Response, error)
 
 func (f chatTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestGroupMembersChangedEvent(t *testing.T) {
+	const kind = "im.chat.member.user.withdrawn_v1"
+	cfg := workerConfig{AppID: "cli_group", TenantKey: "tenant_group"}
+	raw := `{"schema":"2.0","header":{"event_id":"member_left","event_type":"im.chat.member.user.withdrawn_v1",
+		"app_id":"cli_group","tenant_key":"tenant_group"},"event":{"chat_id":"oc_group"}}`
+	got := mapGroupMembersChanged(cfg, []byte(raw), kind)
+	if got == nil || !got.GroupMembersChanged || got.ChatID != "oc_group" || got.EventID != "member_left" || got.Message != nil {
+		t.Fatalf("mapped membership event: %#v", got)
+	}
+	for _, mutation := range [][2]string{{"tenant_group", "another_tenant"}, {"cli_group", "another_app"}, {"oc_group", "not_a_chat"}, {kind, "im.message.receive_v1"}} {
+		if got := mapGroupMembersChanged(cfg, []byte(strings.Replace(raw, mutation[0], mutation[1], 1)), kind); got != nil {
+			t.Fatalf("unexpected membership event for %v", mutation)
+		}
+	}
+}
+
 func TestChatSourceHistoryAndGroupScope(t *testing.T) {
 	now := time.Unix(1700000010, 0)
 	groupCalls := 0

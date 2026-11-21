@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	im "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
@@ -150,6 +151,17 @@ func serveSDKWorker(ctx context.Context, input io.Reader, output io.Writer, opti
 			}
 			return nil
 		})
+		for _, eventType := range []string{
+			"im.chat.member.user.added_v1", "im.chat.member.user.deleted_v1", "im.chat.member.user.withdrawn_v1",
+			"im.chat.member.bot.added_v1", "im.chat.member.bot.deleted_v1", "im.chat.disbanded_v1",
+		} {
+			events.OnCustomizedEvent(eventType, func(callback context.Context, incoming *larkevent.EventReq) error {
+				if archive := mapGroupMembersChanged(cfg, incoming.Body, eventType); archive != nil {
+					return bridge.deliver(callback, archiveInbound(cfg, archive), time.Now().Add(callbackBudget))
+				}
+				return nil
+			})
+		}
 	}
 	opts := []larkws.ClientOption{
 		larkws.WithEventHandler(events), larkws.WithAutoReconnect(false),

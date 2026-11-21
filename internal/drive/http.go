@@ -353,7 +353,7 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 }
 
-var categoryLabels = map[string]string{"docs": "飞书文档", "minutes": "会议纪要", "tasks": "任务表格（多维表格）", "files": "文件"}
+var categoryLabels = map[string]string{"docs": "飞书文档", "minutes": "会议纪要", "tasks": "任务表格（多维表格）", "images": "图片", "videos": "视频", "files": "文件"}
 
 func list(w http.ResponseWriter, r *http.Request, files []item) {
 	q := r.URL.Query()

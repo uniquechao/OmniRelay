@@ -118,7 +118,7 @@ type FileFormat struct {
 }
 
 var formats = map[string]FileFormat{
-	"image": {"image", "图片", "files"}, "video": {"video", "视频", "files"},
+	"image": {"image", "图片", "images"}, "video": {"video", "视频", "videos"},
 	"docs": {"docs", "飞书文档", "docs"}, "minutes": {"minutes", "飞书妙记", "minutes"}, "base": {"base", "多维表格", "tasks"},
 	"pdf": {"pdf", "PDF", "files"}, "word": {"word", "Word", "files"}, "excel": {"excel", "Excel", "files"}, "slides": {"slides", "PowerPoint", "files"}, "zip": {"zip", "ZIP", "files"}, "generic": {"generic", "其他文件", "files"},
 }

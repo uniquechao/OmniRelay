@@ -5,18 +5,27 @@ const syncStates = { pending:'等待同步', complete:'已同步', partial:'部�
 
 export const syncStateLabel = state => syncStates[state] || '同步状态未知';
 
+const sourceTime = new Intl.DateTimeFormat('zh-CN', {dateStyle:'short', timeStyle:'medium', hour12:false});
+
 export function fileSources(row) {
   const { escape } = window.OmniRelayUI;
   const seen = new Set();
-  return row.sources.flatMap(source => {
+  const links = (row.sources ?? []).flatMap(source => {
     if (![source.chat_id, source.message_id].every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id))) return [];
     const route = '#/feishu/bot-chats/' + source.chat_id + '/' + source.message_id;
     if (seen.has(route)) return [];
     seen.add(route);
-    const state = source.sync_state && source.sync_state !== row.sync_state ? ' · ' + syncStateLabel(source.sync_state) : '';
-    return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '">' + escape(source.chat_name || source.chat_id) +
-      ' · ' + escape(source.sender_name || '未知分享人') + escape(state) + '</a>';
-  }).join('<br>');
+    const group = source.chat_name || source.chat_id;
+    const details = [source.sender_name || '未知分享人'];
+    const sent = Date.parse(source.sent_at);
+    if (Number.isFinite(sent)) details.push(sourceTime.format(sent));
+    if (source.sync_state && source.sync_state !== row.sync_state) details.push(syncStateLabel(source.sync_state));
+    return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '">' +
+      '<span class="drive-source-group">' + escape(group) + '</span>' +
+      '<span class="drive-source-detail">' + escape(details.join(' · ')) + '</span>' +
+      '<span class="drive-source-action">定位原消息</span></a>';
+  });
+  return links.length ? links.join('') : '—';
 }
 
 export function fileProjects(row, names) {
@@ -116,7 +125,7 @@ export function mountFileMetadata(dialog, host, row, projects, edit, signal, cat
   function paint(record) {
     if (!record || record.version_id !== row.version_id) { dialog.close(); return; }
     current = record;
-    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>分类</dt><dd>' + category + '</dd></div><div><dt>来源</dt><dd>' + fileSources(record) +
+    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>分类</dt><dd>' + category + '</dd></div><div><dt>来源群</dt><dd>' + fileSources(record) +
       '</dd></div><div><dt>所属项目</dt><dd>' + projects(record) + '</dd></div><div><dt>大小</dt><dd>' + size + '</dd></div></dl>';
   }
   paint(current);

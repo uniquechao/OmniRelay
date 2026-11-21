@@ -152,6 +152,20 @@ func mapPrivateEntry(cfg workerConfig, incoming *im.P2ChatAccessEventBotP2pChatE
 		ProviderAt: providerTime(incoming.EventV2Base.Header.CreateTime)}
 }
 
+func mapGroupMembersChanged(cfg workerConfig, body []byte, eventType string) *orchestrator.ArchiveEvent {
+	var input struct {
+		larkevent.EventV2Base
+		Event struct {
+			ChatID string `json:"chat_id"`
+		} `json:"event"`
+	}
+	if json.Unmarshal(body, &input) != nil || !archiveEnvelope(cfg, &input.EventV2Base, eventType) ||
+		!validIMID(input.Event.ChatID, "oc_") {
+		return nil
+	}
+	return &orchestrator.ArchiveEvent{ChatID: input.Event.ChatID, EventID: input.Header.EventID, GroupMembersChanged: true}
+}
+
 func archiveInbound(cfg workerConfig, event *orchestrator.ArchiveEvent) orchestrator.InboundEvent {
 	return orchestrator.InboundEvent{AppID: cfg.AppID, TenantID: cfg.TenantKey, Archive: event}
 }

@@ -31,8 +31,12 @@ func (s *Service) ProjectSources(ctx context.Context, actor identity.Principal, 
 	items := make([]ProjectSource, 0, len(files))
 	for _, file := range files {
 		source := file.Sources[file.versionSourceIndex]
+		category := file.Category
+		if category == "images" || category == "videos" {
+			category = "files"
+		}
 		items = append(items, ProjectSource{
-			ID: file.ID, VersionID: file.Version, Title: file.Name, Category: file.Category, FormatKey: file.FormatKey, State: file.State,
+			ID: file.ID, VersionID: file.Version, Title: file.Name, Category: category, FormatKey: file.FormatKey, State: file.State,
 			ChatID: source.ChatID, MessageID: source.MessageID, SharedAt: source.SentAt,
 		})
 	}

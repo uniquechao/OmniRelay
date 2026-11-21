@@ -114,8 +114,13 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		connection.SetInboundInterceptor(receiver.Intercept, cfg.candidateReceiverToken != "")
 		connection.SetArchive(func(ctx context.Context, event orchestrator.InboundEvent) error {
 			err := botStore.AcceptChatArchive(ctx, event, chatService.AcceptEvent)
-			if err == nil && event.Archive != nil && event.Archive.Message != nil {
-				fileService.NotifyNewMessage()
+			if err == nil && event.Archive != nil {
+				if event.Archive.Message != nil {
+					fileService.NotifyNewMessage()
+				}
+				if event.Archive.GroupMembersChanged {
+					chatService.NotifyFileGroupChange()
+				}
 			}
 			return err
 		})

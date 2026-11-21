@@ -79,4 +79,5 @@ type ArchiveEvent struct {
 	Message                 *ChatMessage
 	EventID, VerifiedSender string
 	ProviderAt              time.Time `json:",omitzero"`
+	GroupMembersChanged     bool      `json:",omitempty"`
 }

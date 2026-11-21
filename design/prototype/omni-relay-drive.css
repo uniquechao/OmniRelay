@@ -20,6 +20,21 @@
 #drive-file-list .list-scroll table { min-width: 610px; }
 #drive-file-list .list-scroll th[data-column="name"] { min-width: 138px; }
 #drive-file-list .list-scroll th[data-column="preview"] { min-width: 62px; }
+.drive-source {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  padding-block: 3px;
+  color: var(--or-link);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.drive-source + .drive-source { margin-top: 5px; }
+.drive-source-group { font-weight: 600; }
+.drive-source-detail { color: var(--or-text-secondary); font-size: .75rem; }
+.drive-source-action { font-size: .75rem; text-decoration: underline; text-underline-offset: .15em; }
+.drive-source:hover .drive-source-group { text-decoration: underline; }
+
 .drive-file-name {
   display: flex;
   align-items: center;

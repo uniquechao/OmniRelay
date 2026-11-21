@@ -364,6 +364,23 @@ func TestMediaAndWikiSync(t *testing.T) {
 	s.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
 		return actor, true
 	})
+	for _, filter := range []struct {
+		category string
+		count    int
+	}{{"all", 3}, {"images", 1}, {"videos", 1}, {"files", 0}} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/feishu/files?category="+filter.category, nil))
+		var page struct {
+			Total int
+			Items []item
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != filter.count {
+			t.Fatalf("category %s: %d %s", filter.category, w.Code, w.Body)
+		}
+		if filter.category != "all" && slices.ContainsFunc(page.Items, func(file item) bool { return file.Category != filter.category }) {
+			t.Fatalf("mixed media category %s: %+v", filter.category, page.Items)
+		}
+	}
 	for _, f := range files {
 		if f.Version == nil {
 			t.Fatal(f)

@@ -10,6 +10,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// NotifyFileGroupChange wakes the snapshot worker after the event transaction commits.
+func (s *Service) NotifyFileGroupChange() {
+	select {
+	case s.fileGroupsWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) scheduleFileGroupRefresh(ctx context.Context, tx pgx.Tx, chat string) error {
+	tag, err := tx.Exec(ctx, `INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation)
+		SELECT c.tenant_key,c.app_id,c.chat_id,$4 FROM feishu_chat_conversations c
+		WHERE c.tenant_key=$1 AND c.app_id=$2 AND c.chat_id=$3 AND c.kind='group'
+		ON CONFLICT (tenant_key,app_id,chat_id) DO UPDATE
+		SET verified_at=NULL,next_at=clock_timestamp(),generation=EXCLUDED.generation`, s.tenant, s.app, chat, s.generation)
+	if err != nil || tag.RowsAffected() != 0 {
+		return err
+	}
+	// A bot-joined event may arrive before the group is in the verified directory.
+	_, err = tx.Exec(ctx, `UPDATE feishu_chat_discovery SET next_at=now()
+		WHERE tenant_key=$1 AND app_id=$2`, s.tenant, s.app)
+	return err
+}
+
 func (s *Service) RunFileGroups(ctx context.Context) {
 	for ctx.Err() == nil {
 		worked, err := s.refreshFileGroup(ctx)
@@ -23,9 +46,21 @@ func (s *Service) RunFileGroups(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.fileGroupsWake:
 		case <-time.After(delay):
 		}
 	}
+}
+
+var fileGroupNightZone = time.FixedZone("CST", 8*60*60)
+
+func nextFileGroupNightlySync(now time.Time) time.Time {
+	local := now.In(fileGroupNightZone)
+	next := time.Date(local.Year(), local.Month(), local.Day(), 3, 0, 0, 0, fileGroupNightZone)
+	if !next.After(local) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
 }
 
 func (s *Service) refreshFileGroup(ctx context.Context) (bool, error) {
@@ -65,11 +100,11 @@ func (s *Service) refreshFileGroup(ctx context.Context) (bool, error) {
 	_, err = s.pool.Exec(ctx, `UPDATE feishu_drive_group_memberships
 	SET members=CASE WHEN $6 THEN $7 ELSE members END,
 	    verified_at=CASE WHEN $6 THEN clock_timestamp() ELSE verified_at END,
-	    next_at=clock_timestamp()+CASE WHEN $6 THEN interval '30 seconds' ELSE interval '10 seconds' END
+	    next_at=CASE WHEN $6 THEN $8 ELSE clock_timestamp()+interval '10 seconds' END
 	WHERE (tenant_key,app_id,chat_id,generation,next_at)=($1,$2,$3,$4,$5)
 	AND EXISTS (SELECT FROM feishu_bot_configs
 	    WHERE tenant_key=$1 AND app_id=$2 AND enabled AND credentials_generation=$4)`,
-		s.tenant, s.app, id, s.generation, lease, fresh, members)
+		s.tenant, s.app, id, s.generation, lease, fresh, members, nextFileGroupNightlySync(time.Now()))
 	return true, err
 }
 
