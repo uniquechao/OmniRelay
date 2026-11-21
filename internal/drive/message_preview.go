@@ -16,7 +16,6 @@ import (
 
 var (
 	ErrPreviewUnsupported    = errors.New("unsupported preview")
-	ErrPreviewAuthorization  = errors.New("document authorization required")
 	ErrPreviewMessageDeleted = errors.New("message deleted")
 	previewLinks             = regexp.MustCompile(`https://[A-Za-z0-9.-]+/(docx|minutes|base|file|wiki|sheets)/[A-Za-z0-9_-]+(?:[?#][^\s<>"'，。；！？）\x{3000}]*)?`)
 )
@@ -117,6 +116,13 @@ func RenderMessagePreview(ctx context.Context, options MessagePreviewOptions, re
 	kind := ref.Kind
 	if kind == "attachment" && ref.Name != "" && previewFileKind(ref.Name) == "" {
 		return MessagePreviewResult{Stage: "unsupported"}, nil
+	}
+	if kind == "sheets" {
+		snapshot, err := load()
+		if err != nil {
+			return MessagePreviewResult{}, err
+		}
+		return renderChatWorkbook(snapshot.Content, snapshot.Name, options)
 	}
 	select {
 	case previewSlot <- struct{}{}:

@@ -12,22 +12,22 @@ import (
 
 type MessagePreviewSource interface {
 	CheckPreviewShare(context.Context, drive.Ref, string) error
-	ResolvePreviewWiki(context.Context, drive.Ref, string) (drive.Ref, error)
-	ReadPreviewSheet(context.Context, drive.Ref, string, drive.MessagePreviewOptions) (drive.MessagePreviewResult, error)
-	ReadPreviewFile(context.Context, drive.Ref, string) (drive.Snapshot, error)
+	ResolveDocumentWiki(context.Context, drive.Ref) (drive.Ref, error)
+	ReadDocument(context.Context, drive.Ref) (drive.Snapshot, error)
+	ReadFile(context.Context, drive.Ref, bool) (drive.Snapshot, error)
 }
 
-type previewTokenLookup func(*http.Request, identity.Principal, string) string
-
-func (s *Service) ConfigurePreview(source MessagePreviewSource, token previewTokenLookup) {
-	s.preview, s.previewToken = source, token
+func (s *Service) ConfigurePreview(source MessagePreviewSource) {
+	s.preview = source
 }
 
 type messageResource struct {
-	Kind string `json:"kind"`
-	Key  string `json:"key"`
-	Name string `json:"name"`
-	URL  string `json:"url,omitempty"`
+	Kind       string `json:"kind"`
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	URL        string `json:"url,omitempty"`
+	ObjectKind string `json:"object_kind,omitempty"`
+	State      string `json:"state,omitempty"`
 }
 
 var errMessageResourceMissing = errors.New("message resource not found")
@@ -57,7 +57,7 @@ func (s *Service) archivedPreviewResource(ctx context.Context, p identity.Princi
 	return drive.Ref{}, errMessageResourceMissing
 }
 
-func messagePreviewError(w http.ResponseWriter, err error, kind string) {
+func messagePreviewError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, drive.ErrPreviewMessageDeleted):
 		writeError(w, 410, "message_deleted")
@@ -65,8 +65,6 @@ func messagePreviewError(w http.ResponseWriter, err error, kind string) {
 		writeError(w, 404, "resource_not_found")
 	case errors.Is(err, drive.ErrRevoked):
 		writeError(w, 403, "resource_forbidden")
-	case errors.Is(err, drive.ErrPreviewAuthorization):
-		writeJSON(w, 403, map[string]string{"error": "document_authorization_required", "kind": kind})
 	case errors.Is(err, drive.ErrPreviewUnsupported):
 		writeError(w, 415, "unsupported")
 	case errors.Is(err, drive.ErrPartial):
@@ -97,60 +95,57 @@ func (s *Service) getMessagePreview(w http.ResponseWriter, r *http.Request, p id
 		err = s.preview.CheckPreviewShare(ctx, ref, chat.ID)
 	}
 	if err != nil {
-		messagePreviewError(w, err, kind)
+		messagePreviewError(w, err)
 		return
 	}
 	if kind == "image" {
 		s.writeMessageImage(w, r, p, chat, ref)
 		return
 	}
-	lookup := func(kind string) string {
-		if s.previewToken == nil {
-			return ""
-		}
-		return s.previewToken(r, p, kind)
-	}
-	if kind == "wiki" {
-		token := lookup("wiki")
-		if token == "" {
-			messagePreviewError(w, drive.ErrPreviewAuthorization, kind)
-			return
-		}
-		ref, err = s.preview.ResolvePreviewWiki(ctx, ref, token)
-		if err != nil {
-			messagePreviewError(w, err, kind)
-			return
-		}
-	}
-	var token string
-	if ref.Kind != "attachment" {
-		token = lookup(ref.Kind)
-		if token == "" {
-			messagePreviewError(w, drive.ErrPreviewAuthorization, ref.Kind)
-			return
-		}
-	}
 	var result drive.MessagePreviewResult
-	if ref.Kind == "sheets" {
-		result, err = s.preview.ReadPreviewSheet(ctx, ref, token, options)
+	if ref.URL != "" {
+		result, err = s.readDocumentSnapshot(ctx, ref, options)
 	} else {
 		result, err = drive.RenderMessagePreview(ctx, options, ref, func() (drive.Snapshot, error) {
-			return s.preview.ReadPreviewFile(ctx, ref, token)
+			return s.preview.ReadFile(ctx, ref, false)
 		})
 	}
 	if err == nil {
 		_, err = s.archivedPreviewResource(ctx, p, chat, id, kind, key)
 	}
+	if err == nil && ref.URL != "" && r.PathValue("projectID") == "" {
+		// 项目入口由响应包装器复核；机器人记录也在返回正文前复核当前成员资格。
+		_, err = s.authorize(ctx, p, chat.ID)
+	}
 	if err != nil {
-		messagePreviewError(w, err, ref.Kind)
+		messagePreviewError(w, err)
 		return
 	}
 	writeJSON(w, 200, result)
 }
 
+func (s *Service) readDocumentSnapshot(ctx context.Context, ref drive.Ref, options drive.MessagePreviewOptions) (drive.MessagePreviewResult, error) {
+	var state, kind string
+	var snap drive.Snapshot
+	err := s.pool.QueryRow(ctx, `SELECT state,object_kind,title,content FROM feishu_chat_documents
+		WHERE tenant_key=$1 AND app_id=$2 AND generation=$3 AND message_id=$4 AND kind=$5 AND token=$6`,
+		s.tenant, s.app, s.generation, ref.MessageID, ref.Kind, ref.Token).Scan(&state, &kind, &snap.Name, &snap.Content)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return drive.MessagePreviewResult{Stage: "pending"}, nil
+	}
+	if err != nil {
+		return drive.MessagePreviewResult{}, err
+	}
+	if state != "ready" {
+		return drive.MessagePreviewResult{Stage: state}, nil
+	}
+	ref.Kind, ref.Name = kind, snap.Name
+	return drive.RenderMessagePreview(ctx, options, ref, func() (drive.Snapshot, error) { return snap, nil })
+}
+
 func (s *Service) writeMessageImage(w http.ResponseWriter, r *http.Request, p identity.Principal, chat conversation, ref drive.Ref) {
 	ctx := r.Context()
-	snapshot, err := s.preview.ReadPreviewFile(ctx, ref, "")
+	snapshot, err := s.preview.ReadFile(ctx, ref, false)
 	var data []byte
 	if err == nil {
 		data, err = drive.ReadPreviewBytes(snapshot)
@@ -159,14 +154,14 @@ func (s *Service) writeMessageImage(w http.ResponseWriter, r *http.Request, p id
 		_, err = s.archivedPreviewResource(ctx, p, chat, ref.MessageID, ref.Kind, ref.Token)
 	}
 	if err != nil {
-		messagePreviewError(w, err, ref.Kind)
+		messagePreviewError(w, err)
 		return
 	}
 	mime := http.DetectContentType(data)
 	switch mime {
 	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/x-icon":
 	default:
-		messagePreviewError(w, drive.ErrPreviewUnsupported, ref.Kind)
+		messagePreviewError(w, drive.ErrPreviewUnsupported)
 		return
 	}
 	if !validateProjectRead(w) {

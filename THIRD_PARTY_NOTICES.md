@@ -19,3 +19,5 @@ README 中的第三方图形和品牌链接用于标明来源，相关权利归�
 | [Impeccable](https://github.com/pbakaus/impeccable) | `.agents/skills/impeccable/` | [Apache-2.0](.agents/skills/impeccable/LICENSE) |
 | [modern-screenshot](https://github.com/qq15725/modern-screenshot) | Impeccable 附带的 `scripts/modern-screenshot.umd.js` | [MIT](.agents/skills/impeccable/scripts/modern-screenshot-LICENSE.txt) |
 | [Vercel Web Design Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines) | `.agents/skills/web-design-guidelines/` | [MIT](.agents/skills/web-design-guidelines/LICENSE)，[上游声明](https://github.com/vercel-labs/agent-skills#license) |
+
+聊天文档卡片使用飞书开放平台提供的文档、电子表格、多维表格、妙记、知识库和文件图标，资源保存在 `web/feishu-icons/`。图标权利归各自权利人。[飞书图标枚举](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/enumerations-for-icons)

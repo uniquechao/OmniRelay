@@ -18,10 +18,7 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 		if r.URL.Host != "open.feishu.cn" || r.Method != "GET" {
 			t.Fatal("非预期预览来源", r.Method, r.URL.Host)
 		}
-		want := "Bearer user-fixture"
-		if strings.Contains(path, "/im/v1/") {
-			want = "Bearer app-fixture"
-		}
+		want := "Bearer app-fixture"
 		if r.Header.Get("Authorization") != want {
 			t.Fatal("读取消息资源与云文档时未使用对应身份", path)
 		}
@@ -46,11 +43,13 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 		case "/open-apis/sheets/v3/spreadsheets/Sheet/sheets/query":
 			body = `{"code":0,"data":{"sheets":[{"sheet_id":"hidden","hidden":true,"grid_properties":{"row_count":100}},
 				{"sheet_id":"Tab","title":"周报","grid_properties":{"row_count":56,"column_count":27}}]}}`
-		case "/open-apis/sheets/v2/spreadsheets/Sheet/values/Tab!A51:AA56":
+		case "/open-apis/sheets/v2/spreadsheets/Sheet/values/Tab!A1:AA50", "/open-apis/sheets/v2/spreadsheets/Sheet/values/Tab!A51:AA56":
 			if r.URL.Query().Get("valueRenderOption") != "FormattedValue" {
 				t.Fatal("预览应读取格式化的表格值")
 			}
 			body = `{"code":0,"data":{"valueRange":{"values":[["周报正文",null]]}}}`
+		case "/open-apis/minutes/v1/minutes/Minute":
+			body = `{"code":0,"data":{"minute":{"title":"会议纪要"}}}`
 		case "/open-apis/minutes/v1/minutes/Minute/transcript":
 			if r.URL.Query().Get("file_format") != "txt" {
 				t.Fatal("妙记预览应读取文本")
@@ -68,7 +67,7 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 	if err := source.CheckPreviewShare(ctx, image, "oc"); err != nil {
 		t.Fatal(err)
 	}
-	if snap, err := source.ReadPreviewFile(ctx, image, ""); err != nil {
+	if snap, err := source.ReadFile(ctx, image, false); err != nil {
 		t.Fatal(err)
 	} else if data, err := drive.ReadPreviewBytes(snap); err != nil || string(data) != "图像字节" {
 		t.Fatal("未读取原始消息图片", err)
@@ -77,15 +76,15 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 	if err := source.CheckPreviewShare(ctx, image, "oc"); !errors.Is(err, drive.ErrPreviewMessageDeleted) {
 		t.Fatal("撤回的原消息应被识别", err)
 	}
-	wiki, err := source.ResolvePreviewWiki(ctx, drive.Ref{Kind: "wiki", Token: "Wiki"}, "user-fixture")
+	wiki, err := source.ResolveDocumentWiki(ctx, drive.Ref{Kind: "wiki", Token: "Wiki"})
 	if err != nil || wiki.Kind != "sheets" || wiki.Token != "Sheet" {
 		t.Fatal(wiki, err)
 	}
-	page, err := source.ReadPreviewSheet(ctx, wiki, "user-fixture", drive.MessagePreviewOptions{Page: 2})
+	page, err := drive.RenderMessagePreview(ctx, drive.MessagePreviewOptions{Page: 2}, wiki, func() (drive.Snapshot, error) { return source.ReadDocument(ctx, wiki) })
 	if err != nil || page.Stage != "ready" || page.Name != "真实表格标题" || !strings.Contains(string(page.Data), "周报正文") || strings.Contains(string(page.Meta), "hidden") {
 		t.Fatalf("工作表预览错误 %+v %v", page, err)
 	}
-	minute, err := source.ReadPreviewFile(ctx, drive.Ref{Kind: "minutes", Token: "Minute"}, "user-fixture")
+	minute, err := source.ReadDocument(ctx, drive.Ref{Kind: "minutes", Token: "Minute"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,10 +92,7 @@ func TestMessagePreviewFeishuSources(t *testing.T) {
 		t.Fatal("妙记逐字稿读取失败", err)
 	}
 	doc := drive.Ref{Kind: "docx", Token: "Denied"}
-	if _, err := source.ReadPreviewFile(ctx, doc, ""); !errors.Is(err, drive.ErrPreviewAuthorization) {
-		t.Fatal("未授权时使用了应用身份", err)
-	}
-	if _, err := source.ReadPreviewFile(ctx, doc, "user-fixture"); !errors.Is(err, drive.ErrRevoked) {
-		t.Fatal("无飞书文档权限时应拒绝", err)
+	if _, err := source.ReadDocument(ctx, doc); !errors.Is(err, drive.ErrRevoked) {
+		t.Fatal("机器人无文档权限时应拒绝", err)
 	}
 }

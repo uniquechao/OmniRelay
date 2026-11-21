@@ -44,19 +44,22 @@
 .chat-resource:is(:hover,:focus-visible) { border-color: var(--or-selected-edge); }
 .chat-resource:focus-visible { outline-offset: 2px; }
 .chat-resource .relay-file-icon { flex: none; }
-.chat-resource-inline {
-  max-inline-size: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--or-link);
-  font: inherit;
-  text-align: start;
-  text-decoration: underline;
-  text-underline-offset: .15em;
-  overflow-wrap: anywhere;
+.chat-document {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  inline-size: min(19rem, 100%);
+  padding: 10px 14px;
+  border: 1px solid var(--or-border);
+  border-radius: 9px;
+  background: var(--or-surface);
 }
-.chat-resource-inline:hover { text-decoration-thickness: 2px; }
+.chat-document img { flex: none; background: #fff; border-radius: 5px; padding: 4px; }
+.chat-document span { min-inline-size: 0; }
+.chat-document strong, .chat-document small { display: block; }
+.chat-document strong { font-size: .875rem; }
+.chat-document small { margin-block-start: 2px; color: var(--or-text-secondary); font-size: .75rem; }
+.chat-document:disabled { opacity: 1; cursor: default; border-color: var(--or-border); }
 .chat-resource-image {
   display: block;
   inline-size: min(240px, 100%);
