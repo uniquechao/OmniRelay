@@ -9,22 +9,26 @@ import (
 	"testing"
 
 	"github.com/uniquechao/OmniRelay/internal/chat"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 func TestDeliveryFeishuCreateAndConfirm(t *testing.T) {
 	const (
-		sender = `"sender":{"id":"cli_delivery","id_type":"app_id","sender_type":"app","tenant_key":"tenant_delivery"}`
-		target = "oc_group"
-		bot    = "ou_bot"
-		uuid   = "op_part"
-		body   = `{"text":"第一行\n第二行 😀"}`
+		sender   = `"sender":{"id":"cli_delivery","id_type":"app_id","sender_type":"app","tenant_key":"tenant_delivery"}`
+		target   = "oc_group"
+		bot      = "ou_bot"
+		uuid     = "op_part"
+		body     = `{"text":"第一行\n第二行 😀"}`
+		snapshot = `"create_time":"1795242600000","body":{"content":"{\"text\":\"实际归档内容\"}"}`
 	)
 	for _, tc := range []struct {
 		name, reply string
 		status      int
 		want        chat.DeliveryResult
 	}{
-		{"confirmed", `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_group","msg_type":"text",` + sender + `}}`, 200,
+		{"confirmed", `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_group","msg_type":"text",` + sender + "," + snapshot + `}}`, 200,
+			chat.DeliveryResult{State: "success", MessageID: "om_sent"}},
+		{"confirmed with readback", `{"code":0,"data":{"message_id":"om_sent","chat_id":"oc_group","msg_type":"text",` + sender + `}}`, 200,
 			chat.DeliveryResult{State: "success", MessageID: "om_sent"}},
 		{"missing evidence", `{"code":0,"data":{"message_id":"om_sent"}}`, 200,
 			chat.DeliveryResult{State: "unknown", Reason: "receipt_unknown", MessageID: "om_sent"}},
@@ -66,18 +70,30 @@ func TestDeliveryFeishuCreateAndConfirm(t *testing.T) {
 					if r.Method != http.MethodGet {
 						t.Fatalf("reconciliation issued %s", r.Method)
 					}
-					return deliveryResponse(200, `{"code":0,"data":{"items":[{"message_id":"om_sent","chat_id":"oc_group","msg_type":"text",`+sender+`}]}}`), nil
+					return deliveryResponse(200, `{"code":0,"data":{"items":[{"message_id":"om_sent","chat_id":"oc_group","msg_type":"text",`+sender+","+snapshot+`}]}}`), nil
 				default:
 					t.Fatalf("unexpected request: %s", r.URL)
 					return nil, errors.New("unexpected request")
 				}
 			})), "tenant_delivery")
-			if got := source.Deliver(t.Context(), target, bot, "text", body, uuid); got != tc.want {
+			got := source.Deliver(t.Context(), target, bot, "text", body, uuid)
+			message := got.Message
+			got.Message = orchestrator.ChatMessage{}
+			if got != tc.want {
 				t.Fatalf("create response: %#v, want %#v", got, tc.want)
 			}
-			if !source.ConfirmDelivery(t.Context(), target, "text", bot, "om_sent") ||
-				source.ConfirmDelivery(t.Context(), "oc_other", "text", bot, "om_sent") ||
-				source.ConfirmDelivery(t.Context(), target, "file", bot, "om_sent") || deliveries != 1 || verifies != 3 {
+			wantVerifies := 3
+			if tc.name == "confirmed with readback" {
+				wantVerifies++
+			}
+			if tc.want.State == "success" && (message.ID != got.MessageID || message.ChatID != target || message.SentAt.IsZero() ||
+				message.Body != `{"text":"实际归档内容"}` || !message.VisibleInChat) {
+				t.Fatalf("missing confirmed message snapshot: %#v", message)
+			}
+			readback, confirmed := source.ConfirmDelivery(t.Context(), target, "text", bot, "om_sent")
+			_, wrongChat := source.ConfirmDelivery(t.Context(), "oc_other", "text", bot, "om_sent")
+			_, wrongKind := source.ConfirmDelivery(t.Context(), target, "file", bot, "om_sent")
+			if !confirmed || readback.ID != "om_sent" || wrongChat || wrongKind || deliveries != 1 || verifies != wantVerifies {
 				t.Fatalf("incorrect confirmation, %d create requests and %d verification reads", deliveries, verifies)
 			}
 		})

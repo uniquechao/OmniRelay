@@ -13,6 +13,7 @@ import (
 
 	im "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/uniquechao/OmniRelay/internal/chat"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 func (s *ChatSource) BotInGroup(ctx context.Context, target string) error {
@@ -126,7 +127,14 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 	}
 	result.MessageID = value(data.MessageId)
 	if value(data.ChatId) == target && value(data.MsgType) == kind && s.deliverySender(data.Sender, bot) {
-		return chat.DeliveryResult{State: "success", MessageID: result.MessageID}
+		item := im.Message(data)
+		message := deliveredMessage(target, &item)
+		if message.ID == "" {
+			verify, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			message, _ = s.ConfirmDelivery(verify, target, kind, bot, result.MessageID)
+		}
+		return chat.DeliveryResult{State: "success", MessageID: result.MessageID, Message: message}
 	}
 	return result
 }
@@ -146,17 +154,29 @@ func (s *ChatSource) deliverySender(sender *im.Sender, bot string) bool {
 	}
 }
 
-func (s *ChatSource) ConfirmDelivery(ctx context.Context, target, kind, bot, messageID string) bool {
+func (s *ChatSource) ConfirmDelivery(ctx context.Context, target, kind, bot, messageID string) (orchestrator.ChatMessage, bool) {
 	if !validIMID(messageID, "om_") {
-		return false
+		return orchestrator.ChatMessage{}, false
 	}
 	var data im.GetMessageRespData
 	if err := s.get(ctx, "/messages/"+messageID, url.Values{}, &data); err != nil || len(data.Items) != 1 {
-		return false
+		return orchestrator.ChatMessage{}, false
 	}
 	item := data.Items[0]
-	return item != nil && value(item.MessageId) == messageID && value(item.ChatId) == target &&
-		value(item.MsgType) == kind && s.deliverySender(item.Sender, bot)
+	if item == nil || value(item.MessageId) != messageID || value(item.ChatId) != target ||
+		value(item.MsgType) != kind || !s.deliverySender(item.Sender, bot) {
+		return orchestrator.ChatMessage{}, false
+	}
+	return deliveredMessage(target, item), true
+}
+
+func deliveredMessage(target string, item *im.Message) orchestrator.ChatMessage {
+	message, err := historyMessage(chat.HistoryQuery{ChatID: target}, item)
+	if err != nil || (!message.Deleted && !json.Valid([]byte(message.Body))) {
+		return orchestrator.ChatMessage{}
+	}
+	message.VisibleInChat = true
+	return message
 }
 
 // Errors before a create request leaves this process are distinct from

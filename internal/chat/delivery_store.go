@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 type deliveryKey struct {
@@ -100,15 +101,38 @@ func (s *Service) loadDelivery(ctx context.Context, k deliveryKey, owner, target
 	return result, err
 }
 
-func (s *Service) finishDelivery(ctx context.Context, k deliveryKey, p deliveryPart) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state=$5,reason=$6,message_id=nullif($7,''),
-		confirmed_at=CASE WHEN $5='success' THEN now() END
-		WHERE (tenant_key,app_id,operation_key,position)=($1,$2,$3,$4) AND state='pending'`,
-		k.tenant, k.app, k.operation, p.position, p.state, p.reason, p.messageID)
-	if err == nil && tag.RowsAffected() != 1 {
-		return ErrUnavailable
-	}
-	return err
+func (s *Service) finishDelivery(ctx context.Context, k deliveryKey, p deliveryPart, previous string, message orchestrator.ChatMessage) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		archive := p.state == "success" && message.ID != "" && message.ID == p.messageID
+		if archive {
+			if err := s.assertEnabled(ctx, tx); err != nil {
+				if !errors.Is(err, ErrAccessLost) {
+					return err
+				}
+				archive = false
+			}
+		}
+		tag, err := tx.Exec(ctx, `UPDATE feishu_send_parts SET state=$5,reason=$6,message_id=nullif($7,''),
+			confirmed_at=CASE WHEN $5='success' THEN now() END
+			WHERE (tenant_key,app_id,operation_key,position)=($1,$2,$3,$4) AND state=$8
+			AND ($8='pending' OR message_id=$7)`,
+			k.tenant, k.app, k.operation, p.position, p.state, p.reason, p.messageID, previous)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			if previous == "pending" {
+				return ErrUnavailable
+			}
+			return nil
+		}
+		if archive {
+			// Commit the receipt and its timeline entry before responding to the composer.
+			// The archive's existing upsert handles later history pages and recalls.
+			return s.saveMessage(ctx, tx, message)
+		}
+		return nil
+	})
 }
 
 func (s *Service) abortDelivery(ctx context.Context, k deliveryKey, position int, reason string) error {

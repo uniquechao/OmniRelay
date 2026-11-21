@@ -768,6 +768,50 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   assert.equal(await box.locator('li').count(), 0);
 });
 
+test('私聊发信确认后直接出现在列表，刷新后仍只有一条', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const viewport of [{ width: 1366, height: 900 }, { width: 390, height: 844 }]) {
+    for (const theme of ['light', 'dark']) {
+      const mobile = viewport.width < 500;
+      const page = await browser.newPage({ viewport, isMobile: mobile, hasTouch: mobile });
+      const fixture = await mountFixture(page);
+      let sends = 0;
+      const sent = {
+        ...p2pMessage, id: 'om_bot_sent', sender: { name: '测试机器人' }, sender_kind: 'app',
+        body: JSON.stringify({ text: '发送后无需手动同步' }), sent_at: '2026-11-19T16:15:00Z'
+      };
+      await page.route('**/oc_direct/send-capabilities', route => route.fulfill({ json: {
+        can_send: true, sender: { kind: 'bot', name: '测试机器人' }
+      } }));
+      await page.route('**/oc_direct/messages', route => {
+        if (route.request().method() === 'POST') {
+          sends++;
+          const { operation_key, text } = route.request().postDataJSON();
+          assert.equal(text, '发送后无需手动同步');
+          return route.fulfill({ json: {
+            operation_key, chat_id: direct.id, state: 'success',
+            parts: [{ position: 0, kind: 'text', state: 'success', message_id: sent.id }]
+          } });
+        }
+        return route.fulfill({ json: { items: sends ? [sent, p2pMessage] : [p2pMessage] } });
+      });
+      await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/oc_direct');
+      await page.getByText('收到，谢谢', { exact: true }).waitFor();
+      await page.getByRole('textbox', { name: '消息内容' }).fill('发送后无需手动同步');
+      await page.getByRole('button', { name: '发送消息' }).click();
+      const row = page.locator('[data-message="om_bot_sent"][data-author="bot"]');
+      await row.getByText('发送后无需手动同步', { exact: true }).waitFor();
+      await page.reload();
+      await row.getByText('发送后无需手动同步', { exact: true }).waitFor();
+      assert.equal(await row.count(), 1);
+      assert.equal(sends, 1);
+      assert.ok(!fixture.queries.some(([method, path]) => method === 'POST' && path === '/sync'));
+      await page.close();
+    }
+  }
+});
+
 test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());

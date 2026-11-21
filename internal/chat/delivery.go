@@ -30,13 +30,14 @@ type DeliverySource interface {
 	BotInGroup(context.Context, string) error
 	Upload(context.Context, string, string, []byte) (string, error)
 	Deliver(context.Context, string, string, string, string, string) DeliveryResult
-	ConfirmDelivery(context.Context, string, string, string, string) bool
+	ConfirmDelivery(context.Context, string, string, string, string) (orchestrator.ChatMessage, bool)
 }
 
 // DeliveryResult.MessageID on an unknown result must come from the
 // platform's reply to this exact create call.
 type DeliveryResult struct {
 	State, Reason, MessageID string
+	Message                  orchestrator.ChatMessage
 }
 
 type DeliverySender struct {
@@ -323,14 +324,18 @@ func (s *Service) deliveryStatus(ctx context.Context, actor identity.Principal, 
 	}
 	changed := false
 	for _, part := range result.Parts {
-		if part.State != "unknown" || part.messageID == "" ||
-			!s.delivery.ConfirmDelivery(ctx, target, part.Kind, result.Sender.OpenID, part.messageID) {
+		if part.State != "unknown" || part.messageID == "" {
 			continue
 		}
-		_, err := s.pool.Exec(ctx, `UPDATE feishu_send_parts SET state='success',reason='',confirmed_at=now()
-			WHERE (tenant_key,app_id,operation_key,position,message_id)=($1,$2,$3,$4,$5) AND state='unknown'`,
-			k.tenant, k.app, k.operation, part.Position, part.messageID)
-		if err != nil {
+		message, confirmed := s.delivery.ConfirmDelivery(ctx, target, part.Kind, result.Sender.OpenID, part.messageID)
+		if !confirmed {
+			continue
+		}
+		if message.SenderName == "" {
+			message.SenderName = result.Sender.Name
+		}
+		confirmedPart := deliveryPart{position: part.Position, state: "success", messageID: part.messageID}
+		if err := s.finishDelivery(ctx, k, confirmedPart, "unknown", message); err != nil {
 			return DeliveryStatus{}, err
 		}
 		changed = true
@@ -435,7 +440,10 @@ func (s *Service) dispatchDelivery(ctx context.Context, k deliveryKey, actor ide
 		result := s.delivery.Deliver(ctx, target, bot.OpenID, part.kind, part.content, hex.EncodeToString(nonce[:24]))
 		part.state, part.reason, part.messageID = result.State, result.Reason, result.MessageID
 		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
-		err = s.finishDelivery(save, k, part)
+		if result.Message.SenderName == "" {
+			result.Message.SenderName = bot.Name
+		}
+		err = s.finishDelivery(save, k, part, "pending", result.Message)
 		if err == nil && part.state != "success" {
 			err = s.abortDelivery(save, k, i+1, "not_attempted")
 		}

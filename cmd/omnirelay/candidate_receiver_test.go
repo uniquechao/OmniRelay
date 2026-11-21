@@ -46,8 +46,8 @@ func (f *candidatePlatform) Deliver(_ context.Context, target, bot, kind, conten
 	f.targets = append(f.targets, target)
 	return chat.DeliveryResult{State: "unknown", Reason: "receipt_unknown", MessageID: "om_platform_" + target}
 }
-func (*candidatePlatform) ConfirmDelivery(_ context.Context, target, kind, bot, id string) bool {
-	return id == "om_platform_"+target && bot == "ou_bot" && kind == "text"
+func (*candidatePlatform) ConfirmDelivery(_ context.Context, target, kind, bot, id string) (orchestrator.ChatMessage, bool) {
+	return orchestrator.ChatMessage{}, id == "om_platform_"+target && bot == "ou_bot" && kind == "text"
 }
 func (f *candidatePlatform) CheckShare(_ context.Context, reference drive.Ref, chatID string) error {
 	f.checks = append(f.checks, reference)

@@ -12,15 +12,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 )
 
 type deliveryFixture struct {
 	*fakeSource
 	upload  func() (string, error)
 	sent    func(target, kind, body, uuid string) DeliveryResult
-	confirm func(target, kind, bot, id string) bool
+	confirm func(target, kind, bot, id string) (orchestrator.ChatMessage, bool)
 }
 
 func (f deliveryFixture) BotInGroup(_ context.Context, target string) error {
@@ -38,8 +40,11 @@ func (f deliveryFixture) Deliver(_ context.Context, target, _, kind, body, uuid 
 	return f.sent(target, kind, body, uuid)
 }
 
-func (f deliveryFixture) ConfirmDelivery(_ context.Context, target, kind, bot, id string) bool {
-	return f.confirm != nil && f.confirm(target, kind, bot, id)
+func (f deliveryFixture) ConfirmDelivery(_ context.Context, target, kind, bot, id string) (orchestrator.ChatMessage, bool) {
+	if f.confirm == nil {
+		return orchestrator.ChatMessage{}, false
+	}
+	return f.confirm(target, kind, bot, id)
 }
 
 func TestDeliveryContent(t *testing.T) {
@@ -100,16 +105,20 @@ func TestDeliveryLedger(t *testing.T) {
 		}
 		close(entered)
 		<-release
-		return DeliveryResult{State: "success", MessageID: "om_text"}
+		return DeliveryResult{State: "success", MessageID: "om_text", Message: orchestrator.ChatMessage{
+			ID: "om_text", ChatID: target, Type: kind, SenderID: "ou_bot", SenderKind: "app",
+			Body: `{"text":"已发出的群消息"}`, SentAt: time.Now().UTC(), VisibleInChat: true,
+		}}
 	}
 	s.ConfigureDelivery(f, true)
+	reader := alice
 	mux := http.NewServeMux()
 	s.Register(mux, func(w http.ResponseWriter, r *http.Request, policy identity.SessionPolicy) (identity.Principal, bool) {
 		if r.Method == http.MethodPost && (policy != identity.RefreshSessionWithCSRF || r.Header.Get("X-Test-CSRF") != "valid") {
 			w.WriteHeader(http.StatusForbidden)
 			return identity.Principal{}, false
 		}
-		return alice, true
+		return reader, true
 	})
 	do := func(method, url, contentType string, body io.Reader) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, route+url, body)
@@ -203,6 +212,11 @@ func TestDeliveryLedger(t *testing.T) {
 		!strings.Contains(status.Body.String(), "receipt_unknown") || calls != 2 {
 		t.Fatalf("lost receipt retried or vanished: %d %d %s, %d calls", duplicate.Code, status.Code, status.Body, calls)
 	}
+	history := do(http.MethodGet, "/oc_group/messages", "", nil)
+	if history.Code != http.StatusOK || strings.Count(history.Body.String(), `"id":"om_text"`) != 1 ||
+		!strings.Contains(history.Body.String(), "已发出的群消息") || !strings.Contains(history.Body.String(), `"sender_kind":"app"`) {
+		t.Fatalf("confirmed portion should be visible without a history sync: %d %s", history.Code, history.Body)
+	}
 	for _, test := range []struct {
 		target, operation, reason string
 		content                   DeliveryContent
@@ -248,12 +262,21 @@ func TestDeliveryLedger(t *testing.T) {
 		if target != "oc_private" || kind != "text" {
 			t.Fatalf("unexpected private dispatch: %s %s", target, kind)
 		}
-		return DeliveryResult{State: "success", MessageID: "om_private"}
+		return DeliveryResult{State: "success", MessageID: "om_private", Message: orchestrator.ChatMessage{
+			ID: "om_private", ChatID: target, Type: kind, SenderID: "ou_bot", SenderKind: "app",
+			Body: `{"text":"你好"}`, SentAt: time.Now().UTC(), VisibleInChat: true,
+		}}
 	}
 	s.ConfigureDelivery(f, true)
 	direct, err := s.send(ctx, bob, "oc_private", "own-private", DeliveryContent{Text: "你好"}, nil, nil)
 	if err != nil || direct.State != "success" || direct.Parts[0].MessageID != "om_private" || calls != 4 {
 		t.Fatalf("verified private delivery: %#v %v", direct, err)
+	}
+	reader = bob
+	history = do(http.MethodGet, "/oc_private/messages", "", nil)
+	if history.Code != http.StatusOK || strings.Count(history.Body.String(), `"id":"om_private"`) != 1 ||
+		!strings.Contains(history.Body.String(), "你好") {
+		t.Fatalf("confirmed private message should be visible without a history sync: %d %s", history.Code, history.Body)
 	}
 }
 
@@ -291,8 +314,12 @@ func TestDeliveryReconcilesAnchoredBriefing(t *testing.T) {
 			calls++
 			return DeliveryResult{State: "unknown", Reason: "receipt_unknown", MessageID: id}
 		},
-		confirm: func(chatID, kind, bot, messageID string) bool {
-			return confirmed && chatID == target && kind == "text" && bot == "ou_bot" && messageID == id
+		confirm: func(chatID, kind, bot, messageID string) (orchestrator.ChatMessage, bool) {
+			ok := confirmed && chatID == target && kind == "text" && bot == "ou_bot" && messageID == id
+			return orchestrator.ChatMessage{
+				ID: id, ChatID: target, Type: kind, SenderID: bot, SenderKind: "app",
+				Body: `{"text":"项目简报"}`, SentAt: time.Now().UTC(), VisibleInChat: true,
+			}, ok
 		},
 	}
 	s.ConfigureDelivery(f, true)
@@ -332,6 +359,13 @@ func TestDeliveryReconcilesAnchoredBriefing(t *testing.T) {
 	evidence, err := s.LookupDeliveries(ctx, scope, messages)
 	if err != nil || len(evidence) != 1 || evidence[0].Receipt != receipt || evidence[0].Message != messages[0] {
 		t.Fatalf("verified receipt: %#v %v", evidence, err)
+	}
+	var archivedBody string
+	err = s.pool.QueryRow(ctx, `SELECT body FROM feishu_chat_messages
+		WHERE (tenant_key,app_id,chat_id,message_id)=($1,$2,$3,$4)`,
+		scope.TenantKey, scope.AppID, target, id).Scan(&archivedBody)
+	if err != nil || archivedBody != `{"text":"项目简报"}` {
+		t.Fatalf("reconciled delivery was not archived: %q %v", archivedBody, err)
 	}
 	items := []messageItem{{ID: id, ChatID: target, State: "available"}}
 	s.receipts.project(ctx, actor, items)

@@ -334,7 +334,6 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
       const confirmed = r.parts.filter(p => p.state === 'success' && p.message_id);
       if (r.state === 'success' && confirmed.length === expected) {
         Object.assign(d, emptyDraft(), { notice: '飞书已确认接收。' });
-        if (active?.draft === d && !signal?.aborted) onConfirmed();
       } else if (r.state === 'failed' && r.parts.every(p => p.state === 'failed' || p.state === 'success' && p.message_id)) {
         const failed = r.parts.filter(p => p.state === 'failed');
         const message = reasons[failed[0]?.reason] || '发送失败。';
@@ -349,6 +348,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
         else d.operation = null;
         d.notice = (confirmed.length ? '部分已接收。' : '') + message;
       } else d.notice = '尚未取得完整回执，可查询原操作。';
+      if (confirmed.length && active?.draft === d && !signal?.aborted) onConfirmed();
     } catch (e) {
       if (query && e.data?.error === 'operation_not_found') {
         op.missing = true;
