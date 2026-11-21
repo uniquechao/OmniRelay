@@ -37,7 +37,7 @@ func TestGroupFileUpgradeKeepsLegacyForReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range changes[:21] {
+	for _, c := range changes[:22] {
 		run(c.sql)
 		if c.version == 16 {
 			run(`INSERT INTO feishu_files(tenant_key,kind,token) VALUES('t','docx','doc');
@@ -48,7 +48,7 @@ func TestGroupFileUpgradeKeepsLegacyForReview(t *testing.T) {
     SELECT set_config('omnirelay.file_project_actor','editor',true);
     INSERT INTO feishu_file_projects VALUES('t','a',1,'manual');
     INSERT INTO feishu_file_projects VALUES('t','a',1,'unknown') ON CONFLICT DO NOTHING`)
-	run(changes[21].sql)
+	run(changes[22].sql)
 	var count int
 	var manual string
 	if err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM feishu_file_project_legacy),string_agg(project_id,',') FROM feishu_file_manual_projects`).Scan(&count, &manual); err != nil || count != 3 || manual != "manual" {

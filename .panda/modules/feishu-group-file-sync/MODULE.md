@@ -7,7 +7,7 @@
 ## 关联源码路径
 
 - `internal/drive/` 管理来源索引、Wiki 映射、对象存储、版本、预览、访问校验和人工归属。飞书协议适配位于 `internal/feishu/files.go`，工作台装配位于 `cmd/omnirelay/server.go`。
-- `internal/project/panels.go` 与 `web/drive*.js`、`web/projects.js` 消费同一文件、版本和来源。数据库兼容升级见 `migrations/0022_group_file_sync.sql`。
+- `internal/project/panels.go` 与 `web/drive*.js`、`web/projects.js` 消费同一文件、版本和来源。数据库兼容升级见 `migrations/0023_group_file_sync.sql`。
 
 ## 长期设计约束
 
