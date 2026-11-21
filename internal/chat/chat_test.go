@@ -113,6 +113,32 @@ func testChat(t *testing.T, source *fakeSource) (*Service, context.Context) {
 	return New(pool, "tenant_chat", "cli_chat", 1, source, people, roles.Check, ReceiptSources{}), ctx
 }
 
+func TestUnboundFileGroupRequiresCurrentMembership(t *testing.T) {
+	source := &fakeSource{members: map[string][]Member{"oc_group": {{OpenID: "ou_alice"}}}}
+	service, ctx := testChat(t, source)
+	if _, err := service.pool.Exec(ctx, `INSERT INTO feishu_chat_conversations
+		(tenant_key,app_id,chat_id,kind,peer_open_id)
+		VALUES ('tenant_chat','cli_chat','oc_group','group',''),
+		       ('tenant_chat','cli_chat','oc_private','p2p','ou_alice')`); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Principal{TenantKey: "tenant_chat", AppID: "cli_chat", AccountID: "alice", OpenID: "ou_alice"}
+	admin := identity.Principal{TenantKey: "tenant_chat", AppID: "cli_chat", AccountID: "admin", OpenID: "ou_admin"}
+	for _, test := range []struct {
+		reader identity.Principal
+		chat   string
+		want   bool
+	}{{alice, "oc_group", true}, {admin, "oc_group", false}, {alice, "oc_private", false}} {
+		if allowed, err := service.CanReadFileGroup(ctx, test.reader, "", test.chat); err != nil || allowed != test.want {
+			t.Fatalf("%s / %s: allowed=%v err=%v", test.reader.AccountID, test.chat, allowed, err)
+		}
+	}
+	source.members["oc_group"] = nil
+	if allowed, err := service.CanReadFileGroup(ctx, alice, "", "oc_group"); err != nil || allowed {
+		t.Fatalf("membership was revoked: allowed=%v err=%v", allowed, err)
+	}
+}
+
 func exampleMessage(chatID, id, text string, seconds int) orchestrator.ChatMessage {
 	return orchestrator.ChatMessage{ID: id, ChatID: chatID, Type: "text", Body: `{"text":"` + text + `"}`,
 		SenderID: "ou_alice", SenderName: "林晓", SenderKind: "user", SentAt: time.Date(2024, 1, 1, 0, 0, seconds, 0, time.UTC)}

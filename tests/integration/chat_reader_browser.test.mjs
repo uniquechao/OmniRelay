@@ -1108,6 +1108,43 @@ test('项目群主群替换、改绑、失败重试和清除在两个入口即�
   await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
 });
 
+test('网盘显示未关联项目的文件，按真实同步状态刷新列表', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const viewport of [{width:1366,height:900}, {width:390,height:844}]) {
+    for (const theme of ['light','dark']) {
+      const page = await browser.newPage({viewport});
+      await page.clock.install();
+      await mountFixture(page);
+      const status = {groups:1, history_pending:1, history_attention:0, unindexed_messages:3,
+        unresolved_wiki:0, pending_sources:1, complete_sources:0, attention_sources:0};
+      let completed = false;
+      await page.route(origin + '/api/v1/feishu/files/sync', route => route.fulfill({json:completed ? {
+        ...status, history_pending:0, unindexed_messages:0, pending_sources:0, complete_sources:1
+      } : status}));
+      await page.route(origin + '/api/v1/feishu/files?*', route => route.fulfill({json:{
+        projects:{}, total:Number(completed), items:completed ? [{
+          id:71, name:'未关联群的手册.pdf', category:'files', format_key:'pdf', format:'PDF',
+          project_ids:[], inherited_project_ids:[], sources:[{chat_id:'oc_group',message_id:'om_old',chat_name:'北辰项目群'}],
+          sync_state:'complete', version_id:1
+        }] : []
+      }}));
+      await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
+      const progress = page.getByRole('region', {name:'文件同步进度'});
+      await progress.getByRole('progressbar', {name:'正在同步群历史…'}).waitFor();
+      assert.equal(await progress.getByRole('progressbar').getAttribute('aria-valuenow'), null);
+      assert.match(await progress.innerText(), /待同步 1 条/);
+      await page.getByText('暂无文件。', {exact:true}).waitFor();
+      completed = true;
+      await page.clock.runFor(10030);
+      await progress.getByText(/已同步 1 条来源/).waitFor();
+      await page.locator('.drive-file-name').getByText('未关联群的手册.pdf').waitFor();
+      assert.equal(await progress.getByRole('progressbar').count(), 0);
+      await page.close();
+    }
+  }
+});
+
 test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -1403,6 +1440,10 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
   await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/feishu/files/sync') return route.fulfill({json:{
+      groups:Number(!revoked), history_pending:0, history_attention:0, unindexed_messages:0,
+      unresolved_wiki:0, pending_sources:0, complete_sources:revoked ? 0 : 2, attention_sources:0
+    }});
     if (path.endsWith('/files')) return route.fulfill({json:{items:revoked ? [] : rows,total:revoked ? 0 : 2,projects:{p:'项目'}}});
     if (revoked) return route.fulfill({status:404,json:{error:'file_unavailable'}});
     const row = rows.find(item => path.startsWith('/api/v1/feishu/files/' + item.id + '/'));

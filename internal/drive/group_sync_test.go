@@ -2,6 +2,7 @@ package drive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,12 +110,35 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 		t.Fatal(files, err)
 	}
 	share("m2", "g2")
-	file("extra", "p")
-	exec(`INSERT INTO project_chat_links VALUES('t','a','q','g2')`)
-	if found, err := s.index(ctx); err != nil || !found {
-		t.Fatal("绑定后未采集群历史", found, err)
+	jsonProgress := func() syncProgress {
+		t.Helper()
+		var status syncProgress
+		if err := json.Unmarshal([]byte(get("sync", 200)), &status); err != nil {
+			t.Fatal(err)
+		}
+		return status
 	}
+	if f := file("extra", "p"); len(f.Sources) != 2 {
+		t.Fatal("未绑定群的已授权来源应立即出现", f.Sources)
+	}
+	if status := jsonProgress(); status.Groups != 2 || status.Complete != 1 || status.Pending != 1 {
+		t.Fatalf("expected one archived and one queued source: %+v", status)
+	}
+	s.canReadGroup = func(_ context.Context, _ identity.Principal, _, chat string) (bool, error) {
+		return chat == "g1", nil
+	}
+	if status := jsonProgress(); status.Groups != 1 || status.Complete != 1 || status.Pending != 0 {
+		t.Fatalf("unreadable group contributed to progress: %+v", status)
+	}
+	if f := file("extra", "p"); len(f.Sources) != 1 {
+		t.Fatal("未授权群泄露来源", f.Sources)
+	}
+	s.canReadGroup = testGroupAccess
 	refresh()
+	if status := jsonProgress(); status.Groups != 2 || status.Complete != 2 || status.Pending != 0 {
+		t.Fatalf("unbound group failed to sync: %+v", status)
+	}
+	exec(`INSERT INTO project_chat_links VALUES('t','a','q','g2')`)
 	both := file("extra", "p", "q")
 	if both.ID != f.ID || *both.Version != first || len(both.Sources) != 2 {
 		t.Fatal(both)
@@ -159,6 +183,11 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 		t.Fatal(got)
 	}
 	exec("DELETE FROM project_chat_links WHERE chat_id='g1'")
+	file("extra")
+	if got := get(fmt.Sprintf("%d/object", f.ID), 200); got != "甲版" {
+		t.Fatal(got)
+	}
+	src.denied["m1"] = true
 	get(fmt.Sprintf("%d/object", f.ID), 404)
 }
 

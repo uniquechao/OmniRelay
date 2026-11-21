@@ -36,7 +36,12 @@ func (s *Service) resolveWiki(ctx context.Context) (bool, error) {
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (
         SELECT w.token FROM feishu_wiki_targets w WHERE tenant_key=$1 AND app_id=$2 AND next_at<=now()
         AND EXISTS(SELECT FROM feishu_message_wiki_links n JOIN feishu_chat_messages m USING(tenant_key,app_id,message_id)
-        JOIN project_chat_links g USING(tenant_key,app_id,chat_id) WHERE (n.tenant_key,n.app_id,n.token)=(w.tenant_key,w.app_id,w.token) AND NOT m.deleted)
+        JOIN feishu_chat_conversations g USING(tenant_key,app_id,chat_id)
+        JOIN feishu_chat_sync root USING(tenant_key,app_id,chat_id)
+        WHERE (n.tenant_key,n.app_id,n.token)=(w.tenant_key,w.app_id,w.token) AND g.kind='group'
+        AND root.thread_id='' AND NOT root.source_blocked AND NOT m.deleted
+        AND NOT EXISTS(SELECT FROM feishu_candidate_event_owners o
+            WHERE (o.tenant_key,o.app_id,o.source_id)=(m.tenant_key,m.app_id,m.message_id) AND o.run_id IS NOT NULL))
         AND EXISTS(SELECT FROM feishu_bot_configs WHERE tenant_key=$1 AND app_id=$2 AND enabled AND credentials_generation=$3)
         ORDER BY next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
         UPDATE feishu_wiki_targets w SET next_at=clock_timestamp()+interval '2 minutes' FROM candidate c

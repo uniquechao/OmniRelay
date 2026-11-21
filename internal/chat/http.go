@@ -114,6 +114,31 @@ func (s *Service) CanReadConversation(ctx context.Context, p identity.Principal,
 	return err == nil, err
 }
 
+// CanReadFileGroup requires membership for a group with no project scope, even for administrators.
+func (s *Service) CanReadFileGroup(ctx context.Context, p identity.Principal, projectID, chatID string) (bool, error) {
+	if !validIdentifier(chatID) {
+		return false, nil
+	}
+	if projectID != "" {
+		return s.CanReadConversation(ctx, p, projectID, chatID)
+	}
+	if err := s.activeAccount(ctx, s.pool, p); err != nil {
+		if errors.Is(err, ErrAccessLost) {
+			return false, nil
+		}
+		return false, err
+	}
+	items, err := s.listConversations(ctx, chatID, "")
+	if err != nil || len(items) != 1 || items[0].Kind != orchestrator.ChatGroup {
+		return false, err
+	}
+	err = s.canRead(ctx, p, false, items[0])
+	if errors.Is(err, ErrAccessLost) || errors.Is(err, errHidden) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Service) authorize(ctx context.Context, p identity.Principal, id string) (authorizedScope, error) {
 	return s.authorizeProject(ctx, p, id, "")
 }

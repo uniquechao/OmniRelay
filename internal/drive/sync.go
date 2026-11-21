@@ -41,8 +41,8 @@ func (s *Service) index(ctx context.Context) (bool, error) {
  WHERE m.tenant_key=$1 AND m.app_id=$2 AND NOT deleted AND NOT files_indexed
  AND NOT EXISTS(SELECT FROM feishu_candidate_event_owners o
     WHERE (o.tenant_key,o.app_id,o.source_id)=(m.tenant_key,m.app_id,m.message_id) AND o.run_id IS NOT NULL)
- AND EXISTS(SELECT FROM project_chat_links l JOIN feishu_chat_conversations c USING(tenant_key,app_id,chat_id)
- WHERE l.tenant_key=$1 AND l.app_id=$2 AND l.chat_id=m.chat_id AND c.kind='group')
+ AND EXISTS(SELECT FROM feishu_chat_conversations c
+ WHERE (c.tenant_key,c.app_id,c.chat_id)=(m.tenant_key,m.app_id,m.chat_id) AND c.kind='group')
  AND EXISTS(SELECT FROM feishu_bot_configs WHERE tenant_key=$1 AND app_id=$2 AND enabled AND credentials_generation=$3)
  ORDER BY sent_at LIMIT 64 FOR UPDATE SKIP LOCKED`, s.tenant, s.app, s.generation)
 	if err != nil {
@@ -124,7 +124,6 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 	var j job
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (SELECT x.* FROM feishu_file_sources x
  JOIN feishu_file_shares s USING(tenant_key,app_id,message_id,file_id)
- JOIN project_chat_links l USING(tenant_key,app_id,chat_id)
  WHERE x.chat_kind='group' AND x.tenant_key=$1 AND x.app_id=$2 AND x.credentials_generation=$3 AND x.next_at<=now()
  ORDER BY x.next_at,x.file_id LIMIT 1 FOR UPDATE OF s SKIP LOCKED)
  UPDATE feishu_file_shares s SET attempted_at=clock_timestamp(),next_at=now()+interval '2 minutes'
@@ -170,8 +169,7 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 	var failures int
 	err = tx.QueryRow(ctx, `SELECT s.version_id,s.failures FROM feishu_file_shares s JOIN feishu_file_sources x
  USING(tenant_key,app_id,message_id,file_id) WHERE x.tenant_key=$1 AND x.app_id=$2 AND x.message_id=$3 AND x.file_id=$4
- AND x.attempted_at=$5 AND x.credentials_generation=$6
- AND EXISTS(SELECT FROM project_chat_links l WHERE (l.tenant_key,l.app_id,l.chat_id)=(x.tenant_key,x.app_id,x.chat_id)) FOR UPDATE OF s`, s.tenant, s.app, j.MessageID, j.id, j.attempt, s.generation).Scan(&previous, &failures)
+ AND x.attempted_at=$5 AND x.credentials_generation=$6 AND x.chat_kind='group' FOR UPDATE OF s`, s.tenant, s.app, j.MessageID, j.id, j.attempt, s.generation).Scan(&previous, &failures)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return true, nil
 	}

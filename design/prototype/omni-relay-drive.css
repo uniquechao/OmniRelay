@@ -1,3 +1,10 @@
+.drive-sync {
+  margin-bottom: 9px;
+  color: var(--or-text-secondary);
+  font-size: .875rem;
+}
+.drive-sync p { margin: 0; line-height: 1.5; }
+.drive-sync .or-loading { margin-bottom: 4px; }
 .drive-categories {
   display: flex;
   flex-wrap: wrap;

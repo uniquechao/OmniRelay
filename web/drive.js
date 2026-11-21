@@ -23,13 +23,67 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
   let names = new Map();
   let category = returning?.category ?? 'all';
   let activeList;
+  let refreshList;
+  let syncTimer;
+  let tableSnapshot;
   let files = new Map();
   page.innerHTML = '<header class="head"><h1 id="page-heading" tabindex="-1">文件网盘</h1></header>' +
+    '<section class="drive-sync" aria-label="文件同步进度"><div data-drive-sync-loader></div>' +
+    '<p data-drive-sync role="status"></p></section>' +
     '<div class="drive-categories" role="group" aria-label="文件分类">' + Object.entries(categories).map(([id,label]) =>
       '<button type="button" class="button" aria-controls="drive-file-list" data-drive-category="' + id + '">' + label + '</button>'
     ).join('') + '</div><section id="drive-file-list"></section>';
   const bar = page.querySelector('.drive-categories');
   const list = page.querySelector('#drive-file-list');
+  const syncLoader = page.querySelector('[data-drive-sync-loader]');
+  const syncStatus = page.querySelector('[data-drive-sync]');
+  let loadingLabel;
+  function showSyncLoader(label) {
+    if (loadingLabel === label) return;
+    loadingLabel = label;
+    syncLoader.innerHTML = label ? window.OmniRelayLoading.markup({size:'compact', label}) : '';
+  }
+  showSyncLoader('正在读取同步进度…');
+
+  async function readSync() {
+    try {
+      if (document.hidden) return;
+      const state = await request('/api/v1/feishu/files/sync', {signal});
+      if (signal.aborted) return;
+      const text = [];
+      let stage = '';
+      if (state.groups) {
+        if (state.history_pending) stage = '正在同步群历史…';
+        else if (state.unindexed_messages) stage = '正在扫描群消息…';
+        else if (state.pending_sources) stage = '正在同步文件…';
+        text.push('已同步 ' + state.complete_sources + ' 条来源', '待同步 ' + state.pending_sources + ' 条');
+        if (state.unindexed_messages) text.push('未扫描消息 ' + state.unindexed_messages + ' 条');
+        if (state.attention_sources) text.push('需处理 ' + state.attention_sources + ' 条');
+        if (state.history_attention) text.push(state.history_attention + ' 个群的历史同步需要处理');
+        if (state.unresolved_wiki) text.push('待解析知识库消息 ' + state.unresolved_wiki + ' 条');
+      } else {
+        text.push('暂无可读取的飞书群文件来源。');
+      }
+      showSyncLoader(stage);
+      const message = text.join(' · ');
+      if (syncStatus.textContent !== message) syncStatus.textContent = message;
+      const latest = JSON.stringify(state);
+      if (tableSnapshot === undefined) tableSnapshot = latest;
+      if (tableSnapshot !== latest && !document.querySelector('dialog[open]') && !list.contains(document.activeElement)) {
+        tableSnapshot = latest;
+        await refreshList?.();
+      }
+    } catch {
+      if (!signal.aborted) {
+        showSyncLoader('');
+        syncStatus.textContent = '暂时无法读取同步进度，稍后自动重试。';
+      }
+    } finally {
+      if (!signal.aborted) syncTimer = setTimeout(readSync, 10000);
+    }
+  }
+  signal.addEventListener('abort', () => clearTimeout(syncTimer), {once:true});
+
 
   document.addEventListener('click', event => {
     const link = event.target.closest('a[data-source-file]');
@@ -96,6 +150,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
         {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>' + (row.version_id ? ' <a class="row-action" download href="/api/v1/feishu/files/' + encodeURIComponent(row.id) + '/versions/' + encodeURIComponent(row.version_id) + '/content?download=1">下载</a>' : '')}
       ]
     });
+    refreshList = view.refresh;
     root.addEventListener('click', event => {
       const button = event.target.closest('[data-drive-projects], [data-drive-preview]');
       if (!button || button.disabled) return;
@@ -123,4 +178,5 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
     if (next && next !== category) { category = next; show(); }
   });
   show();
+  void readSync();
 }

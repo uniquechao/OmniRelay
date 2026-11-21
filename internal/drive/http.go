@@ -29,7 +29,7 @@ type share struct {
 	SenderID   string    `json:"sender_id"`
 	SenderName string    `json:"sender_name"`
 	SentAt     time.Time `json:"sent_at"`
-	ProjectID  string    `json:"project_id"`
+	ProjectID  string    `json:"project_id,omitempty"`
 }
 type candidate struct {
 	share
@@ -61,16 +61,17 @@ type item struct {
 }
 
 const authorizedSources = ` FROM feishu_file_sources x
- JOIN project_chat_links l USING(tenant_key,app_id,chat_id)
- JOIN project_members pm USING(tenant_key,app_id,project_id)
- JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(pm.tenant_key,pm.app_id,pm.account_id)
+ LEFT JOIN project_chat_links l USING(tenant_key,app_id,chat_id)
+ LEFT JOIN project_members pm ON (pm.tenant_key,pm.app_id,pm.project_id,pm.account_id)=(l.tenant_key,l.app_id,l.project_id,$4)
+    AND pm.role<>'revoked'
+ JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(x.tenant_key,x.app_id,$4)
  LEFT JOIN feishu_file_versions v ON v.id=x.version_id
  WHERE x.tenant_key=$1 AND x.app_id=$2 AND x.credentials_generation=$3
- AND pm.account_id=$4 AND a.open_id=$5 AND a.active AND pm.role<>'revoked'
+ AND a.open_id=$5 AND a.active AND (l.project_id IS NULL OR pm.account_id IS NOT NULL)
  AND x.chat_kind='group' AND x.state<>'revoked' AND ($6::bigint=0 OR x.file_id=$6)`
 
 func (s *Service) candidates(ctx context.Context, p identity.Principal, id int64, cloudTokens []string, project string) ([]candidate, error) {
-	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,l.project_id,
+	rows, err := s.pool.Query(ctx, `SELECT x.message_id,x.chat_id,x.chat_name,x.sender_id,x.sender_name,x.sent_at,coalesce(l.project_id,''),
  x.file_id,x.kind,x.token,x.name,x.state,coalesce(v.content_type,''),x.version_id,CASE WHEN x.kind IN ('attachment','file','image','video') THEN coalesce(v.byte_size,x.declared_size) END,
  x.synced_at, (SELECT version FROM feishu_file_project_revisions r WHERE
  (r.tenant_key,r.app_id,r.file_id)=(x.tenant_key,x.app_id,x.file_id)),
@@ -174,7 +175,7 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 		if !ok {
 			pos = len(files)
 			positions[c.ID] = pos
-			files = append(files, item{ID: c.ID, ManualProjects: c.Projects, Projects: slices.Clone(c.Projects), ProjectVersion: c.ProjectVersion, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
+			files = append(files, item{ID: c.ID, ManualProjects: c.Projects, Projects: slices.Clone(c.Projects), InheritedProjects: []string{}, ProjectVersion: c.ProjectVersion, token: c.Token, Name: c.Name, State: c.State, SizeSource: "unknown"})
 		}
 		f := &files[pos]
 		if len(f.Sources) == 0 || (c.Updated != nil && (f.Updated == nil || c.Updated.After(*f.Updated))) {
@@ -195,11 +196,13 @@ func (s *Service) visibleInProject(ctx context.Context, p identity.Principal, id
 			}
 			f.Category, f.Format, f.FormatKey = format.Category, format.Label, format.Key
 		}
-		if !slices.Contains(f.InheritedProjects, c.ProjectID) {
-			f.InheritedProjects = append(f.InheritedProjects, c.ProjectID)
-		}
-		if !slices.Contains(f.Projects, c.ProjectID) {
-			f.Projects = append(f.Projects, c.ProjectID)
+		if c.ProjectID != "" {
+			if !slices.Contains(f.InheritedProjects, c.ProjectID) {
+				f.InheritedProjects = append(f.InheritedProjects, c.ProjectID)
+			}
+			if !slices.Contains(f.Projects, c.ProjectID) {
+				f.Projects = append(f.Projects, c.ProjectID)
+			}
 		}
 		f.Sources = append(f.Sources, c.share)
 	}
@@ -242,6 +245,17 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		if _, ok := auth(w, r, identity.ValidateSession); ok {
 			jsonResponse(w, 200, formats)
 		}
+	})
+	mux.HandleFunc("GET "+base+"/sync", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := auth(w, r, identity.ValidateSession)
+		if !ok {
+			return
+		}
+		if p.TenantKey != s.tenant || p.AppID != s.app || p.AccountID == "" {
+			problem(w, 403, "forbidden")
+			return
+		}
+		s.getSyncProgress(w, r, p)
 	})
 	for _, pattern := range []string{base, base + "/{fileID}", base + "/{fileID}/versions", base + "/{fileID}/versions/{versionID}/content", base + "/{fileID}/object"} {
 		mux.HandleFunc("GET "+pattern, func(w http.ResponseWriter, r *http.Request) {

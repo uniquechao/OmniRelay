@@ -350,12 +350,12 @@ func TestFileArchiveAccess(t *testing.T) {
 	get(path+"/object", 404)
 	exec("UPDATE project_members SET role='reader'")
 	exec("DELETE FROM project_chat_links WHERE chat_id='g1'")
-	if total, _ := page(""); total != 0 {
-		t.Fatal(total)
+	if total, rows := page(""); total != 2 || slices.ContainsFunc(rows, func(row item) bool { return len(row.InheritedProjects) != 0 }) {
+		t.Fatal(total, rows)
 	}
-	get(path+"/versions", 404)
-	get(history, 404)
-	get(path+"/object", 404)
+	get(path+"/versions", 200)
+	get(history, 200)
+	get(path+"/object", 200)
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM feishu_file_versions").Scan(&n); err != nil || n != 3 {
 		t.Fatal(n, err)
 	}
@@ -460,14 +460,14 @@ func TestFileArchiveAccess(t *testing.T) {
 		}
 	}
 	exec("DELETE FROM project_chat_links")
-	if got := s.CloudFormats(ctx, actor, []string{"Sheet"}); len(got) != 0 {
-		t.Fatal("撤权后仍可见格式", got)
+	if got := s.CloudFormats(ctx, actor, []string{"Sheet"})["Sheet"].Key; got != "excel" {
+		t.Fatal("解绑后应继续显示已授权来源的类型", got)
 	}
 	if body := get("?project_id=p", 200); !strings.Contains(body, `"projects":{}`) {
-		t.Fatal("撤权后仍可见项目选项", body)
+		t.Fatal("解绑后仍可见项目选项", body)
 	}
 	get(object, 404)
-	if total, _ := page(""); total != 0 {
+	if total, _ := page(""); total != 4 {
 		t.Fatal(total)
 	}
 
