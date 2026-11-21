@@ -278,6 +278,12 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 }
 
 func platformAllowed(roles []string, action string) bool {
+	switch action {
+	case "agent.management.enter":
+		return slices.Contains(roles, RoleSystemAdmin)
+	case "agent.query.enter":
+		return slices.Contains(roles, RoleSystemUser)
+	}
 	for _, role := range roles {
 		if slices.Contains(roleCatalog[role].actions, action) {
 			return true

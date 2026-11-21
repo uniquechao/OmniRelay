@@ -83,7 +83,21 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
 	}
 	body, _ := json.Marshal(map[string]string{"receive_id": target, "msg_type": kind, "content": content, "uuid": uuid})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, imURL+"/messages?receive_id_type=chat_id", bytes.NewReader(body))
+	return s.deliverPayload(ctx, target, bot, kind, "/messages?receive_id_type=chat_id", body)
+}
+
+// ReplyTo creates a reply under the verified inbound message, including in ordinary groups.
+func (s *ChatSource) ReplyTo(ctx context.Context, chatID, bot, messageID, text, uuid string) chat.DeliveryResult {
+	if !validIMID(chatID, "oc_") || !validIMID(messageID, "om_") || text == "" || uuid == "" {
+		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
+	}
+	content, _ := json.Marshal(map[string]string{"text": text})
+	body, _ := json.Marshal(map[string]any{"msg_type": "text", "content": string(content), "uuid": uuid, "reply_in_thread": true})
+	return s.deliverPayload(ctx, chatID, bot, "text", "/messages/"+messageID+"/reply", body)
+}
+
+func (s *ChatSource) deliverPayload(ctx context.Context, target, bot, kind, path string, body []byte) chat.DeliveryResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, imURL+path, bytes.NewReader(body))
 	if err != nil {
 		return chat.DeliveryResult{State: "failed", Reason: "delivery_unavailable"}
 	}

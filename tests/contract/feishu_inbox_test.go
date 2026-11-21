@@ -123,6 +123,31 @@ func (f inboxFixture) reject(t *testing.T, event orchestrator.InboundEvent, want
 	}
 }
 
+func TestGroupAgentInboxAdapter(t *testing.T) {
+	f := newInboxFixture(t, 4)
+	f.inbox.(*postgres.FeishuInbox).EnableGroupAgent()
+	ctx := t.Context()
+	id := f.account(t, f.event.TenantID, f.event.SenderOpenID, true)
+	_, err := f.pool.Exec(ctx, `UPDATE feishu_bot_configs SET bot_open_id='ou_bot';
+	INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES('tenant_fixture','cli_fixture','oc_fixture','group');
+	INSERT INTO project_profiles(tenant_key,app_id,project_id,name,status,version) VALUES('tenant_fixture','cli_fixture','north','北辰项目','active',1);
+	INSERT INTO project_chat_links VALUES('tenant_fixture','cli_fixture','north','oc_fixture')`)
+	must(t, err)
+	_, err = f.pool.Exec(ctx, "INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES('tenant_fixture','cli_fixture','north',$1,'member','reader')", id)
+	must(t, err)
+	f.event.Text = "@_user_1 我是谁"
+	got, err := f.inbox.AcceptInbound(ctx, f.event)
+	must(t, err)
+	again, err := f.inbox.AcceptInbound(ctx, f.event)
+	must(t, err)
+	var state, channel, thread string
+	err = f.pool.QueryRow(ctx, `SELECT i.state,w.channel,w.thread_id FROM feishu_inbound_work i JOIN agent_group_work w ON w.id=i.agent_work_id WHERE i.id=$1`, got.WorkID).Scan(&state, &channel, &thread)
+	must(t, err)
+	if got.WorkID != again.WorkID || state != "agent_routed" || channel != "feishu" || thread != f.event.ThreadID {
+		t.Fatal("incoming reply binding lost")
+	}
+}
+
 func TestFeishuInboxConcurrentDuplicateBeforeCapacity(t *testing.T) {
 	f := newInboxFixture(t, 1)
 	account := f.account(t, f.event.TenantID, f.event.SenderOpenID, true)

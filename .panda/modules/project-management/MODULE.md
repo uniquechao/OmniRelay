@@ -17,6 +17,8 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 - 项目负责人和具备当前 `project.settings` 权限的项目成员可以维护档案。档案写入使用 `expected_version`，修改时区还需看板版本。仅有历史成员关系的项目沿用档案版本 `0` 的兼容读写。
 - 归档后，项目成员保留原有的历史读取权限，可在项目目录按「已归档」查询。项目档案停止编辑，简报计划停止，未投递简报在发送前重新核对项目阶段。阶段变更、项目创建和归档均写入审计。
 
+项目群 Agent 从可信通道取得群绑定与消息主体，按正式会籍代次、账号权限版本和群绑定版本确定工作授权。工具读取和向群回复前重验。Gateway、Runtime 的验收由内部通道完成，外部消息适配器单独验证。
+
 ## 接口与测试
 
 - `GET /api/v1/projects` 返回 `can_create`。`GET /api/v1/projects/{projectID}/overview` 返回 `can_manage_profile` 与档案版本。`POST /api/v1/projects` 支持以 `Idempotency-Key` 重试创建。档案修改和归档分别使用 `PUT /api/v1/projects/{projectID}/profile` 与 `POST /api/v1/projects/{projectID}/archive`。

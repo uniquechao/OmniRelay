@@ -1,0 +1,210 @@
+package group
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
+
+	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/routing"
+)
+
+type Service struct {
+	DB                 *pgxpool.Pool
+	Roles              *access.Service
+	Tenant, App, Owner string
+	Channels           map[string]Channel
+	Execute            func(context.Context, dsh.Binding) (dsh.Result, error)
+}
+type Who struct {
+	UserID      string `json:"user_id"`
+	UserName    string `json:"user_name"`
+	ProjectID   string `json:"project_id"`
+	ProjectName string `json:"project_name"`
+}
+type work struct {
+	dsh.Binding
+	State, Bot, Delivery, Text string
+	Address                    Envelope
+	Scope                      Who
+}
+
+// The same current account, group assignment, membership lifetime and Bot
+// configuration are required for admission, tool reads and publication.
+func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, error) {
+	var w work
+	var p identity.Principal
+	var scope, member string
+	var pv, av int64
+	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,p.name,w.chat_id,w.thread_id,w.message_id,
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text
+        FROM agent_group_work w
+        JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
+        JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
+        WHERE w.id=$1 AND w.tenant_key=$2 AND w.app_id=$3 AND a.active AND a.permission_version=w.permission_version
+        AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
+		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return w, access.ErrForbidden
+	}
+	if err != nil {
+		return w, err
+	}
+	p.TenantKey, p.AppID = s.Tenant, s.App
+	w.Address.Account, w.Address.Tenant, w.Address.App = p.AccountID, s.Tenant, s.App
+	ch, ok := s.Channels[w.Address.Channel]
+	if !ok {
+		return w, access.ErrForbidden
+	}
+	assignment, err := ch.Resolve(ctx, tx, w.Address)
+	if err != nil {
+		return w, err
+	}
+	if assignment.Project != w.Scope.ProjectID || assignment.Version != av {
+		return w, access.ErrForbidden
+	}
+	w.Bot = assignment.Bot
+	gateway := routing.Gateway{Check: func(ctx context.Context, p identity.Principal, action, id string) (bool, error) {
+		return s.Roles.CheckInOrganizationMutation(ctx, tx, p, action, id)
+	}}
+	target, err := gateway.Resolve(ctx, p, "project", w.Scope.ProjectID)
+	if err != nil {
+		return w, err
+	}
+	grant, err := s.Roles.ProjectGrant(ctx, tx, p, w.Scope.ProjectID)
+	if err != nil {
+		return w, err
+	}
+	if !grant.Member || grant.MembershipGeneration != member {
+		return w, access.ErrForbidden
+	}
+	w.Work, w.Agent, w.Scope.UserID, w.Scope.UserName = id, target.AgentID, p.AccountID, p.Name
+	scope = fmt.Sprintf("%s/%d/%d", member, av, pv)
+	fields, _ := json.Marshal([]string{w.Agent, p.AccountID, w.Address.Channel, w.Address.Chat, w.Address.Thread, scope})
+	digest := sha256.Sum256(fields)
+	w.Session = hex.EncodeToString(digest[:])
+	return w, nil
+}
+func (s *Service) claim(ctx context.Context) (work, error) {
+	var w work
+	err := pgx.BeginTxFunc(ctx, s.DB, pgx.TxOptions{IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
+		var id, state string
+		err := tx.QueryRow(ctx, `SELECT w.id,w.state FROM agent_group_work w
+          LEFT JOIN agent_instances a ON a.agent_id=w.agent_id
+          WHERE w.tenant_key=$1 AND w.app_id=$2 AND (a.owner_id IS NULL OR a.owner_id=$3)
+          AND w.state IN ('route','running','ready','sending') AND w.available_at<=now()
+          AND (w.lease_until IS NULL OR w.lease_until<=now())
+          ORDER BY w.available_at,w.id LIMIT 1 FOR UPDATE OF w SKIP LOCKED`, s.Tenant, s.App, s.Owner).Scan(&id, &state)
+		if err != nil {
+			return err
+		}
+		if state == "sending" {
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='unknown',reason='missing_platform_receipt' WHERE id=$1", id)
+			return err
+		}
+		w, err = s.authorize(ctx, tx, id)
+		if errors.Is(err, access.ErrForbidden) {
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state=CASE WHEN deadline<=now() THEN 'expired' ELSE 'suppressed' END,reason='scope_or_deadline' WHERE id=$1", id)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO agent_instances(agent_id,tenant_key,app_id,project_id,owner_id)
+            VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, w.Agent, s.Tenant, s.App, w.Scope.ProjectID, s.Owner); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(ctx, "SELECT owner_id,owner_epoch FROM agent_instances WHERE agent_id=$1 FOR SHARE", w.Agent).Scan(&w.Owner, &w.Epoch); err != nil {
+			return err
+		}
+		if w.Owner != s.Owner {
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET agent_id=$2 WHERE id=$1", id, w.Agent)
+			w = work{}
+			return err
+		}
+		w.State = "running"
+		if state == "ready" {
+			w.State = "sending"
+		}
+		return tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,
+          lease_until=clock_timestamp()+interval '100 seconds' WHERE id=$1 RETURNING generation,coalesce(response_text,'')`,
+			id, w.State, w.Agent, w.Session).Scan(&w.Generation, &w.Text)
+	})
+	return w, err
+}
+func (s *Service) Step(ctx context.Context) error {
+	w, err := s.claim(ctx)
+	if err != nil || w.State == "" {
+		return err
+	}
+	if w.State == "sending" {
+		// A changed display name also invalidates a previously frozen receipt.
+		expected := render(w.Scope)
+		if w.Text != expected {
+			_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed' WHERE id=$1 AND generation=$2", w.Work, w.Generation)
+			return err
+		}
+		result := s.Channels[w.Address.Channel].Reply(ctx, w.Address, w.Bot, w.Text, w.Delivery)
+		state := "unknown"
+		switch result.State {
+		case "success":
+			if result.MessageID != "" {
+				state = "sent"
+			}
+		case "failed":
+			state = "failed"
+		}
+		_, err = s.DB.Exec(ctx, `UPDATE agent_group_work SET state=$3,platform_message_id=nullif($4,''),reason=$5,lease_until=NULL
+           WHERE id=$1 AND generation=$2 AND state IN ('sending','unknown')`, w.Work, w.Generation, state, result.MessageID, result.Reason)
+		return err
+	}
+	result, err := s.Execute(ctx, w.Binding)
+	if err != nil {
+		_, dbErr := s.DB.Exec(ctx, `UPDATE agent_group_work SET available_at=now()+interval '3 seconds',lease_until=NULL
+              WHERE id=$1 AND generation=$2 AND state='running'`, w.Work, w.Generation)
+		return errors.Join(err, dbErr)
+	}
+	if result.Session != w.Session {
+		return errors.New("unbound runtime session")
+	}
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var receipt Who
+		err := tx.QueryRow(ctx, `SELECT tool_receipt FROM agent_group_work w JOIN agent_instances a USING(agent_id)
+         WHERE id=$1 AND generation=$2 AND state='running' AND tool_turn=$3 AND owner_id=$4 AND owner_epoch=$5
+         AND deadline>now() AND lease_until>now() FOR UPDATE OF w`, w.Work, w.Generation, result.Turn, s.Owner, w.Epoch).Scan(&receipt)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(receipt))
+		return err
+	})
+}
+func render(w Who) string {
+	return fmt.Sprintf("项目 PM · %s\n%s（%s），你当前所在的项目是%s（%s）。", w.ProjectName, w.UserName, w.UserID, w.ProjectName, w.ProjectID)
+}
+func (s *Service) Run(ctx context.Context) {
+	for ctx.Err() == nil {
+		err := s.Step(ctx)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
+			slog.Warn("Group Agent work deferred")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
