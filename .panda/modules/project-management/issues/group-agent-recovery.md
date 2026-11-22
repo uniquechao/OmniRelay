@@ -44,3 +44,9 @@ Runtime 使用单副本 StatefulSet、独立持久卷、集群内双向 TLS 服�
 [逐工具功能和权限验收表](../../../../design/engineering/project-pm-tool-capabilities.md) 与 `TestProjectPMToolMatrix` 对应。内部门槛另覆盖跨项目、跨账号、委派失效、写入重试、来源撤权、DSH 镜像、原话题署名和工作台历史，不要求真实飞书账号。生产部署和外部渠道联调独立记录。
 
 内部验收已通过。真实 DSH 镜像调用 Go 工具后，在北辰创建了一条由发起人负责的任务；原话题只收到署名提示，另一成员无法读取其私人回复。20 个工具的同名用例、9 项 Gateway/Runtime 门槛、SQLite 命令日志恢复和带隔离 PostgreSQL 的全仓 Go 回归均通过。逐项结果保存在本地 `.runtime/group-gate.0Q4U4k/pm-tools.log`、`.runtime/group-gate.0Q4U4k/gates.log` 与 `.runtime/pm-tools.buJ7bd/all-final.log`。
+
+### 项目 PM 对话界面（2026-11-22）
+
+根据项目详情 Bot 页截图，将空会话改为三个可编辑的提问入口，分别查询项目进展、任务和成员。选择后在消息框编辑，点击发送才调用原有接口。有历史时按提问和署名回复排版。工作台按可用宽度约束对话行宽，窄屏入口纵排，项目标签栏滚动到选中项。
+
+改动位于 `web/project-bot.js`、`web/project-bot.css` 和 `web/projects.js`。浏览器回归 `tests/integration/project_workbench_browser.test.mjs` 通过工作台正式入口和模拟接口核对选题、编辑、发送、回复与飞书接入，在 1366px 和 390px 下覆盖浅色、深色。界面验证使用测试项目，线上模型与部署独立验证。
