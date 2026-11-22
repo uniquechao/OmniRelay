@@ -652,6 +652,10 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         .join('')}</div>
       <section id="project-panel" class="stack" role="tabpanel" aria-labelledby="tab-${tab}" tabindex="0"></section>`;
     const nav = host.querySelector('.tabs');
+    const selected = nav.querySelector('[aria-selected="true"]');
+    if (selected && nav.scrollWidth > nav.clientWidth) {
+      nav.scrollLeft = Math.max(0, selected.getBoundingClientRect().right - nav.getBoundingClientRect().right);
+    }
     const switchTab = (next) => {
       memory.tabFocus = true;
       location.hash = next.dataset.tab === 'tasks' && taskViews.has(id) ? taskViews.get(id) : base + '/' + next.dataset.tab;

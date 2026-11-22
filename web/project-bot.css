@@ -1,7 +1,105 @@
-.project-bot {display:grid;gap:1rem}
-.project-bot ol {display:grid;gap:1rem;list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}
-.project-bot li p {white-space:pre-wrap;overflow-wrap:anywhere;margin:.25rem 0 0}
-.project-bot form {display:grid;gap:.5rem}
-.project-bot textarea {box-sizing:border-box;width:100%;resize:vertical;color:inherit;background:var(--surface,Canvas);font:inherit;border:1px solid var(--line,GrayText);border-radius:6px;padding:.7rem}
-.project-bot form button {justify-self:end}
-.project-bot [data-status]:empty {display:none}
+.panel.project-bot {
+  padding: 0;
+  border-radius: 12px;
+  background: var(--or-surface);
+}
+.pm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px clamp(16px, 2vw, 28px);
+  border-bottom: 1px solid var(--or-border);
+}
+.pm-head h2, .pm-head a, .pm-prompts button, .project-bot form button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pm-head h2 { font-size: 1rem; }
+.pm-head h2 .icon { color: var(--or-link); }
+.pm-head a {
+  min-height: 40px;
+  gap: 2px;
+  font-size: .8125rem;
+  color: var(--or-text-secondary);
+  text-decoration: none;
+}
+.pm-head a:hover { color: var(--or-link); text-decoration: underline; }
+.pm-head a .icon { width: 14px; }
+.pm-column {
+  width: min(100%, 50rem);
+  margin-inline: auto;
+  padding: 0 clamp(16px, 3vw, 36px) clamp(20px, 3vw, 36px);
+}
+.pm-stage { display: grid; align-content: center; min-height: clamp(220px, 34vh, 340px); }
+.pm-welcome { text-align: center; padding: 32px 0; }
+.pm-welcome img { display: block; margin: 0 auto 8px; }
+.pm-welcome h3 {
+  margin: 0;
+  font-size: clamp(1.25rem, 2vw, 1.625rem);
+  line-height: 1.4;
+  letter-spacing: -.02em;
+}
+.pm-prompts { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.pm-prompts button {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--or-border);
+  border-radius: 8px;
+  color: var(--or-text-secondary);
+  background: var(--or-surface);
+  font-size: .8125rem;
+}
+.pm-prompts .icon { color: var(--or-link); }
+.pm-prompts button:hover:enabled { background: var(--or-selected-bg); border-color: var(--or-control-border); }
+.pm-prompts button:disabled { color: var(--or-disabled-text); cursor: default; }
+.project-bot ol {
+  display: grid;
+  gap: 20px;
+  padding: 24px 4px;
+  margin: 0;
+  list-style: none;
+  max-height: 52vh;
+  overflow: auto;
+}
+.pm-stage:has(ol:not([hidden])) { align-content: end; }
+.project-bot li { min-width: 0; max-width: min(95%, 72ch); }
+.project-bot li strong { font-size: .75rem; color: var(--or-text-secondary); overflow-wrap: anywhere; }
+.project-bot li p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 0; line-height: 1.65; }
+.project-bot .pm-user { justify-self: end; text-align: end; }
+.pm-user p { text-align: start; background: var(--or-selected-bg); padding: 8px 14px; border-radius: 12px 12px 4px 12px; }
+.project-bot [data-status] { margin: 0 0 12px; color: var(--or-text-secondary); }
+.project-bot [data-status]:empty { display: none; }
+.project-bot form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--or-control-border);
+  border-radius: 12px;
+}
+.project-bot form:has(textarea:focus-visible) { outline: 2px solid var(--or-focus); outline-offset: 1px; }
+.project-bot textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 35vh;
+  background: transparent;
+  color: var(--or-text);
+  font: inherit;
+  line-height: 1.5;
+}
+.project-bot textarea::placeholder { color: var(--or-text-muted); }
+.project-bot form button { min-height: 40px; padding-inline: 12px; }
+@media (max-width: 540px) {
+  .pm-prompts { flex-direction: column; align-items: stretch; margin-inline: auto; max-width: 20rem; }
+  .pm-prompts button { min-height: 44px; }
+  .project-bot form { align-items: stretch; flex-direction: column; }
+  .project-bot form button { align-self: flex-end; min-height: 44px; }
+}
