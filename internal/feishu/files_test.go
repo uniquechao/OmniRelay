@@ -13,21 +13,21 @@ import (
 
 func TestFileSourceFormatsAndScope(t *testing.T) {
 	replies := map[string]string{
-		"/open-apis/im/v1/chats/oc_group":                                             `{"code":0,"data":{"chat_id":"oc_group","tenant_key":"t","chat_mode":"group"}}`,
-		"/open-apis/im/v1/chats/oc_old":                                               "denied",
-		"/open-apis/im/v1/messages/om_share":                                          `{"code":0,"data":{"items":[{"message_id":"om_share","chat_id":"oc_group","msg_type":"text","body":{"content":"{\"text\":\"https://test.feishu.cn/docx/Doc\"}"}}]}}`,
-		"/open-apis/docx/v1/documents/Doc":                                            `{"code":0,"data":{"document":{"title":"说明"}}}`,
-		"/open-apis/docx/v1/documents/Doc/raw_content":                                `{"code":0,"data":{"content":"正文"}}`,
-		"/open-apis/minutes/v1/minutes/Minute":                                        `{"code":0,"data":{"minute":{"title":"评审"}}}`,
-		"/open-apis/minutes/v1/minutes/Minute/transcript?file_format=txt":             "会议记录",
-		"/open-apis/drive/v1/files/Cloud/download":                                    "PDF",
-		"/open-apis/wiki/v2/spaces/get_node?token=Node":                               `{"code":0,"data":{"node":{"obj_type":"docx","obj_token":"Doc"}}}`,
-		"/open-apis/im/v1/messages/om_share/resources/Img?type=image":                 "图片字节",
-		"/open-apis/im/v1/messages/om_share/resources/Video?type=file":                "视频字节",
-		"/open-apis/im/v1/messages/om_share/resources/Key?type=file":                  "",
-		"/open-apis/bitable/v1/apps/Base":                                             `{"code":0,"data":{"app":{"name":"登记表"}}}`,
-		"/open-apis/bitable/v1/apps/Base/tables?page_size=100&page_token=":            `{"code":0,"data":{"items":[{"table_id":"t1","name":"登记"}],"has_more":false}}`,
-		"/open-apis/bitable/v1/apps/Base/tables/t1/records?page_size=100&page_token=": `{"code":0,"data":{"items":[{"fields":{"编号":1}}],"has_more":true,"page_token":"p2"}}`,
+		"/open-apis/im/v1/chats/oc_group":                                               `{"code":0,"data":{"chat_id":"oc_group","tenant_key":"t","chat_mode":"group"}}`,
+		"/open-apis/im/v1/chats/oc_old":                                                 "denied",
+		"/open-apis/im/v1/messages/om_share":                                            `{"code":0,"data":{"items":[{"message_id":"om_share","chat_id":"oc_group","msg_type":"text","body":{"content":"{\"text\":\"https://test.feishu.cn/docx/Doc\"}"}}]}}`,
+		"/open-apis/docx/v1/documents/Doc":                                              `{"code":0,"data":{"document":{"title":"说明"}}}`,
+		"/open-apis/docx/v1/documents/Doc/blocks?document_revision_id=-1&page_size=500": `{"code":0,"data":{"items":[{"block_id":"text","block_type":2,"text":{"elements":[{"text_run":{"content":"正文"}}]}}],"has_more":false}}`,
+		"/open-apis/minutes/v1/minutes/Minute":                                          `{"code":0,"data":{"minute":{"title":"评审"}}}`,
+		"/open-apis/minutes/v1/minutes/Minute/transcript?file_format=txt":               "会议记录",
+		"/open-apis/drive/v1/files/Cloud/download":                                      "PDF",
+		"/open-apis/wiki/v2/spaces/get_node?token=Node":                                 `{"code":0,"data":{"node":{"obj_type":"docx","obj_token":"Doc"}}}`,
+		"/open-apis/im/v1/messages/om_share/resources/Img?type=image":                   "图片字节",
+		"/open-apis/im/v1/messages/om_share/resources/Video?type=file":                  "视频字节",
+		"/open-apis/im/v1/messages/om_share/resources/Key?type=file":                    "",
+		"/open-apis/bitable/v1/apps/Base":                                               `{"code":0,"data":{"app":{"name":"登记表"}}}`,
+		"/open-apis/bitable/v1/apps/Base/tables?page_size=100&page_token=":              `{"code":0,"data":{"items":[{"table_id":"t1","name":"登记"}],"has_more":false}}`,
+		"/open-apis/bitable/v1/apps/Base/tables/t1/records?page_size=100&page_token=":   `{"code":0,"data":{"items":[{"fields":{"编号":1}}],"has_more":true,"page_token":"p2"}}`,
 	}
 	last := "/open-apis/bitable/v1/apps/Base/tables/t1/records?page_size=100&page_token=p2"
 	replies[last] = `{"code":0,"data":{"items":[{"fields":{"编号":2}}],"has_more":false}}`
@@ -103,7 +103,7 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 	if _, err := src.ReadFile(ctx, base, false); !errors.Is(err, drive.ErrRevoked) {
 		t.Fatal(err)
 	}
-	replies["/open-apis/docx/v1/documents/Doc/raw_content"] = "denied"
+	replies["/open-apis/docx/v1/documents/Doc"] = "denied"
 	if _, err := src.ReadFile(ctx, doc, true); !errors.Is(err, drive.ErrRevoked) {
 		t.Fatal(err)
 	}

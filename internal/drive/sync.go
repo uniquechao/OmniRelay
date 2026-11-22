@@ -3,6 +3,7 @@ package drive
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -156,6 +157,12 @@ func (s *Service) refresh(ctx context.Context) (bool, error) {
 			body = snap.Stream
 		}
 		obj, failure = s.storeObject(fetch, body, j.Size)
+		if failure == nil && j.Kind == "docx" {
+			var doc DocumentSnapshot
+			if json.Unmarshal(snap.Content, &doc) == nil && doc.Schema == DocumentSchema {
+				obj.mime = "application/vnd.omnirelay.docx+json"
+			}
+		}
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

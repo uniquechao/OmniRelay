@@ -191,3 +191,27 @@ td a:hover { text-decoration: underline; }
 
 body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidden; }
 .session-lock::backdrop { background: var(--surface, Canvas); }
+
+/* Synced document structure uses the workbench's existing typography and colors. */
+.drive-document { line-height: 1.75; overflow-wrap: anywhere; }
+.drive-document :is(h1,h2,h3,h4,h5,h6) { margin: 1.25em 0 .5em; line-height: 1.4; font-weight: 700; }
+.drive-document h1 { font-size: 1.65rem; }
+.drive-document h2 { font-size: 1.4rem; }
+.drive-document h3 { font-size: 1.2rem; }
+.drive-document :is(h4,h5,h6) { font-size: 1rem; }
+.drive-document p { margin: .6em 0; white-space: pre-wrap; }
+.drive-document :is(ul,ol) { padding-inline-start: 1.6em; margin-block: .6em; }
+.drive-document pre { overflow-x: auto; padding: 12px; white-space: pre; }
+.drive-document blockquote { margin: 1em; font-style: italic; }
+.drive-document figure { margin: 1em 0; }
+.drive-document td { vertical-align: top; min-width: 6rem; }
+.drive-document .doc-align-center { text-align: center; }
+.drive-document .doc-align-right { text-align: right; }
+.drive-document .doc-color-1 { color: var(--or-danger, #c23858); }
+.drive-document .doc-color-2 { color: var(--or-warning, #996400); }
+.drive-document .doc-color-3 { color: var(--or-warning, #996400); }
+.drive-document .doc-color-4 { color: var(--or-success, #087e70); }
+.drive-document .doc-color-5 { color: var(--or-primary, #6553f4); }
+.drive-document .doc-color-6 { color: var(--or-primary, #6553f4); }
+.drive-document .doc-color-7 { color: var(--or-text-secondary); }
+.drive-document [class*="doc-background-"] { background: var(--or-surface-hover, rgba(101,83,244,.12)); }

@@ -362,6 +362,11 @@ func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewO
 }
 
 func renderPreview(ctx context.Context, kind string, data []byte, o previewOptions) previewOutput {
+	if kind == "docs" {
+		if out, ok := renderDocument(data, o); ok {
+			return out
+		}
+	}
 	render, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(render, "python3", "-B", "-c", previewConverter, kind, strconv.Itoa(o.Page), strconv.Itoa(o.Sheet), strconv.Itoa(o.Entry))

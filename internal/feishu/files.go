@@ -202,26 +202,7 @@ func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (driv
 	case "base":
 		return s.baseFile(ctx, id, probe)
 	case "docx":
-		path = "docx/v1/documents/" + id
-		var meta struct{ Document *struct{ Title string } }
-		if err := s.fileJSON(ctx, path, &meta); err != nil {
-			return result, err
-		}
-		if meta.Document == nil {
-			return result, drive.ErrUnavailable
-		}
-		result.Name = meta.Document.Title
-		var raw struct{ Content *string }
-		if err := s.fileJSON(ctx, path+"/raw_content", &raw); err != nil {
-			return result, err
-		}
-		if raw.Content == nil {
-			return result, drive.ErrUnavailable
-		}
-		if !probe {
-			result.Content = []byte(*raw.Content)
-		}
-		return result, nil
+		return s.readDocument(ctx, r.Token, probe)
 	case "minutes":
 		path = "minutes/v1/minutes/" + id
 		var meta struct{ Minute *struct{ Title string } }

@@ -1,5 +1,5 @@
 import { fileIcon } from './file-format.js';
-import { previewCanvas, renderResult } from './drive-preview.js';
+import { previewCanvas, renderResult, renderDocumentImages } from './drive-preview.js';
 
 const labels = {
   image: '图片', docx: '飞书文档', wiki: '飞书知识库', sheets: '飞书表格', minutes: '飞书妙记', base: '多维表格', file: '飞书文件', attachment: '文件'
@@ -122,6 +122,8 @@ export function openMessagePreview({resource, restoreFocus, read, signal, onClos
       } else {
         const kind = entry ? meta.name.split('.').pop().toLowerCase() : result.kind;
         body.innerHTML = renderResult(kind, result.data, meta);
+        await renderDocumentImages(body, result.data, active);
+        active.throwIfAborted();
       }
       status.textContent = meta.pages > 1 || entry ? [entry && meta.name, '第 ' + meta.page + ' / ' + meta.pages + ' 页'].filter(Boolean).join(' · ') : '';
       if (meta.sheets?.length) controls.insertAdjacentHTML('beforeend', '<label>工作表 <select data-sheet>' +
