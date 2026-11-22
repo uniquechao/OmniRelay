@@ -330,7 +330,12 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, actorID, action, resourc
 
 // AuditIdentity records a successful login or logout in identity's transaction.
 func (s *Service) AuditIdentity(ctx context.Context, tx pgx.Tx, p identity.Principal, action string) error {
-	if !s.inScope(p) || (action != "identity.login" && action != "identity.logout" && action != "identity.password_change") {
+	if !s.inScope(p) {
+		return errInvalidInput
+	}
+	switch action {
+	case "identity.login", "identity.logout", "identity.password_change", "identity.api_key_create", "identity.api_key_revoke":
+	default:
 		return errInvalidInput
 	}
 	var version int64

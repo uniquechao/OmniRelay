@@ -17,6 +17,7 @@
 
 ## 接口与测试
 
+- 个人 API Key 经浏览器会话在 `/api/v1/me/api-keys` 管理，业务 API 可通过 HTTPS Bearer 认证。身份从密钥所属账号解析，授权仍逐请求检查。数据库保留密钥摘要，账号停用会永久撤销原密钥。
 - `GET /api/v1/system/user-page` 提供目录与本地账号状态，`POST /api/v1/system/accounts` 执行开通并写入审计。
 - `TestBackendFeishuAdmissionAndRevocation` 覆盖从目录同步、拒绝未开通人员到显式开通后的飞书登录。
 

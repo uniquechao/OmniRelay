@@ -53,6 +53,33 @@ go build -o bin/omnirelay ./cmd/omnirelay
 
 系统角色授权、撤销和用户启停经服务端鉴权并写入审计。项目目录、正式成员、任务与日报由 OmniRelay 的 PostgreSQL 管理。项目级权限由当前有效的成员关系、业务动作和委派代次决定。飞书群聊、分享资料和发信仍须通过飞书来源与群权限核验。接口字段见[权限能力协议](design/engineering/feishu-integration-contract.md#系统角色与权限能力)。
 
+## 使用个人 API Key 远程调试
+
+在工作台打开用户头像 → **个人 API Key**，输入用途名称后创建。请在关闭窗口前将密钥存入自己的密钥管理器。每把密钥有效期 30 天，可在同一入口提前撤销。每个账号可以同时持有 10 把有效密钥。
+
+在 Bash 中设置工作台的 HTTPS 地址，隐藏输入密钥后查询当前身份。
+
+```bash
+OMNI_URL='https://你的工作台域名'
+read -rsp 'OmniRelay API Key: ' OMNI_API_KEY && echo
+curl --fail-with-body -H "Authorization: Bearer $OMNI_API_KEY" "$OMNI_URL/api/v1/me"
+```
+
+在启用 Runtime 的工作台，把 `PROJECT_ID` 换成自己已加入的项目 ID。发送返回 HTTP 202 和工作 ID，随后 GET 同一地址可读取自己的问答历史。网络中断时重试同一条消息应复用原来的 `REQUEST_ID`。
+
+```bash
+PROJECT_ID='项目ID'
+REQUEST_ID=$(uuidgen)
+BOT_URL="$OMNI_URL/api/v1/projects/$PROJECT_ID/bot/messages"
+curl --fail-with-body -H "Authorization: Bearer $OMNI_API_KEY" \
+  -H "Idempotency-Key: $REQUEST_ID" -H 'Content-Type: application/json' \
+  -d '{"text":"我是谁？我在哪个项目？"}' "$BOT_URL"
+curl --fail-with-body -H "Authorization: Bearer $OMNI_API_KEY" "$BOT_URL"
+unset OMNI_API_KEY
+```
+
+个人密钥使用所属账号的当前业务权限。账号停用会撤销其全部密钥，移出项目后该项目接口随即拒绝访问。创建与撤销密钥在已登录工作台中完成。
+
 ## React 工作台开发与构建
 
 在仓库根目录使用 Node.js 22.12 或更高版本和 `go.mod` 指定的 Go 工具链。干净检出的构建顺序如下。
