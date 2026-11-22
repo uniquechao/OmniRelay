@@ -243,7 +243,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			jsonResponse(w, 200, formats)
 		}
 	})
-	for _, pattern := range []string{base, base + "/{fileID}", base + "/{fileID}/versions", base + "/{fileID}/versions/{versionID}/content", base + "/{fileID}/object"} {
+	for _, pattern := range []string{base, base + "/sync", base + "/{fileID}", base + "/{fileID}/versions", base + "/{fileID}/versions/{versionID}/content", base + "/{fileID}/object"} {
 		mux.HandleFunc("GET "+pattern, func(w http.ResponseWriter, r *http.Request) {
 			p, ok := auth(w, r, identity.ValidateSession)
 			if !ok {
@@ -251,6 +251,10 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			}
 			if p.TenantKey != s.tenant || p.AppID != s.app || p.AccountID == "" {
 				problem(w, 403, "forbidden")
+				return
+			}
+			if pattern == base+"/sync" {
+				s.getSyncProgress(w, r, p)
 				return
 			}
 			var id int64

@@ -18,6 +18,7 @@
 ## 接口与测试
 
 - `/api/v1/feishu/files` 提供列表、来源、版本、预览、归属和原件读取。下载和分段播放均经服务端授权；项目来源可附带 `source_project` 限定入口。Docx 提供纯文本版本。
+- `GET /api/v1/feishu/files/sync` 返回当前用户可读群的同步快照，按消息来源统计文件进度。同一文件可有多条来源。网盘每次打开或刷新页面时独立读取一次快照，分类和分页只更新文件列表。
 - 定向用例见 `internal/drive/group_sync_test.go`、`internal/drive/drive_test.go`、`internal/feishu/files_test.go`、`migrations/group_files_test.go` 及 `tests/integration/chat_reader_browser.test.mjs`。数据库回归需要隔离的 `OMNIRELAY_TEST_DATABASE_URL`；在专用的测试桶配置下设置 `OMNIRELAY_TEST_S3=1` 可验证真实对象读写和回收。
 
 <!-- panda:module-meta:start -->

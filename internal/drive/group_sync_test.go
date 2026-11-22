@@ -2,6 +2,7 @@ package drive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,64 @@ import (
 )
 
 type diskBucket string
+
+func TestDriveSyncProgress(t *testing.T) {
+	ctx, pool := archiveTestDB(t)
+	actor := identity.Principal{TenantKey: "t", AppID: "a", AccountID: "alice", OpenID: "ou_alice"}
+	readGroup := func(_ context.Context, _ identity.Principal, project, chat string) (bool, error) {
+		return project == "p" && chat == "g1", nil
+	}
+	service := New(pool, "t", "a", 1, &testSource{}, access.New(pool, "t", "a"), testBucket(t), readGroup)
+	mux := http.NewServeMux()
+	service.Register(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
+		return actor, true
+	})
+	snapshot := func() syncProgress {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/feishu/files/sync", nil))
+		var progress syncProgress
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &progress) != nil {
+			t.Fatal(rec.Code, rec.Body.String())
+		}
+		return progress
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,body,message_type)
+		VALUES ('t','a','m1','g1',now(),now(),'{"text":"https://example.feishu.cn/docx/D"}','text'),
+		       ('t','a','m2','g2',now(),now(),'{"text":"https://example.feishu.cn/docx/E"}','text'),
+		       ('t','a','m3','g1',now(),now(),'{"text":"https://example.feishu.cn/wiki/W"}','text')`); err != nil {
+		t.Fatal(err)
+	}
+	if p := snapshot(); p.Groups != 1 || p.Unindexed != 2 {
+		t.Fatal(p)
+	}
+	if _, err := service.index(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p := snapshot(); p.Pending != 1 || p.UnresolvedWiki != 1 || p.Unindexed != 0 {
+		t.Fatal(p)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE feishu_file_shares SET state='failed' WHERE message_id='m1'"); err != nil {
+		t.Fatal(err)
+	}
+	if p := snapshot(); p.Pending != 0 || p.Attention != 1 {
+		t.Fatal(p)
+	}
+	for range 2 {
+		if worked, err := service.refresh(ctx); !worked || err != nil {
+			t.Fatal(worked, err)
+		}
+	}
+	if p := snapshot(); p.Complete != 1 || p.Attention != 0 {
+		t.Fatal(p)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM project_chat_links WHERE chat_id='g1'"); err != nil {
+		t.Fatal(err)
+	}
+	if p := snapshot(); p != (syncProgress{}) {
+		t.Fatal(p)
+	}
+}
 
 func testBucket(t *testing.T) ObjectStore {
 	if os.Getenv("OMNIRELAY_TEST_S3") == "1" {

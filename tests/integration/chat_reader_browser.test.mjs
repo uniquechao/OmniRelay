@@ -1060,6 +1060,54 @@ test('项目群主群替换、改绑、失败重试和清除在两个入口即�
   await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
 });
 
+test('网盘同步进度独立加载，刷新页面才重新读取', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  for (const [width,theme] of [[1366,'light'],[390,'dark']]) {
+    const page = await browser.newPage({viewport:{width,height:844}, reducedMotion:'reduce'});
+    page.setDefaultTimeout(6000);
+    await mountFixture(page);
+    await page.clock.install();
+    let reads = 0;
+    let lists = 0;
+    const hold = Promise.withResolvers();
+    await page.route(origin + '/api/v1/feishu/files/sync', async route => {
+      reads++;
+      if (reads === 1) await hold.promise;
+      if (reads === 2) return route.fulfill({status:503,json:{error:'source_unavailable'}});
+      return route.fulfill({json:{groups:1, complete_sources:reads === 1 ? 1019 : 1020,
+        pending_sources:0, attention_sources:17, unresolved_wiki:51}});
+    });
+    await page.route(origin + '/api/v1/feishu/files?*', route => {
+      lists++;
+      return route.fulfill({json:{items:[], total:0, projects:{}}});
+    });
+    await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
+    const status = page.getByRole('status',{name:'文件同步进度'});
+    await page.getByText('暂无文件。',{exact:true}).waitFor();
+    await status.locator('.or-loading[data-size="inline"]').waitFor();
+    const box = await status.boundingBox();
+    assert.ok(box.height <= 24, `加载占用 ${box.height} 像素`);
+    await page.locator('[data-drive-category=files]').click();
+    await page.getByText('暂无文件。',{exact:true}).waitFor();
+    assert.equal(reads,1);
+    hold.resolve();
+    await status.filter({hasText:'已同步 1019 条来源 · 待同步 0 条 · 需处理 17 条 · 待解析知识库消息 51 条'}).waitFor();
+    const listCount = lists;
+    await page.clock.fastForward(60000);
+    assert.equal(reads,1);
+    assert.equal(lists,listCount);
+    await page.reload();
+    await status.filter({hasText:'暂时无法读取同步进度，请刷新页面重试。'}).waitFor();
+    await page.clock.fastForward(60000);
+    assert.equal(reads,2);
+    await page.reload();
+    await status.filter({hasText:'已同步 1020 条来源'}).waitFor();
+    assert.equal(reads,3);
+    await page.close();
+  }
+});
+
 test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -1088,6 +1136,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.route(origin + '/api/v1/feishu/files**', route => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.pathname.endsWith('/sync')) return route.fulfill({json:{groups:2,pending_sources:0,complete_sources:2}});
       if (url.pathname.endsWith('/projects')) {
         const change = request.postDataJSON();
         patches.push(change);
@@ -1222,6 +1271,7 @@ test('文件预览分页、工作表、目录、转换重试与撤权', {skip:!p
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const url = new URL(route.request().url());
     const respond = json => route.fulfill({json});
+    if (url.pathname.endsWith('/sync')) return respond({groups:Number(access),pending_sources:0,complete_sources:Number(access)});
     if (!url.pathname.includes('/previews')) return respond({items:access ? [file] : [],total:access ? 1 : 0,projects:{}});
     if (!access) return route.fulfill({status:403,json:{error:'forbidden'}});
     const params = url.searchParams;
@@ -1303,6 +1353,7 @@ test('文件预览格式失败后刷新列表并打开新版本', {skip:!package
       project_ids:[],sources:[],sync_state:'complete'};
     await page.route(origin + '/api/v1/feishu/files**', async route => {
       const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/sync')) return route.fulfill({json:{groups:1,pending_sources:0,complete_sources:1}});
       if (!path.includes('/previews')) {
         const row = result.stage === 'unsupported' ? {...file,name:'验收名单.csv',format:'其他文件',format_key:'generic'} : file;
         return route.fulfill({json:{items:[{...row,version_id:version}],total:1,projects:{}}});
@@ -1355,6 +1406,7 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
   await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/sync')) return route.fulfill({json:{groups:Number(!revoked),pending_sources:0,complete_sources:revoked ? 0 : rows.length}});
     if (path.endsWith('/files')) return route.fulfill({json:{items:revoked ? [] : rows,total:revoked ? 0 : 2,projects:{p:'项目'}}});
     if (revoked) return route.fulfill({status:404,json:{error:'file_unavailable'}});
     const row = rows.find(item => path.startsWith('/api/v1/feishu/files/' + item.id + '/'));
