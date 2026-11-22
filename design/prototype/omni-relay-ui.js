@@ -17,6 +17,16 @@ window.OmniRelayUI = (() => {
 
   const avatarTones = ['indigo','teal','plum','amber','blue'];
 
+  function fileSourceLocator(fileId, group, route, ordinal) {
+    const name = escape(group);
+    const label = '定位原消息：' + name + '（来源 ' + ordinal + '）';
+    return '<div class="drive-source-row"><strong>' + name + '</strong>' +
+      '<a class="drive-source drive-source-locate" data-source-file="' + escape(fileId) + '" href="' + escape(route) +
+      '" aria-label="' + label + '" title="' + label + '">' +
+      '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">' +
+      '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></a></div>';
+  }
+
   function personAvatar(label, id = label) {
     const identity = id.normalize('NFKC').trim();
     let hash = 2166136261;
@@ -1063,6 +1073,6 @@ window.OmniRelayUI = (() => {
     if (initial) sync();
   }
 
-  return { combo, mountCombo, escape, icon, personAvatar, personButton, personView, mountPersonCards,
+  return { combo, mountCombo, escape, icon, fileSourceLocator, personAvatar, personButton, personView, mountPersonCards,
     openDialog, mountList, mountOrganizationTree, toast };
 })();

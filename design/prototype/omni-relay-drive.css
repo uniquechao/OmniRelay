@@ -92,3 +92,19 @@
 .drive-source + .drive-source { margin-top: 6px; }
 .drive-source small { display: block; color: var(--or-text-secondary); }
 .drive-source span { text-decoration: underline; }
+.drive-source-row { display: flex; align-items: center; gap: 4px; }
+.drive-source-row strong { overflow-wrap: anywhere; }
+.drive-source-locate {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--or-link);
+}
+.drive-source-locate:is(:hover, :focus-visible) { background: var(--or-selected-bg); }
+.drive-source-locate:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+@media (pointer: coarse) {
+  .drive-source-locate { width: 44px; height: 44px; }
+}

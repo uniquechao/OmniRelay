@@ -125,7 +125,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
         {key:'name',label:'名称',sort:true,render:row => '<button class="drive-file-name" type="button" ' + previewAttrs(row) + '>' +
           fileIcon(row.format_key,row.format) + '<span><strong>' + escape(row.name) + '</strong><small>' + escape(row.format) + '</small></span></button>'},
         {key:'category',label:'分类',sort:true,render:row => escape(categoryLabel(row))},
-        {key:'source',label:'来源群',sort:true,render:row => fileSources(row,projectId) || '—'},
+        {key:'source',label:'来源群',sort:true,render:row => fileSources(row,projectId,{compact:true}) || '—'},
         {key:'project',label:'所属项目',sort:true,render:row => row.local_source_id ? '<span class="kind">' + escape(names.get(projectId) || projectId) + '</span>' : fileProjects(row, names)},
         {key:'size',label:'大小',sort:true,render:row => '<span class="drive-file-size" title="' +
           (row.size_source === 'original' ? '原件大小' : '大小未知') + '">' + sizeText(row.size_bytes) + '</span>'},

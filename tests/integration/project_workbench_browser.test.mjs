@@ -827,7 +827,9 @@ test('项目文件分类、筛选、来源和版本操作保留项目范围', {s
   await page.getByText(row.name,{exact:true}).waitFor();
   assert.equal(search.get('sort'),'shared_at');
   assert.equal(await page.locator('th[aria-sort="descending"] [data-sort]').getAttribute('data-sort'),'shared_at');
-  assert.equal(await page.locator('tbody .drive-source').getAttribute('href'),'#/projects/p-21/chats/oc_21/msg1');
+  const source = page.getByRole('link',{name:'定位原消息：联调群（来源 1）'});
+  assert.equal(await source.getAttribute('href'),'#/projects/p-21/chats/oc_21/msg1');
+  assert.equal(await source.locator('xpath=ancestor::td').innerText(),'联调群');
   await page.getByRole('button',{name:'视频',exact:true}).click();
   await page.getByText('暂无文件。').waitFor();
   await page.getByRole('button',{name:'图片',exact:true}).click();

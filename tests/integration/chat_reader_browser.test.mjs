@@ -1210,7 +1210,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     let second = '启明';
     const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
       manual_project_ids:[], inherited_project_ids:['a'], project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
-        ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name}))};
+        ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name,sent_at}))};
     const other = {...row, id:18, name:'会议安排.pdf', project_ids:['a'],
       sources:[{...row.sources[0], message_id:recentMessage.id}]};
     await page.route(origin + base + '/' + group.id + '/messages/' + task.id + '/context', route =>
@@ -1243,6 +1243,20 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
     await act(page.locator('[data-drive-category=files]'));
     const otherLink = page.locator('tbody [data-source-file="18"]');
+    const sources = page.locator('tbody td').filter({has:page.locator('[data-source-file="17"]')});
+    const locators = sources.getByRole('link');
+    assert.deepEqual((await sources.innerText()).trim().split(/\s+/),[group.name,group.name]);
+    assert.equal(await locators.count(),2);
+    for (const [index, link] of (await locators.all()).entries()) {
+      assert.equal(await link.getAttribute('aria-label'),'定位原消息：' + group.name + '（来源 ' + (index + 1) + '）');
+      assert.equal(await link.locator('svg[aria-hidden="true"]').count(),1);
+      const hit = await link.boundingBox();
+      assert.ok(Math.min(hit.width,hit.height) >= (mobile ? 44 : 32));
+    }
+    if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
+      await locators.first().scrollIntoViewIfNeeded();
+      await page.screenshot({path:process.env.OMNIRELAY_CHAT_EVIDENCE + '/drive-source-' + width + '-' + theme + '.png'});
+    }
     await act(otherLink);
     await page.locator('[data-source-message]:focus').getByText('会议安排').waitFor();
     deleted = true;

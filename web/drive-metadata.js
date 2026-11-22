@@ -1,7 +1,7 @@
 import { assignmentAPI } from './chat-assignment.js';
 
-export function fileSources(row, projectId) {
-  const { escape } = window.OmniRelayUI;
+export function fileSources(row, projectId, { compact = false } = {}) {
+  const { escape, fileSourceLocator } = window.OmniRelayUI;
   const seen = new Set();
   return row.sources.flatMap(source => {
     if (![source.chat_id, source.message_id].every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id))) return [];
@@ -9,9 +9,11 @@ export function fileSources(row, projectId) {
     const route = base + source.chat_id + '/' + source.message_id;
     if (seen.has(route)) return [];
     seen.add(route);
+    const group = source.chat_name || source.chat_id;
+    if (compact) return fileSourceLocator(row.id, group, route, seen.size);
     const date = source.sent_at ? ' · ' + escape(new Date(source.sent_at).toLocaleString('zh-CN')) : '';
     return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '"><strong>' +
-      escape(source.chat_name || source.chat_id) + '</strong><small>' + escape(source.sender_name || '未知分享人') +
+      escape(group) + '</strong><small>' + escape(source.sender_name || '未知分享人') +
       date + '</small><span>定位原消息</span></a>';
   }).join('');
 }

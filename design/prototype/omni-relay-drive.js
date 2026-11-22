@@ -99,7 +99,8 @@ window.OmniRelayDrive = (() => {
 
     const projectIds = row => overrides.get(row.id) ?? row.projects;
     const projectNames = row => projectIds(row).map(id => projects[id].name);
-    const sourceLink = row => '<a class="drive-source" href="#/feishu/bot-chats/' + row.group + '/' + row.id + '">' +
+    const sourceRoute = row => '#/feishu/bot-chats/' + row.group + '/' + row.id;
+    const sourceLink = row => '<a class="drive-source" href="' + sourceRoute(row) + '">' +
       escape(row.source) + ' · ' + escape(row.author) + '</a>';
     const projectChips = row => {
       const names = projectNames(row);
@@ -121,7 +122,7 @@ window.OmniRelayDrive = (() => {
           {key:'name',label:'名称',sort:row => row.name,render:row => '<button type="button" class="drive-file-name" data-drive-preview="' + escape(row.id) + '">' +
             fileIcon(row.format) + '<span><strong>' + escape(row.name) + '</strong><small>' + escape(row.format) + '</small></span></button>'},
           {key:'category',label:'分类',sort:row => categories[row.category],render:row => escape(categories[row.category])},
-          {key:'source',label:'来源',sort:row => row.source,render:sourceLink},
+          {key:'source',label:'来源群',sort:row => row.source,render:row => OmniRelayUI.fileSourceLocator(row.id,row.source,sourceRoute(row),1)},
           {key:'project',label:'所属项目',sort:row => projectNames(row).join('、'),render:projectsCell},
           {key:'size',label:'大小',sort:row => row.bytes,render:row => '<span class="drive-file-size">' + formatSize(row.bytes) + '</span>'},
           {key:'preview',label:'操作',render:row => '<button type="button" class="row-action" data-drive-preview="' +
