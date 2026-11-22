@@ -1108,6 +1108,56 @@ test('网盘同步进度独立加载，刷新页面才重新读取', { skip: !pa
   }
 });
 
+test('文件网盘仅滚动文件行，短页的分页紧跟列表', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const files = Array.from({length:51}, (_, i) => ({
+    id:i + 1, name:'文件 ' + (i + 1), category:'files', format:'PDF', format_key:'pdf',
+    sync_state:'complete', project_ids:[], sources:[]
+  }));
+  for (const width of [1366,390]) {
+    const page = await browser.newPage({viewport:{width,height:844}, hasTouch:width === 390});
+    await mountFixture(page);
+    await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
+    await page.route(origin + '/api/v1/feishu/files?**', route => {
+      const params = new URL(route.request().url()).searchParams;
+      const offset = Number(params.get('offset'));
+      const rows = params.get('category') === 'all' ? files : [];
+      return route.fulfill({json:{items:rows.slice(offset, offset + Number(params.get('limit'))), total:rows.length, projects:{}}});
+    });
+    await page.goto(origin + '/?theme=' + (width === 390 ? 'dark' : 'light') + '#/feishu/drive');
+    await page.locator('select[data-size]').selectOption('50');
+    await page.locator('tr[data-row="50"]').waitFor({state:'attached'});
+    const scroller = page.locator('.list-scroll');
+    const positions = () => page.locator('.head, .drive-categories, .list-toolbar, thead, .list-footer').evaluateAll(
+      nodes => nodes.map(node => Math.round(node.getBoundingClientRect().top)));
+    const before = await positions();
+    const pageFit = await page.locator('#page').evaluate(node => ({
+      overflow:node.scrollHeight - node.clientHeight,
+      bottomGap:node.getBoundingClientRect().bottom - parseFloat(getComputedStyle(node).paddingBottom)
+        - node.querySelector('.list-footer').getBoundingClientRect().bottom
+    }));
+    assert.ok(pageFit.overflow <= 1 && Math.abs(pageFit.bottomGap) <= 1, JSON.stringify(pageFit));
+    await scroller.focus();
+    await page.keyboard.press('End');
+    await page.waitForFunction(() => document.querySelector('.list-scroll').scrollTop > 0);
+    assert.deepEqual(await positions(), before);
+    await page.locator('[data-next]').click();
+    await page.locator('tr[data-row="51"]').waitFor();
+    const shortPageFits = () => scroller.evaluate(node => {
+      const content = node.querySelector('[data-empty]').hidden ? node.querySelector('table') : node.querySelector('[data-empty]');
+      const footer = node.parentElement.querySelector('.list-footer').getBoundingClientRect();
+      return node.scrollHeight === node.clientHeight && footer.top - content.getBoundingClientRect().bottom < 32
+        && footer.bottom < innerHeight;
+    });
+    assert.ok(await shortPageFits(), '末页分页紧跟文件行');
+    await page.locator('[data-drive-category="docs"]').click();
+    await page.getByText('暂无文件。').waitFor();
+    assert.ok(await shortPageFits(), '空列表分页紧跟空状态');
+    await page.close();
+  }
+});
+
 test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());

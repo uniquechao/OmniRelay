@@ -84,7 +84,7 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
       <summary aria-label={group}><Icon name={entries[0].icon}/><span>{group}</span><Icon name="action-expand" className="icon disclosure"/></summary><div className="nav-children">{entries.map(link)}</div></details>;
   });
   const layout=target?.route.id==='bot-chats'?'bot-chat':target?.route.id==='projects' && target.section==='项目列表'?'project':
-    ['users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
+    ['drive','users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
   let page;
   switch(target?.route.id){
     case 'feishu-bot':

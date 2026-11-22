@@ -7,6 +7,7 @@
 }
 .drive-categories {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 9px;
@@ -16,7 +17,8 @@
   background: var(--or-selected-bg);
   color: var(--or-link);
 }
-#drive-file-list { display: flex; flex: 1 1 auto; min-height: 0; }
+#drive-file-list { display: flex; flex: 0 1 auto; min-height: 0; }
+#drive-file-list .standard-list { min-height: min-content; }
 #drive-file-list .list-scroll table { min-width: 610px; }
 #drive-file-list .list-scroll th[data-column="name"] { min-width: 138px; }
 #drive-file-list .list-scroll th[data-column="preview"] { min-width: 62px; }
