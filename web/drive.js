@@ -14,6 +14,28 @@ function sizeText(bytes) {
   return decimal.format(bytes / 1024 ** power) + ' ' + ['B','KB','MB','GB','TB'][power];
 }
 
+async function loadSyncProgress(status, request, signal) {
+  try {
+    const state = await request('/api/v1/feishu/files/sync', {signal});
+    if (signal.aborted) return;
+    if (!state.groups) {
+      status.textContent = '暂无可读取的飞书群文件来源。';
+      return;
+    }
+    const parts = [`已同步 ${state.complete_sources} 条来源`, `待同步 ${state.pending_sources} 条`];
+    if (state.history_pending) parts.push(`${state.history_pending} 个群的历史待同步`);
+    if (state.unindexed_messages) parts.push(`未扫描消息 ${state.unindexed_messages} 条`);
+    if (state.attention_sources) parts.push(`需处理 ${state.attention_sources} 条`);
+    if (state.history_attention) parts.push(`${state.history_attention} 个群的历史同步需要处理`);
+    if (state.unresolved_wiki) parts.push(`待解析知识库消息 ${state.unresolved_wiki} 条`);
+    status.textContent = parts.join(' · ');
+  } catch {
+    if (!signal.aborted) status.textContent = '暂时无法读取同步进度，请刷新页面重试。';
+  } finally {
+    if (!signal.aborted) status.removeAttribute('aria-busy');
+  }
+}
+
 export function mountDrive(page, request, signal, {preview, editProjects, memory = {}} = {}) {
   const { escape, mountList } = window.OmniRelayUI;
   const returning = memory.source && memory.source.key === history.state?.driveReturn ? memory.source : null;
@@ -25,6 +47,8 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
   let activeList;
   let files = new Map();
   page.innerHTML = '<header class="head"><h1 id="page-heading" tabindex="-1">文件网盘</h1></header>' +
+    '<p class="drive-sync" data-drive-sync role="status" aria-label="文件同步进度" aria-busy="true">' +
+    window.OmniRelayLoading.markup({size:'inline'}) + ' 正在读取同步进度…</p>' +
     '<div class="drive-categories" role="group" aria-label="文件分类">' + Object.entries(categories).map(([id,label]) =>
       '<button type="button" class="button" aria-controls="drive-file-list" data-drive-category="' + id + '">' + label + '</button>'
     ).join('') + '</div><section id="drive-file-list"></section>';
@@ -123,4 +147,5 @@ export function mountDrive(page, request, signal, {preview, editProjects, memory
     if (next && next !== category) { category = next; show(); }
   });
   show();
+  void loadSyncProgress(page.querySelector('[data-drive-sync]'), request, signal);
 }

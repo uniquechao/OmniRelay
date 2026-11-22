@@ -1,3 +1,10 @@
+.drive-sync {
+  flex: none;
+  margin: 0 0 9px;
+  color: var(--or-text-secondary);
+  font-size: .875rem;
+  line-height: 1.5;
+}
 .drive-categories {
   display: flex;
   flex-wrap: wrap;
