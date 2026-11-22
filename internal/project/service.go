@@ -26,7 +26,16 @@ type Chat interface {
 	BriefingDeliveryStatus(context.Context, identity.Principal, string, string) (chat.DeliveryStatus, error)
 }
 
+// A tool call binds a private copy of the service to the work/receipt transaction.
+func (s *Service) withMutation(ctx context.Context, fn func(pgx.Tx) error) error {
+	if s.mutation != nil {
+		return fn(s.mutation)
+	}
+	return s.roles.WithOrganizationMutation(ctx, fn)
+}
+
 type Service struct {
+	mutation    pgx.Tx
 	pool        *pgxpool.Pool
 	roles       *access.Service
 	botStatus   func(context.Context) (system.Status, error)
@@ -40,8 +49,31 @@ func New(pool *pgxpool.Pool, roles *access.Service, status func(context.Context)
 	return &Service{pool: pool, roles: roles, botStatus: status, bot: bot, chat: chats, sendEnabled: sendEnabled}
 }
 
+type projectReader interface {
+	taskReader
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func (s *Service) reader() projectReader {
+	if s.mutation != nil {
+		return s.mutation
+	}
+	return s.pool
+}
+func (s *Service) allowed(ctx context.Context, actor identity.Principal, action, id string) (bool, error) {
+	if s.mutation != nil {
+		return s.roles.CheckInOrganizationMutation(ctx, s.mutation, actor, action, id)
+	}
+	return s.roles.Check(ctx, actor, action, id)
+}
+func (s *Service) withReportSnapshot(ctx context.Context, fn func(pgx.Tx) error) error {
+	if s.mutation != nil {
+		return fn(s.mutation)
+	}
+	return pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, fn)
+}
 func (s *Service) require(ctx context.Context, actor identity.Principal, action, id string) error {
-	allowed, err := s.roles.Check(ctx, actor, action, id)
+	allowed, err := s.allowed(ctx, actor, action, id)
 	if err != nil {
 		return err
 	}

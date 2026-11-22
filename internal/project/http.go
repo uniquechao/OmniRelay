@@ -132,7 +132,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		}
 		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
 	})
-	handle("POST "+project+"/tasks", "project.assign", s.saveTask)
+	handle("POST "+project+"/tasks", "project.read", s.saveTask)
 	handle("PUT "+project+"/tasks/{taskID}", "project.read", s.saveTask)
 	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", func(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 		k := scope(a, r.PathValue("projectID"))
@@ -148,7 +148,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			return nil, errDenied
 		}
 		own := ownTask(t, g.MemberID)
-		return map[string]bool{"edit_fields": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
+		return map[string]bool{"edit_fields": canUpdateProgress(t, g), "assign": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
 	})
 	handle("GET "+project+"/tasks/{taskID}/activity", "project.read", s.activity)
 	handle("POST "+project+"/tasks/{taskID}/comments", "project.comment", s.comment)

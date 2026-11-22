@@ -123,15 +123,23 @@ func (k taskScope) history(ctx context.Context, tx pgx.Tx, actor identity.Princi
 }
 
 func (s *Service) comment(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
-	var in struct {
-		Version int64  `json:"expected_version"`
-		Key     string `json:"request_key"`
-		Body    string `json:"body"`
-	}
-	if !decodeLimit(w, r, &in, 32<<10) || in.Version < 1 || !validKey(in.Key) || strings.TrimSpace(in.Body) == "" || !textLimit(in.Body, 4000) {
+	var in progressInput
+	if !decodeLimit(w, r, &in, 32<<10) {
 		return nil, errInput
 	}
-	k, id, ctx := scope(a, r.PathValue("projectID")), r.PathValue("taskID"), r.Context()
+	return s.addProgress(r.Context(), scope(a, r.PathValue("projectID")), r.PathValue("taskID"), a, in)
+}
+
+type progressInput struct {
+	Version int64  `json:"expected_version"`
+	Key     string `json:"request_key"`
+	Body    string `json:"body"`
+}
+
+func (s *Service) addProgress(ctx context.Context, k taskScope, id string, a identity.Principal, in progressInput) (any, error) {
+	if in.Version < 1 || !validKey(in.Key) || strings.TrimSpace(in.Body) == "" || !textLimit(in.Body, 4000) {
+		return nil, errInput
+	}
 	var result json.RawMessage
 	err := k.write(ctx, s, a, "project.comment", func(tx pgx.Tx, _ int64) error {
 		var err error

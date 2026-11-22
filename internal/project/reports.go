@@ -43,7 +43,7 @@ func (s *Service) reportArgs(ctx context.Context, actor identity.Principal, id, 
 	if (from != "" && !validReportDate(from)) || (to != "" && !validReportDate(to)) || (from != "" && to != "" && from > to) {
 		return nil, false, errInput
 	}
-	manage, err := s.roles.Check(ctx, actor, "project.settings", id)
+	manage, err := s.allowed(ctx, actor, "project.settings", id)
 	return scope(actor, id).args(actor.AccountID, manage, from, to, search), manage, err
 }
 
@@ -59,7 +59,7 @@ func (s *Service) reports(ctx context.Context, actor identity.Principal, id stri
 	items := []memberReport{}
 	var total int
 	var revision string
-	err = pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+	err = s.withReportSnapshot(ctx, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, "SELECT count(*),"+reportRevision+authorizedReports, args...).Scan(&total, &revision); err != nil {
 			return err
 		}

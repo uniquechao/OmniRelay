@@ -50,7 +50,7 @@ func Accept(ctx context.Context, tx pgx.Tx, adapter Channel, e Envelope) (string
 		if e.Channel != "workbench" || !validQuestion(e.Text) {
 			return "", access.ErrForbidden
 		}
-	} else if (e.Mode != GroupReply && e.Mode != PrivateReply) || (e.Mode == GroupReply && !e.Mention) || !routing.GroupIdentityQuery(e.Text) {
+	} else if (e.Mode != GroupReply && e.Mode != PrivateReply) || (e.Mode == GroupReply && !e.Mention) || (e.Mode == PrivateReply && !routing.GroupIdentityQuery(e.Text)) || (e.Mode == GroupReply && !validQuestion(e.Text)) {
 		return "", access.ErrForbidden
 	}
 	if e.Tenant == "" || e.App == "" || e.Channel == "" || e.Account == "" || e.Chat == "" || e.Message == "" || e.Received.IsZero() {
@@ -63,11 +63,12 @@ func Accept(ctx context.Context, tx pgx.Tx, adapter Channel, e Envelope) (string
 	if (e.Mode == PrivateReply) != (a.Project == "") || a.Bot == "" {
 		return "", access.ErrForbidden
 	}
+	groupBusiness := e.Mode == GroupReply && !routing.GroupIdentityQuery(e.Text)
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO agent_group_work(tenant_key,app_id,channel,account_id,chat_id,thread_id,message_id,config_version,project_id,
-          membership_generation,assignment_version,permission_version,deadline,mode,question,asked_at)
+          membership_generation,assignment_version,permission_version,deadline,mode,question,asked_at,group_question,group_asked_at)
         SELECT $1,$2,$3,$4,$5,$6,$7,$8, $9::text,coalesce(m.generation,''),$10,a.permission_version,least(now(),$11::timestamptz)+interval '10 minutes',$12,
-        CASE WHEN $12='project_chat' THEN $13::text END,CASE WHEN $12='project_chat' THEN now() END
+        CASE WHEN $12='project_chat' THEN $13::text END,CASE WHEN $12='project_chat' THEN now() END, CASE WHEN $14 THEN $13::text END, CASE WHEN $14 THEN now() END
         FROM accounts a LEFT JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(a.tenant_key,a.app_id,a.id,$9)
         WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.id=$4 AND a.active
         AND ($9='' OR (m.role!='revoked' AND EXISTS(SELECT 1 FROM project_profiles p WHERE
@@ -75,8 +76,8 @@ func Accept(ctx context.Context, tx pgx.Tx, adapter Channel, e Envelope) (string
         ON CONFLICT (tenant_key,app_id,channel,message_id) WHERE plan_id IS NULL DO UPDATE SET message_id=excluded.message_id
         WHERE agent_group_work.mode=excluded.mode AND (agent_group_work.account_id,agent_group_work.chat_id,agent_group_work.thread_id,agent_group_work.project_id)=
               (excluded.account_id,excluded.chat_id,excluded.thread_id,excluded.project_id)
-        AND agent_group_work.question IS NOT DISTINCT FROM excluded.question
-        RETURNING id`, e.Tenant, e.App, e.Channel, e.Account, e.Chat, e.Thread, e.Message, e.Config, a.Project, a.Version, e.Received, e.Mode, e.Text).Scan(&id)
+        AND agent_group_work.question IS NOT DISTINCT FROM excluded.question AND agent_group_work.group_question IS NOT DISTINCT FROM excluded.group_question
+        RETURNING id`, e.Tenant, e.App, e.Channel, e.Account, e.Chat, e.Thread, e.Message, e.Config, a.Project, a.Version, e.Received, e.Mode, e.Text, groupBusiness).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", access.ErrForbidden
 	}

@@ -43,7 +43,7 @@ func TestAuthorizationUsesCurrentAccountAndProjectMembership(t *testing.T) {
 		{"admin can manage accounts", admin, "account.manage", "", true},
 		{"member cannot manage accounts", member, "account.manage", "", false},
 		{"foreign tenant cannot read directory", foreign, "directory.read", "", false},
-		{"admin role alone cannot manage project", admin, "project.settings", "project", false},
+		{"in-project system admin can manage settings", admin, "project.settings", "project", true},
 		{"trusted project member can read assigned project", admin, "project.read", "project", true},
 		{"system administrator without project assignment capability cannot assign", admin, "project.assign", "project", false},
 		{"member with formal project assignment capability can assign", member, "project.assign", "project", true},

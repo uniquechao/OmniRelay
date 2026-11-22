@@ -93,7 +93,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	projectService.ConfigureFiles(fileService)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
 	mux := http.NewServeMux()
-	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore)
+	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore, projectService)
 	if err != nil {
 		return nil, nil, err
 	}

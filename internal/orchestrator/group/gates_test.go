@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
+	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/migrations"
 )
 
@@ -63,7 +64,7 @@ func newGate(t *testing.T) *gate {
 	}
 	roles := access.New(db, "tenant", "app")
 	roles.ProjectAccess = access.LocalProjects{Pool: db}
-	g := &gate{Service: &Service{DB: db, Roles: roles, Tenant: "tenant", App: "app", Owner: "localhost"}, t: t, ctx: ctx, version: 1}
+	g := &gate{Service: &Service{DB: db, Roles: roles, Projects: project.New(db, roles, nil, nil, nil, false), Tenant: "tenant", App: "app", Owner: "localhost"}, t: t, ctx: ctx, version: 1}
 	g.Channels = map[string]Channel{"internal": {Resolve: func(_ context.Context, _ pgx.Tx, e Envelope) (Assignment, error) {
 		if e.Mode == PrivateReply {
 			if e.Chat != "dm-"+e.Account {

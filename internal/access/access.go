@@ -219,7 +219,7 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 	case "project.assign":
 		return access.CanAssign, nil
 	case "project.settings":
-		return access.Manager || (delegatedGeneration != "" && access.MembershipGeneration == delegatedGeneration), nil
+		return access.Manager || slices.Contains(roles, RoleSystemAdmin) || (delegatedGeneration != "" && access.MembershipGeneration == delegatedGeneration), nil
 	default:
 		return access.Manager, nil
 	}

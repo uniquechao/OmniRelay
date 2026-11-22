@@ -47,8 +47,17 @@ func FeishuGroupScope(credentials int64) func(context.Context, pgx.Tx, group.Env
 	}
 }
 func (s *FeishuInbox) enrollGroup(ctx context.Context, tx pgx.Tx, id orchestrator.WorkID, account string, e orchestrator.InboundEvent) error {
-	if (e.ChatKind != orchestrator.ChatGroup && e.ChatKind != orchestrator.ChatPrivate) || !routing.GroupIdentityQuery(e.Text) {
+	if (e.ChatKind != orchestrator.ChatGroup && e.ChatKind != orchestrator.ChatPrivate) || e.ChatKind == orchestrator.ChatPrivate && !routing.GroupIdentityQuery(e.Text) {
 		return nil
+	}
+	if e.ChatKind == orchestrator.ChatGroup && !routing.GroupIdentityQuery(e.Text) {
+		var linked bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_chat_assignments WHERE (tenant_key,app_id,chat_id)=($1,$2,$3) AND project_id IS NOT NULL)", e.TenantID, e.AppID, e.ChatID).Scan(&linked); err != nil {
+			return err
+		}
+		if !linked {
+			return nil
+		}
 	}
 	mode := group.GroupReply
 	if e.ChatKind == orchestrator.ChatPrivate {

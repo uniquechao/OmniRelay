@@ -1,6 +1,6 @@
 # 项目 Agent Runtime
 
-项目 PM 和全局查询助手使用独立于 OmniRelay Go 服务的 Runtime 镜像。本目录是其构建上下文，包含固定版本的 DSH SDK、原生 Harness、两类人设初始化模板和只读身份工具。Harness 管理定时器。Go 内部的 Gateway 和权限模块决定使用哪个 Agent、它可以读取哪些字段，以及 Channel 最终向谁投递。
+项目 PM 和全局查询助手使用独立于 OmniRelay Go 服务的 Runtime 镜像。本目录是其构建上下文，包含固定版本的 DSH SDK、原生 Harness、两类人设初始化模板、身份工具和项目 PM 业务工具桥。Harness 管理定时器。Go 内部的 Gateway 和权限模块决定使用哪个 Agent、它可以读取哪些字段，以及 Channel 最终向谁投递。
 
 ```sh
 docker build -t omnirelay-dsh-runtime:group-request runtime/dsh
@@ -9,7 +9,7 @@ bash tests/integration/group-agent-gate.sh
 
 ## 内部验收
 
-在仓库根目录运行上面的脚本。需要 Linux、Docker、Go（版本见 go.mod）、Python、OpenSSL 和 curl。脚本默认启动独立 PostgreSQL 16，也可用 `OMNIRELAY_TEST_DATABASE_URL` 指定隔离数据库。模型响应、账号和收件地址使用合成数据。真实 Go 服务逻辑、会籍、双向 TLS、镜像内 Harness 定时器、工具和持久卷均参与验收。脚本要求下列五项测试逐一通过，跳过任一测试即失败。日志位于脚本输出的 `.runtime/group-gate.*` 目录。
+在仓库根目录运行上面的脚本。需要 Linux、Docker、Go（版本见 go.mod）、Python、OpenSSL 和 curl。脚本默认启动独立 PostgreSQL 16，也可用 `OMNIRELAY_TEST_DATABASE_URL` 指定隔离数据库。模型响应、账号和收件地址使用合成数据。真实 Go 服务逻辑、会籍、双向 TLS、镜像内 Harness 定时器、工具和持久卷均参与验收。脚本要求下列验收测试逐一通过，跳过任一测试即失败。日志位于脚本输出的 `.runtime/group-gate.*` 目录。
 
 | 门槛 | 放行条件 |
 | --- | --- |
@@ -18,8 +18,15 @@ bash tests/integration/group-agent-gate.sh
 | `TestPrivateReplyGate` | 启用账号私聊「我是谁」，即使没有项目会籍也能收到全局查询助手的本人回复。冒用另一私聊会话被拒。同一成员在群和私聊使用独立 Agent 与会话，重复事件只回复一次 |
 | `TestDirectedNoticeGate` | 通过应用接口登记一次群和个人提醒。Runtime 自行发现计划，Harness 登记定时器。到期前重启 Runtime 后，同一原生定时器触发两个独立工作，内部 Channel 各有一条回执。群会话和群消息都不含个人标记。重复登记和触发均可重试 |
 | `TestNoticePermissionGate` | 普通成员、非项目收件人、错误 owner 代次、错误定时器标识及错误触发时间均被拒。撤销个人会籍只抑制该人的投递，其余有效目标继续处理。停用的计划拒绝后续回调 |
+| `TestWorkbenchChatGate` | 同一项目按账号隔离对话；重复消息复用工作，回答带当前项目署名 |
+| `TestProjectPMToolMatrix` | 20 个目录项逐项验证业务结果和权限，缺少任一目录项的测试即失败 |
+| `TestProjectToolRecoveryGate` | 并发和跨代次重试仅写入一次；相同命令序号换参数、过期轮次和撤权重放被拒 |
+| `TestProjectToolHistoryGate` | 来源撤权后抑制交付与历史正文；后续模型会话与受限正文隔离 |
+| `TestProjectToolAudienceImageGate` | 内部群请求经真实 DSH 镜像、双向 TLS 在正确项目建任务，原话题得到署名回执，个人工作台显示结果 |
 
-内部 Channel 复用产品的入站、路由、权限、工具回调和投递实现。另有适配器契约测试检查飞书私聊入站、原消息回复，以及用 `chat_id` 或 `open_id` 新发消息的请求和回执。五项门槛均可在没有飞书账号和凭据的环境中运行。
+镜像还会验证 SQLite 命令日志重新打开后保留待核对的写入及其序号。目录、角色与每个工具的放行条件见[项目 PM 工具验收表](../../design/engineering/project-pm-tool-capabilities.md)。
+
+内部 Channel 复用产品的入站、路由、权限、工具回调和投递实现。另有适配器契约测试检查飞书私聊入站、原消息回复，以及用 `chat_id` 或 `open_id` 新发消息的请求和回执。这些门槛均可在没有飞书账号和凭据的环境中运行。
 
 ## 定向提醒
 

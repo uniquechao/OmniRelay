@@ -355,6 +355,40 @@ func (s *Service) getMessages(w http.ResponseWriter, r *http.Request, p identity
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": next})
 }
 
+// SearchProjectMessages returns only searchable snippets from a source-visible bound group.
+func (s *Service) SearchProjectMessages(ctx context.Context, tx pgx.Tx, p identity.Principal, project, id, q string) (any, error) {
+	if strings.TrimSpace(q) == "" || len([]rune(q)) > 200 {
+		return nil, ErrAccessLost
+	}
+	if _, err := s.ProjectGroupForMutation(ctx, tx, p, id); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT m.message_id,m.sent_at,left(m.search_text,500) FROM feishu_chat_messages m
+ JOIN project_chat_links l ON (l.tenant_key,l.app_id,l.chat_id)=(m.tenant_key,m.app_id,m.chat_id)
+ WHERE `+visibleMessageRows+` AND m.chat_id=$3 AND l.project_id=$4 AND NOT m.deleted AND strpos(lower(m.search_text),lower($5))>0
+ ORDER BY m.sent_at DESC,m.message_id LIMIT 25`, s.tenant, s.app, id, project, q)
+	if err != nil {
+		return nil, err
+	}
+	type snippet struct {
+		ID   string    `json:"id"`
+		Sent time.Time `json:"sent_at"`
+		Text string    `json:"text"`
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[snippet])
+	if err != nil {
+		return nil, err
+	}
+	var bound bool
+	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_chat_links WHERE (tenant_key,app_id,chat_id,project_id)=($1,$2,$3,$4))", s.tenant, s.app, id, project).Scan(&bound); err != nil {
+		return nil, err
+	}
+	if !bound {
+		return nil, ErrAccessLost
+	}
+	return map[string]any{"items": items}, nil
+}
+
 func chatScopeID(r *http.Request) string {
 	id := r.PathValue("chatID")
 	if id == "" {

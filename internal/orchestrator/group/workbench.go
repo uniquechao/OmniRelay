@@ -92,12 +92,12 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 				id, err = Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Channel: "workbench", Account: actor.AccountID, Chat: project, Project: project, Mode: ProjectChat, Message: key, Text: strings.TrimSpace(body.Text), Received: time.Now()})
 				return err
 			}
-			rows, err := tx.Query(ctx, `SELECT w.id,w.question,CASE WHEN w.state='sent' THEN w.response_text ELSE '' END,
+			rows, err := tx.Query(ctx, `SELECT w.id,coalesce(w.question,w.group_question),CASE WHEN w.group_answer IS NOT NULL AND w.state IN ('ready','sending','sent','unknown','failed') THEN w.group_answer WHEN w.state='sent' THEN w.response_text ELSE '' END,
 				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired' ELSE w.state END
 				FROM agent_group_work w JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
 				JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(w.tenant_key,w.app_id,w.account_id,w.project_id)
-				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND w.mode='project_chat'
-				AND w.membership_generation=$5 AND a.active AND w.permission_version=a.permission_version ORDER BY w.asked_at DESC,w.id DESC LIMIT 50`, s.Tenant, s.App, actor.AccountID, project, grant.MembershipGeneration)
+				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND (w.mode='project_chat' OR w.group_question IS NOT NULL)
+				AND w.membership_generation=$5 AND a.active AND w.permission_version=a.permission_version ORDER BY coalesce(w.asked_at,w.group_asked_at) DESC,w.id DESC LIMIT 50`, s.Tenant, s.App, actor.AccountID, project, grant.MembershipGeneration)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,23 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 				}
 				items = append(items, m)
 			}
-			return rows.Err()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			rows.Close()
+			for i := range items {
+				if items[i].Answer == "" {
+					continue
+				}
+				err = s.checkToolReads(ctx, tx, items[i].ID, actor, project)
+				if errors.Is(err, access.ErrForbidden) {
+					items[i].Answer = ""
+					items[i].State = "suppressed"
+				} else if err != nil {
+					return err
+				}
+			}
+			return nil
 		})
 		switch {
 		case errors.Is(err, access.ErrForbidden):

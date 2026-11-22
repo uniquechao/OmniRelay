@@ -1,6 +1,7 @@
 """Private group Agent worker. The volume owns instances and the execution journal."""
 import contextlib
 import fcntl
+import hashlib
 import hmac
 import json
 import os
@@ -81,6 +82,9 @@ class Runtime:
                 CREATE TABLE IF NOT EXISTS work(id TEXT PRIMARY KEY, agent TEXT, session TEXT, epoch INTEGER,
                     generation INTEGER, turn INTEGER, completed INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS chat_answers(work_id TEXT PRIMARY KEY, answer TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS tool_commands(
+                    work_id TEXT NOT NULL, signature TEXT NOT NULL, slot INTEGER NOT NULL,
+                    pending TEXT, PRIMARY KEY(work_id,signature), UNIQUE(work_id,slot));
                 CREATE TABLE IF NOT EXISTS owners(agent TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
             """)
         # One active DSH per logical instance. Other HTTP callers can query its journal.
@@ -126,6 +130,25 @@ class Runtime:
         with self.db() as db:
             return db.execute("SELECT session,turn,completed,answer FROM work LEFT JOIN chat_answers ON work_id=id WHERE id=?", (work,)).fetchone()
 
+    def command_slot(self, work, tool, args):
+        command = json.dumps({"tool": tool, "args": args}, sort_keys=True, separators=(",", ":"))
+        signature = hashlib.sha256(command.encode()).hexdigest()
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT slot FROM tool_commands WHERE work_id=? AND signature=?",
+                             (work, signature)).fetchone()
+            if row:
+                return row[0]
+            slot, = db.execute("SELECT coalesce(max(slot),0)+1 FROM tool_commands WHERE work_id=?", (work,)).fetchone()
+            if slot > 128:
+                raise ValueError("tool command limit")
+            db.execute("INSERT INTO tool_commands VALUES(?,?,?,?)", (work, signature, slot, command))
+            return slot
+
+    def settled(self, work, slot):
+        with self.db() as db:
+            db.execute("UPDATE tool_commands SET pending=NULL WHERE work_id=? AND slot=?", (work, slot))
+
     def execute(self, b):
         agent, session, job = b["agent"], b["session"], b["work"]
         if (b["owner"] != self.owner or not HASH.fullmatch(agent) or not HASH.fullmatch(session)
@@ -165,27 +188,57 @@ class Runtime:
 
     def run_turn(self, b):
         binding = {k: v for k, v in b.items() if k != "prompt"}
-        chat = b.get("kind") == "project_chat"
+        chat = b.get("kind") in ("project_chat", "project_group_chat")
         nonce = secrets.token_urlsafe(32)
         started = threading.Event()
         observed = {}
         runtime = self
+        catalog = []
+        if chat:
+            with self.http.open(self.gateway + "/internal/tools/project/catalog", timeout=10) as response:
+                catalog = json.load(response)
+        tools = {item["name"]: item for item in catalog}
+        def project_request(tool, args, slot):
+            payload = {**binding, "turn": observed["turn"], "tool": tool, "args": args, "slot": slot}
+            request = urllib.request.Request(self.gateway + "/internal/tools/project", json.dumps(payload).encode(),
+                                             headers={"Content-Type": "application/json"})
+            try:
+                with self.http.open(request, timeout=10) as response:
+                    value = json.load(response)
+            except urllib.error.HTTPError as exc:
+                if slot and exc.code in (400, 403, 409):
+                    self.settled(b["work"], slot)
+                raise
+            if slot:
+                self.settled(b["work"], slot)
+            return value
 
         class LocalTool(Handler):
             def do_POST(self):
                 if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + nonce):
                     return self.reply(403)
                 try:
-                    if self.payload() != {"session": b["session"]} or not started.wait(5):
+                    call = self.payload(32 << 10)
+                    if not isinstance(call, dict) or call.get("session") != b["session"] or not started.wait(5):
                         return self.reply(403)
-                    request = urllib.request.Request(runtime.gateway + "/internal/tools/context.whoami", json.dumps({**binding, "turn": observed["turn"]}).encode(),
+                    data = {**binding, "turn": observed["turn"]}
+                    path = "/internal/tools/context.whoami"
+                    if set(call) != {"session"}:
+                        if set(call) != {"session", "tool", "args"} or call["tool"] not in tools or not isinstance(call["args"], dict):
+                            return self.reply(403)
+                        name, args = call["tool"], call["args"]
+                        slot = runtime.command_slot(b["work"], name, args) if tools[name]["write"] else 0
+                        return self.reply(200, project_request(name, args, slot))
+                    request = urllib.request.Request(runtime.gateway + path, json.dumps(data).encode(),
                                                      headers={"Content-Type": "application/json"})
                     with runtime.http.open(request, timeout=10) as resp:
                         data = json.load(resp)
                     observed["tool"] = True
                     return self.reply(200, data)
-                except (ValueError, OSError):
-                    return self.reply(403)
+                except urllib.error.HTTPError as exc:
+                    return self.reply(exc.code if exc.code in (400,403,409) else 503)
+                except (TypeError, ValueError, OSError):
+                    return self.reply(503)
 
         def events(notification):
             if notification.payload.get("sessionId") != b["session"]:
@@ -204,7 +257,20 @@ class Runtime:
                                                  json.dumps({**binding, "turn": observed["turn"]}).encode(),
                                                  headers={"Content-Type": "application/json"})
                 with self.http.open(request, timeout=10):
-                    started.set()
+                    pass
+                if chat:
+                    # Reconcile a lost acknowledgement before admitting new model writes.
+                    with self.db() as db:
+                        pending = db.execute("SELECT slot,pending FROM tool_commands WHERE work_id=? AND pending IS NOT NULL ORDER BY slot",
+                                             (b["work"],)).fetchall()
+                    for slot, raw in pending:
+                        command = json.loads(raw)
+                        try:
+                            project_request(command["tool"], command["args"], slot)
+                        except urllib.error.HTTPError as exc:
+                            if exc.code not in (400, 403, 409):
+                                raise
+                started.set()
                 if chat:
                     # Keep a current grant receipt even when a conversational turn needs no model tool.
                     scope = urllib.request.Request(self.gateway + "/internal/tools/context.whoami", request.data,
@@ -218,6 +284,7 @@ class Runtime:
                 with open_instance(self.root / "agents", b["agent"], HERE / ("query.md" if b.get("kind") == "private_reply" else "project-pm.md"),
                                    patches=(str(HERE / "group.patch.yml"),),
                                    tool_env={"OMNI_TOOL_URL": f"http://127.0.0.1:{bridge.server_port}",
+                                             "OMNI_PROJECT_TOOLS": json.dumps(catalog, ensure_ascii=False),
                                              "OMNI_TOOL_NONCE": nonce}, **model_config()) as host:
                     try:
                         session = host.resume_session(b["session"])
@@ -256,8 +323,8 @@ class API(Handler):
         try:
             if post:
                 b = self.payload(32 << 10)
-                chat = b.get("kind") == "project_chat"
-                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice", "project_chat")
+                chat = b.get("kind") in ("project_chat", "project_group_chat")
+                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice", "project_chat", "project_group_chat")
                         or (set(b) - {"kind"}) != ({"work", "agent", "session", "owner", "epoch", "generation"} | ({"prompt"} if chat else set()))
                         or (chat and (not isinstance(b["prompt"], str) or not b["prompt"].strip()))
                         or any(type(b[k]) is not int for k in ("epoch", "generation")) or b["work"] != job):

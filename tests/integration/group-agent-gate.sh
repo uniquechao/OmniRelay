@@ -54,6 +54,7 @@ docker run -d --name "$OMNI_GATE_CONTAINER" --network host --read-only --tmpfs /
 code=$(curl --retry 15 --retry-connrefused --retry-delay 1 --max-time 4 -so /dev/null -w '%{http_code}' --cacert "$suite/ca.crt" \
     --cert "$suite/intruder.crt" --key "$suite/intruder.key" "https://localhost:$OMNI_GATE_RUNTIME_PORT/works/00000000-0000-4000-8000-000000000000")
 test "$code" = 403
+docker exec -i "$OMNI_GATE_CONTAINER" python - < tests/integration/project-tool-journal.py
 docker exec "$OMNI_GATE_CONTAINER" python probe.py livez
 if docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz; then
     echo "Unexpected readiness without model Secret" >&2
@@ -64,8 +65,10 @@ chmod 444 "$suite/model/DEEPSEEK_API_KEY"
 docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz
 docker exec "$OMNI_GATE_CONTAINER" python probe.py model
 grep -q '^DSH model probe path /anthropic/v1/messages$' "$suite/model.log"
-go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate|TestWorkbenchChatGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
-for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate TestWorkbenchChatGate; do
+go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate|TestWorkbenchChatGate|TestProjectToolHistoryGate|TestProjectToolRecoveryGate|TestProjectToolAudienceImageGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
+for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate TestWorkbenchChatGate TestProjectToolHistoryGate TestProjectToolRecoveryGate TestProjectToolAudienceImageGate; do
     grep -q "^--- PASS: $gate " "$suite/gates.log"
 done
+go test -count=1 -v -run '^TestProjectPMToolMatrix$' ./internal/project | tee "$suite/pm-tools.log"
+grep -q '^--- PASS: TestProjectPMToolMatrix ' "$suite/pm-tools.log"
 printf 'Internal Agent messaging gates passed. Evidence: %s\n' "$suite"

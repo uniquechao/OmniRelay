@@ -17,10 +17,11 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator/group"
+	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 )
 
-func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, source *feishu.ChatSource, mux *http.ServeMux, identities *identity.Service, bot *postgres.FeishuBot) (func(context.Context), error) {
+func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, source *feishu.ChatSource, mux *http.ServeMux, identities *identity.Service, bot *postgres.FeishuBot, projects *project.Service) (func(context.Context), error) {
 	endpoint := os.Getenv("OMNIRELAY_AGENT_RUNTIME_URL")
 	if endpoint == "" {
 		return nil, nil
@@ -35,7 +36,7 @@ func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, s
 		return nil, err
 	}
 	u, _ := url.Parse(endpoint)
-	svc := &group.Service{DB: pool, Roles: roles, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), Execute: client.Execute, Channels: map[string]group.Channel{}}
+	svc := &group.Service{DB: pool, Roles: roles, Projects: projects, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), Execute: client.Execute, Channels: map[string]group.Channel{}}
 	svc.RegisterWorkbench(mux, identities.AuthenticateWorkbench)
 	if os.Getenv("OMNIRELAY_AGENT_FEISHU_ENABLED") != "0" && cfg.botSendEnabled && cfg.appSecret != "" {
 		svc.Channels["feishu"] = group.Channel{Resolve: postgres.FeishuGroupScope(cfg.credentialsGeneration), Reply: func(ctx context.Context, e group.Envelope, bot, text, id string) group.Receipt {

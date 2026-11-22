@@ -16,12 +16,14 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
 
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/internal/routing"
 )
 
 type Service struct {
 	DB                 *pgxpool.Pool
 	Roles              *access.Service
+	Projects           *project.Service
 	Tenant, App, Owner string
 	Channels           map[string]Channel
 	Execute            func(context.Context, dsh.Binding) (dsh.Result, error)
@@ -36,6 +38,7 @@ type work struct {
 	dsh.Binding
 	State, Bot, Delivery, Text string
 	Address                    Envelope
+	Actor                      identity.Principal
 	Scope                      Who
 }
 
@@ -47,7 +50,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	var scope, member, plan string
 	var pv, av int64
 	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
-            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,'')
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,'')
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
         LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
@@ -61,6 +64,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		return w, err
 	}
 	p.TenantKey, p.AppID = s.Tenant, s.App
+	w.Actor = p
 	w.Address.Account, w.Address.Tenant, w.Address.App = p.AccountID, s.Tenant, s.App
 	w.Address.Project = w.Scope.ProjectID
 	ch, ok := s.Channels[w.Address.Channel]
@@ -108,11 +112,29 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		fields, _ = json.Marshal([]string{string(w.Address.Mode), plan, w.Agent, p.AccountID, w.Address.Channel, w.Address.Chat, w.Address.Thread, scope})
 		w.Kind = string(w.Address.Mode)
 	}
+	if w.Address.Mode == GroupReply && w.Address.Text != "" {
+		w.Kind = "project_group_chat"
+		// Tool outputs belong to a private workbench result for this person, never to the original group.
+		fields, _ = json.Marshal([]string{w.Kind, id, w.Agent, p.AccountID, scope})
+		w.Prompt = w.Address.Text
+	}
 	if w.Address.Mode == GroupNotice {
 		w.Scope.UserID = ""
 		w.Scope.UserName = ""
 	}
 	if w.Address.Mode == ProjectChat {
+		// Never resume a model transcript carrying source-restricted results into a later work.
+		var boundary string
+		err := tx.QueryRow(ctx, `SELECT coalesce((SELECT old.id FROM agent_group_work old JOIN agent_group_work cur ON cur.id=$1
+   WHERE (old.tenant_key,old.app_id,old.account_id,old.project_id,old.mode)=(cur.tenant_key,cur.app_id,cur.account_id,cur.project_id,cur.mode)
+   AND (old.asked_at,old.id)<(cur.asked_at,cur.id) AND EXISTS(SELECT FROM agent_project_tool_reads r WHERE r.work_id=old.id)
+   ORDER BY old.asked_at DESC,old.id DESC LIMIT 1),'')`, id).Scan(&boundary)
+		if err != nil {
+			return w, err
+		}
+		if boundary != "" {
+			fields = append(fields, []byte(boundary)...)
+		}
 		verified, _ := json.Marshal(w.Scope)
 		w.Prompt = fmt.Sprintf("当前登录账号和项目由工作台验证：%s\n用户消息：%s", verified, w.Address.Text)
 	}
@@ -174,7 +196,7 @@ func (s *Service) Step(ctx context.Context) error {
 	}
 	if w.State == "sending" {
 		// A changed display name also invalidates a previously frozen receipt.
-		expected := render(w.Address.Mode, w.Scope)
+		expected := w.publicReply()
 		if w.Text != expected {
 			_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed' WHERE id=$1 AND generation=$2", w.Work, w.Generation)
 			return err
@@ -202,7 +224,7 @@ func (s *Service) Step(ctx context.Context) error {
 	if result.Session != w.Session {
 		return errors.New("unbound runtime session")
 	}
-	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+	return s.Roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		var receipt Who
 		err := tx.QueryRow(ctx, `SELECT tool_receipt FROM agent_group_work w JOIN agent_instances a USING(agent_id)
          WHERE id=$1 AND generation=$2 AND state='running' AND tool_turn=$3 AND owner_id=$4 AND owner_epoch=$5
@@ -210,7 +232,7 @@ func (s *Service) Step(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if w.Address.Mode == ProjectChat {
+		if w.Address.Mode == ProjectChat || w.Kind == "project_group_chat" {
 			if result.Answer == "" || len(result.Answer) > 48000 {
 				return errors.New("missing or oversized project chat response")
 			}
@@ -218,8 +240,18 @@ func (s *Service) Step(ctx context.Context) error {
 			if err != nil && !errors.Is(err, access.ErrForbidden) {
 				return err
 			}
+			if err == nil {
+				err = s.checkToolReads(ctx, tx, current.Work, current.Actor, current.Scope.ProjectID)
+			}
+			if err != nil && !errors.Is(err, access.ErrForbidden) {
+				return err
+			}
 			if err != nil || current.Scope != receipt {
 				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',lease_until=NULL WHERE id=$1", w.Work)
+				return err
+			}
+			if w.Kind == "project_group_chat" {
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',group_answer=$2,response_text=$3,lease_until=NULL WHERE id=$1", w.Work, "项目 PM · "+current.Scope.ProjectName+"\n"+result.Answer, current.publicReply())
 				return err
 			}
 			// Publication into the user's workbench and its receipt are the same database write.
@@ -229,6 +261,12 @@ func (s *Service) Step(ctx context.Context) error {
 		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(w.Address.Mode, receipt))
 		return err
 	})
+}
+func (w work) publicReply() string {
+	if w.Kind == "project_group_chat" {
+		return "项目 PM · " + w.Scope.ProjectName + "\n请在本项目工作台的 Bot 对话中查看本次请求的结果。"
+	}
+	return render(w.Address.Mode, w.Scope)
 }
 func render(mode Mode, w Who) string {
 	switch mode {

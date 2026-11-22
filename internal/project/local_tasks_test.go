@@ -307,7 +307,7 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	request("PUT", "a/members/second/access", `{"role":"member"}`, 200)
 	actor = secondActor
 	actions := request("GET", detailPath+"/actions", "", 200)
-	if actions["edit_fields"] != false || actions["update_progress"] != true || actions["comment"] != true {
+	if actions["edit_fields"] != true || actions["assign"] != false || actions["update_progress"] != true || actions["comment"] != true {
 		t.Fatal(actions)
 	}
 	progress := `{"expected_task_version":3,"request_key":"progress","title":"新标题","owner_member_id":"u","participant_ids":["v"],"acceptance":"交付完整","status":"in_progress"}`
