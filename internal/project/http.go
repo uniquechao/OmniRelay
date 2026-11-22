@@ -89,6 +89,19 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("GET "+base, "", list)
 	handle("POST "+base, "", s.createProject)
 	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
+	handle("GET "+project+"/files", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		return s.filePage(r.Context(), actor, r.PathValue("projectID"), r.URL.Query())
+	})
+	handle("GET "+project+"/files/documents/{sourceID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		var document taskSource
+		ctx := r.Context()
+		err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+			var err error
+			document, err = s.source(ctx, tx, scope(actor, r.PathValue("projectID")), actor, "document", r.PathValue("sourceID"))
+			return err
+		})
+		return document, err
+	})
 	handle("GET "+project+"/task-tags", "project.read", s.tags)
 	handle("PUT "+project+"/sources/{kind}/{sourceID}/readers", "project.delegate", s.setSourceReaders)
 	handle("PUT "+project+"/task-tags/{tagID}", "project.assign", s.setTag)

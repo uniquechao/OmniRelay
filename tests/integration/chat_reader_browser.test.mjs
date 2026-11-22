@@ -723,6 +723,10 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   await tool('表情').click();
   await tool('🎉').click();
   await tool('提及成员').click();
+  const trigger = await tool('提及成员').boundingBox();
+  const choices = await box.getByRole('group', { name: '提及成员' }).boundingBox();
+  assert.ok(choices.x <= trigger.x + trigger.width && choices.x + choices.width >= trigger.x);
+  assert.ok(choices.y + choices.height <= trigger.y);
   await tool('林晓').click();
   await tool('展开输入框').click();
   assert.equal(await tool('收起输入框').getAttribute('aria-expanded'), 'true');
@@ -740,6 +744,7 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   assert.equal(await editor.inputValue(), '');
   await page.locator('[data-chat-id="oc_group"]').first().click();
   assert.equal(await editor.inputValue(), '**正文**\n🎉@林晓 ');
+  assert.deepEqual(await box.locator('.chat-composer-mirror mark').allTextContents(), ['@林晓']);
   await editor.press('Enter');
   await tool('查询发送结果').waitFor();
   assert.deepEqual(sends[0].paragraphs, [[{ text: '正文', styles: ['bold'] }], [{ text: '🎉' }, { mention_open_id: 'ou_user' }, { text: ' ' }]]);
@@ -854,7 +859,10 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     const member = picker.getByRole('button', { name: '林晓' });
     await member.waitFor();
     const bounds = await picker.boundingBox();
+    const field = await editor.boundingBox();
     assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1);
+    assert.ok(bounds.x >= field.x - 1 && bounds.x <= field.x + 30);
+    assert.ok(bounds.y + bounds.height <= field.y + 8);
     if (width === 390) await member.tap();
     else {
       await editor.press('ArrowDown');
@@ -863,16 +871,48 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     }
     assert.deepEqual(sends, []);
     assert.equal(await editor.inputValue(), '🎉@林晓 ');
+    const mirror = box.locator('.chat-composer-mirror');
+    const marks = mirror.locator('mark');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
+    assert.ok(await marks.first().isVisible());
+    assert.ok(await marks.first().evaluate(mark => getComputedStyle(mark).color !== getComputedStyle(mark.parentElement).color));
     await page.keyboard.insertText('请查收 ');
     await page.keyboard.insertText('@');
     await picker.getByRole('button', { name: '王宁' }).waitFor();
+    if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
+      await page.screenshot({ path: process.env.OMNIRELAY_CHAT_EVIDENCE + '/mention-' + width + '-' + theme + '.png' });
+    }
     await editor.press('Escape');
     await picker.waitFor({ state: 'hidden' });
     await page.keyboard.insertText('王宁');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
+    assert.equal(await mirror.textContent(), await editor.inputValue());
+    await box.getByRole('button', { name: '提及成员' }).click();
+    await picker.getByRole('button', { name: '王宁' }).click();
+    assert.deepEqual(await marks.allTextContents(), ['@林晓', '@王宁']);
+    await editor.press('Backspace');
+    await editor.press('Backspace');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
     await editor.press('Enter');
     await box.getByText('飞书已确认接收。').waitFor();
     assert.equal(sends.length, 1);
-    assert.deepEqual(sends[0].paragraphs, [[{ text: '🎉' }, { mention_open_id: 'ou_lin' }, { text: ' 请查收 @王宁' }]]);
+    assert.deepEqual(sends[0].paragraphs, [[{ text: '🎉' }, { mention_open_id: 'ou_lin' }, { text: ' 请查收 @王宁@王' }]]);
+
+    await editor.fill('换行正文\n'.repeat(10));
+    await editor.press('ControlOrMeta+End');
+    await page.keyboard.insertText('@');
+    await picker.getByRole('button', { name: '王宁' }).click();
+    await page.keyboard.insertText(' 后续文字');
+    await page.keyboard.insertText('＠');
+    await picker.getByRole('button', { name: '王宁' }).waitFor();
+    const scrolledField = await editor.boundingBox();
+    const visibleMention = await marks.boundingBox();
+    const scrolledPicker = await picker.boundingBox();
+    assert.ok(await editor.evaluate(node => node.scrollTop > 0));
+    assert.ok(visibleMention.y >= scrolledField.y && visibleMention.y + visibleMention.height <= scrolledField.y + scrolledField.height);
+    assert.ok(scrolledPicker.y + scrolledPicker.height <= visibleMention.y);
+    assert.ok(scrolledPicker.y + scrolledPicker.height >= visibleMention.y - 8);
+    await editor.press('Escape');
 
     await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + direct.id);
     await box.getByRole('textbox', { name: '消息内容' }).and(page.getByPlaceholder('发送给 林晓')).waitFor();
@@ -882,7 +922,7 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     await page.keyboard.insertText('@');
     assert.equal(await editor.inputValue(), '@');
     assert.ok(await picker.isHidden());
-    assert.deepEqual(memberRequests, Array(3).fill(base + '/oc_group/members'));
+    assert.deepEqual(memberRequests, Array(6).fill(base + '/oc_group/members'));
     await page.close();
   }
 });
@@ -1138,12 +1178,12 @@ test('网盘显示未关联项目的文件，按真实同步状态刷新列表',
       assert.match(await progress.innerText(), /待同步 1 条/);
       const file = page.locator('.drive-file-name');
       await file.getByText('未关联群的手册.pdf').waitFor();
-      await page.getByText('等待同步', {exact:true}).waitFor();
+      await page.getByRole('cell', {name:'等待同步', exact:true}).waitFor();
       assert.equal(await file.isDisabled(), true);
       completed = true;
       await page.clock.runFor(2300);
       await progress.getByText(/已同步 1 条来源/).waitFor();
-      await page.getByText('已同步', {exact:true}).waitFor();
+      await page.getByRole('cell', {name:'已同步', exact:true}).waitFor();
       assert.equal(await file.isDisabled(), false);
       assert.equal(await progress.getByRole('progressbar').count(), 0);
       await page.close();
@@ -1170,7 +1210,8 @@ test('网盘的每个来源分别定位对应群的原消息', {skip:!packageNam
     await page.goto(origin + '/?theme=' + (mobile ? 'dark' : 'light') + '#/feishu/drive');
     const links = page.locator('tbody .drive-source');
     await links.last().waitFor();
-    assert.deepEqual(await links.locator('.drive-source-action').allTextContents(), ['定位原消息','定位原消息']);
+    assert.deepEqual(await links.evaluateAll(nodes => nodes.map(link => link.getAttribute('aria-label'))),
+      ['定位原消息：北辰项目群（来源 1）','定位原消息：启明试点群（来源 2）']);
     const open = link => mobile ? link.tap() : link.click();
     await open(links.first());
     await page.locator('[data-source-message]:focus').getByText('会议纪要').waitFor();
@@ -1178,6 +1219,56 @@ test('网盘的每个来源分别定位对应群的原消息', {skip:!packageNam
     await open(links.last());
     await page.locator('[data-source-message]:focus').getByText('来自启明的分享').waitFor();
     assert.ok(page.url().endsWith('#/feishu/bot-chats/' + second.id + '/' + secondMessage.id));
+    await page.close();
+  }
+});
+
+test('文件网盘仅滚动文件行，短页的分页紧跟列表', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  const files = Array.from({length:51}, (_, i) => ({
+    id:i + 1, name:'文件 ' + (i + 1), category:'files', format:'PDF', format_key:'pdf',
+    sync_state:'complete', project_ids:[], sources:[]
+  }));
+  for (const width of [1366,390]) {
+    const page = await browser.newPage({viewport:{width,height:844}, hasTouch:width === 390});
+    await mountFixture(page);
+    await page.route(origin + '/api/v1/projects?**', route => route.fulfill({json:{items:[],total:0}}));
+    await page.route(origin + '/api/v1/feishu/files?**', route => {
+      const params = new URL(route.request().url()).searchParams;
+      const offset = Number(params.get('offset'));
+      const rows = params.get('category') === 'all' ? files : [];
+      return route.fulfill({json:{items:rows.slice(offset, offset + Number(params.get('limit'))), total:rows.length, projects:{}}});
+    });
+    await page.goto(origin + '/?theme=' + (width === 390 ? 'dark' : 'light') + '#/feishu/drive');
+    await page.locator('select[data-size]').selectOption('50');
+    await page.locator('tr[data-row="50"]').waitFor({state:'attached'});
+    const scroller = page.locator('.list-scroll');
+    const positions = () => page.locator('.head, .drive-categories, .list-toolbar, thead, .list-footer').evaluateAll(
+      nodes => nodes.map(node => Math.round(node.getBoundingClientRect().top)));
+    const before = await positions();
+    const pageFit = await page.locator('#page').evaluate(node => ({
+      overflow:node.scrollHeight - node.clientHeight,
+      bottomGap:node.getBoundingClientRect().bottom - parseFloat(getComputedStyle(node).paddingBottom)
+        - node.querySelector('.list-footer').getBoundingClientRect().bottom
+    }));
+    assert.ok(pageFit.overflow <= 1 && Math.abs(pageFit.bottomGap) <= 1, JSON.stringify(pageFit));
+    await scroller.focus();
+    await page.keyboard.press('End');
+    await page.waitForFunction(() => document.querySelector('.list-scroll').scrollTop > 0);
+    assert.deepEqual(await positions(), before);
+    await page.locator('[data-next]').click();
+    await page.locator('tr[data-row="51"]').waitFor();
+    const shortPageFits = () => scroller.evaluate(node => {
+      const content = node.querySelector('[data-empty]').hidden ? node.querySelector('table') : node.querySelector('[data-empty]');
+      const footer = node.parentElement.querySelector('.list-footer').getBoundingClientRect();
+      return node.scrollHeight === node.clientHeight && footer.top - content.getBoundingClientRect().bottom < 32
+        && footer.bottom < innerHeight;
+    });
+    assert.ok(await shortPageFits(), '末页分页紧跟文件行');
+    await page.locator('[data-drive-category="docs"]').click();
+    await page.getByText('暂无文件。').waitFor();
+    assert.ok(await shortPageFits(), '空列表分页紧跟空状态');
     await page.close();
   }
 });
@@ -1194,7 +1285,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     let second = '启明';
     const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
       manual_project_ids:[], inherited_project_ids:['a'], project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
-        ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name}))};
+        ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name,sent_at}))};
     const other = {...row, id:18, name:'会议安排.pdf', project_ids:['a'],
       sources:[{...row.sources[0], message_id:recentMessage.id}]};
     await page.route(origin + base + '/' + group.id + '/messages/' + task.id + '/context', route =>
@@ -1210,6 +1301,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.route(origin + '/api/v1/feishu/files**', route => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.pathname.endsWith('/sync')) return route.fulfill({json:{groups:2,pending_sources:0,complete_sources:2}});
       if (url.pathname.endsWith('/projects')) {
         const change = request.postDataJSON();
         patches.push(change);
@@ -1226,6 +1318,20 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.goto(origin + '/?theme=' + theme + '#/feishu/drive');
     await act(page.locator('[data-drive-category=files]'));
     const otherLink = page.locator('tbody [data-source-file="18"]');
+    const sources = page.locator('tbody td').filter({has:page.locator('[data-source-file="17"]')});
+    const locators = sources.getByRole('link');
+    assert.deepEqual((await sources.innerText()).trim().split(/\s+/),[group.name,group.name]);
+    assert.equal(await locators.count(),2);
+    for (const [index, link] of (await locators.all()).entries()) {
+      assert.equal(await link.getAttribute('aria-label'),'定位原消息：' + group.name + '（来源 ' + (index + 1) + '）');
+      assert.equal(await link.locator('svg[aria-hidden="true"]').count(),1);
+      const hit = await link.boundingBox();
+      assert.ok(Math.min(hit.width,hit.height) >= (mobile ? 44 : 32));
+    }
+    if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
+      await locators.first().scrollIntoViewIfNeeded();
+      await page.screenshot({path:process.env.OMNIRELAY_CHAT_EVIDENCE + '/drive-source-' + width + '-' + theme + '.png'});
+    }
     await act(otherLink);
     await page.locator('[data-source-message]:focus').getByText('会议安排').waitFor();
     deleted = true;
@@ -1344,6 +1450,7 @@ test('文件预览分页、工作表、目录、转换重试与撤权', {skip:!p
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const url = new URL(route.request().url());
     const respond = json => route.fulfill({json});
+    if (url.pathname.endsWith('/sync')) return respond({groups:Number(access),pending_sources:0,complete_sources:Number(access)});
     if (!url.pathname.includes('/previews')) return respond({items:access ? [file] : [],total:access ? 1 : 0,projects:{}});
     if (!access) return route.fulfill({status:403,json:{error:'forbidden'}});
     const params = url.searchParams;
@@ -1425,6 +1532,7 @@ test('文件预览格式失败后刷新列表并打开新版本', {skip:!package
       project_ids:[],sources:[],sync_state:'complete'};
     await page.route(origin + '/api/v1/feishu/files**', async route => {
       const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/sync')) return route.fulfill({json:{groups:1,pending_sources:0,complete_sources:1}});
       if (!path.includes('/previews')) {
         const row = result.stage === 'unsupported' ? {...file,name:'验收名单.csv',format:'其他文件',format_key:'generic'} : file;
         return route.fulfill({json:{items:[{...row,version_id:version}],total:1,projects:{}}});

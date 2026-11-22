@@ -49,7 +49,7 @@ export async function previewCanvas(data, label) {
   } finally { bitmap.close(); }
 }
 
-export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus}) {
+export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus, filePath = path => path}) {
   const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', restoreFocus,
     description:row.format + (row.category === 'docs' && row.version_id ? ' · 已同步纯文本正文' : '') + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
     body:'<div data-metadata></div><section class="drive-preview-content"><p role="status" tabindex="-1"></p>' +
@@ -142,7 +142,7 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
         if (row.format_key === 'image') media.alt = row.name;
         else { media.controls = true; media.preload = 'metadata'; media.setAttribute('aria-label', row.name); }
         displayedTask = {path:versions, signal, media:true};
-        media.src = versionPath + '/content';
+        media.src = filePath(versionPath + '/content');
         body.replaceChildren(media);
         status.textContent = '';
         return;
@@ -218,4 +218,35 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
   });
   if (row.version_id) void load();
   else status.textContent = '文件仅部分同步，尚无可读版本。';
+}
+
+export async function readLocalDocument(path, request, trigger, signal, refresh) {
+  const { openDialog, toast } = window.OmniRelayUI;
+  trigger.disabled = true;
+  try {
+    const source = await request(path, {signal});
+    if (signal.aborted || !trigger.isConnected) return;
+    if (trigger.hasAttribute('data-local-download')) {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([source.text], {type:'text/plain;charset=utf-8'}));
+      link.download = source.title + '.txt';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      return;
+    }
+    const close = () => dialog.close();
+    const dialog = openDialog({
+      title:source.title, drawer:'wide', description:'项目文档',
+      body:'<div class="drive-preview-content"><p class="drive-preview-text">' + esc(source.text || '暂无正文。') + '</p></div>',
+      restoreFocus:() => trigger, onClose:() => signal.removeEventListener('abort', close)
+    });
+    signal.addEventListener('abort', close, {once:true});
+  } catch (error) {
+    if (signal.aborted) return;
+    const denied = [403,404].includes(error.status);
+    toast('error', denied ? '当前文档已不可访问。' : '读取文档失败，请重试。');
+    if (denied) await refresh();
+  } finally {
+    trigger.disabled = false;
+  }
 }

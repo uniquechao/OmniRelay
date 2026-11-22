@@ -1,4 +1,5 @@
 .drive-sync {
+  flex: none;
   margin-bottom: 9px;
   color: var(--or-text-secondary);
   font-size: .875rem;
@@ -7,6 +8,7 @@
 .drive-sync .or-loading { margin-bottom: 4px; }
 .drive-categories {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 9px;
@@ -16,8 +18,9 @@
   background: var(--or-selected-bg);
   color: var(--or-link);
 }
-#drive-file-list { display: flex; flex: 1 1 auto; min-height: 0; }
-#drive-file-list .list-scroll table { min-width: 610px; }
+#drive-file-list { display: flex; flex: 0 1 auto; min-height: 0; }
+#drive-file-list .standard-list { min-height: min-content; }
+#drive-file-list .list-scroll table { min-width: 840px; }
 #drive-file-list .list-scroll th[data-column="name"] { min-width: 138px; }
 #drive-file-list .list-scroll th[data-column="preview"] { min-width: 62px; }
 .drive-source {
@@ -98,3 +101,22 @@
 }
 .drive-projects .kind { overflow-wrap: anywhere; }
 .or-dialog:has(#drive-project-picker) .combo-box { position: static; max-height: min(11rem, 30vh); }
+
+#project-panel:has(> #drive-file-list) { gap: 0; }
+#project-panel > #drive-file-list { flex: 1 1 auto; min-height: 245px; }
+.drive-source-row { display: flex; align-items: center; gap: 4px; }
+.drive-source-row strong { overflow-wrap: anywhere; }
+.drive-source-locate {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--or-link);
+}
+.drive-source-locate:is(:hover, :focus-visible) { background: var(--or-selected-bg); }
+.drive-source-locate:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+@media (pointer: coarse) {
+  .drive-source-locate { width: 44px; height: 44px; }
+}

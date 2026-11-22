@@ -46,7 +46,7 @@ async function check(name, action) {
 }
 const panels = [
   ['overview', '暂无关键节点。'], ['members', '项目负责人'], ['chats', '当前账号已无法访问此会话。'],
-  ['meetings', '暂无记录。'], ['docs', '暂无记录。'], ['reports', '本地日报'],
+  ['meetings', '暂无记录。'], ['docs', '暂无文件。'], ['reports', '本地日报'],
   ['tasks', '暂无任务'], ['feishu', '待绑定'],
 ];
 async function projects(manager, second) {

@@ -49,6 +49,7 @@ type previewOutput struct {
 	Body  []byte          `json:"body,omitempty"`
 }
 type previewRequest struct {
+	project string
 	reader  identity.Principal
 	file    item
 	version int64
@@ -77,6 +78,9 @@ func previewParams(r *http.Request) (previewOptions, bool) {
 	for key, values := range r.URL.Query() {
 		if len(values) != 1 {
 			return o, false
+		}
+		if key == "source_project" {
+			continue
 		}
 		n, err := strconv.Atoi(values[0])
 		if err != nil || n < 0 {
@@ -122,7 +126,8 @@ func (s *Service) registerPreviews(mux *http.ServeMux, auth func(http.ResponseWr
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		files, err := s.visible(ctx, p, fid, nil)
+		project := r.URL.Query().Get("source_project")
+		files, err := s.visibleInProject(ctx, p, fid, nil, project)
 		if err != nil {
 			problem(w, 503, "source_unavailable")
 			return
@@ -131,7 +136,7 @@ func (s *Service) registerPreviews(mux *http.ServeMux, auth func(http.ResponseWr
 			problem(w, 403, "forbidden")
 			return
 		}
-		q := previewRequest{reader: p, file: files[0], version: version, sources: messageIDs(files[0])}
+		q := previewRequest{project: project, reader: p, file: files[0], version: version, sources: messageIDs(files[0])}
 		slices.Sort(q.sources)
 		q.sources = slices.Compact(q.sources)
 		if r.Method == http.MethodPost {
@@ -288,7 +293,7 @@ func (s *Service) runPreview(id string, q previewRequest) {
 }
 
 func (s *Service) convertVersion(ctx context.Context, q previewRequest) previewOutput {
-	files, err := s.visible(ctx, q.reader, q.file.ID, nil)
+	files, err := s.visibleInProject(ctx, q.reader, q.file.ID, nil, q.project)
 	if err != nil {
 		return previewOutput{Stage: "source_unavailable"}
 	}

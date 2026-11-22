@@ -1,3 +1,4 @@
+import { mountDrive } from './drive.js';
 import { chatAPI, mountChatReader } from './chat-reader.js';
 import { openProjectProfile } from './project-profile.js';
 
@@ -6,7 +7,7 @@ const tabs = {
   members: '成员',
   chats: '群聊',
   meetings: '会议纪要',
-  docs: '文档',
+  docs: '文件',
   reports: '日报',
   tasks: '任务',
   bot: 'Bot',
@@ -559,7 +560,7 @@ function endpoint(route) {
   const { id, tab, parts, params } = route;
   const root = '/api/v1/projects';
   const query = new URLSearchParams();
-  if (!id || (['docs', 'meetings', 'reports'].includes(tab) && !parts.length)) {
+  if (!id || (['meetings', 'reports'].includes(tab) && !parts.length)) {
     query.set('page', pageNumber(params));
     query.set('page_size', 25);
   }
@@ -717,7 +718,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     const content =
       tab === 'overview'
         ? overview
-        : tab === 'chats' || (tab === 'bot' && !botSettings)
+        : tab === 'chats' || tab === 'docs' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
           : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
     const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
@@ -748,6 +749,10 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (tab === 'bot' && !botSettings) {
       const { mountProjectBot } = await import('./project-bot.jsx');
       if (current()) mountProjectBot(body, id, base, request, signal);
+      return;
+    }
+    if (tab === 'docs') {
+      mountDrive(body, request, signal, { projectId:id, memory:memory.files ??= {}, initialQuery:route.params.get('q') || '' });
       return;
     }
     if (tab === 'chats') {

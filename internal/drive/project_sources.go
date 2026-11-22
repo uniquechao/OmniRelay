@@ -21,10 +21,7 @@ type ProjectSource struct {
 
 // 项目入口复用网盘的有效归属、可读群及来源版本筛选。
 func (s *Service) ProjectSources(ctx context.Context, actor identity.Principal, project string) ([]ProjectSource, error) {
-	if project == "" || actor.TenantKey != s.tenant || actor.AppID != s.app || actor.AccountID == "" {
-		return nil, ErrRevoked
-	}
-	files, err := s.visibleInProject(ctx, actor, 0, nil, project)
+	files, err := s.ProjectListEntries(ctx, actor, project)
 	if err != nil {
 		return nil, err
 	}
@@ -41,4 +38,15 @@ func (s *Service) ProjectSources(ctx context.Context, actor identity.Principal, 
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) ProjectListEntries(ctx context.Context, actor identity.Principal, project string) ([]ListEntry, error) {
+	if project == "" || actor.TenantKey != s.tenant || actor.AppID != s.app || actor.AccountID == "" {
+		return nil, ErrRevoked
+	}
+	files, err := s.visibleInProject(ctx, actor, 0, nil, project)
+	if err != nil {
+		return nil, err
+	}
+	return listEntries(files), nil
 }
