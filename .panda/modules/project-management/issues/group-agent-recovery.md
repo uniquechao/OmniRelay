@@ -50,3 +50,9 @@ Runtime 使用单副本 StatefulSet、独立持久卷、集群内双向 TLS 服�
 根据项目详情 Bot 页截图，将空会话改为三个可编辑的提问入口，分别查询项目进展、任务和成员。选择后在消息框编辑，点击发送才调用原有接口。有历史时按提问和署名回复排版。工作台按可用宽度约束对话行宽，窄屏入口纵排，项目标签栏滚动到选中项。
 
 改动位于 `web/project-bot.js`、`web/project-bot.css` 和 `web/projects.js`。浏览器回归 `tests/integration/project_workbench_browser.test.mjs` 通过工作台正式入口和模拟接口核对选题、编辑、发送、回复与飞书接入，在 1366px 和 390px 下覆盖浅色、深色。界面验证使用测试项目，线上模型与部署独立验证。
+
+### 嵌入 DSH 原生聊天
+
+Bot 标签按需加载与 Runtime 对齐的 DSH 0.2.2-rc.2。官方 ConversationRoot、HeroShell、InputBar、DraftEditorRuntime、UserMessageBubble 和 MarkdownText 负责呈现与编辑。工作台将当前账号的项目历史、提交和重试接到这些组件；发送沿用原站内 POST 和幂等键。飞书接入仍从对话标题栏打开。
+
+标签栏下方按工作区实际宽高布局。空会话显示 DSH 欢迎区；有消息时历史区独立滚动，输入栏停靠底部。类型检查、干净安装与生产构建通过。浏览器使用受控项目接口，覆盖桌面和手机的两种主题、实际边界尺寸、50 条历史、Markdown、键盘换行和发送、同键重试，以及权限失效后的历史清理。截图在工程根目录 `artifacts/dsh-project-chat/`。本次未部署。

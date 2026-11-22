@@ -25,6 +25,7 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 
 ## 接口与测试
 
+- 项目 Bot 按需挂载与 Runtime 版本对应的 DSH 官方会话容器、输入栏和消息组件，工作台负责对接已授权的站内消息。升级 Runtime 时同步核对前端组件与输入、主题及消息协议。
 - 工作台项目 Bot 通过 `GET/POST /api/v1/projects/{projectID}/bot/messages` 读写本人的项目对话。Gateway 从登录会话和有效会籍确定身份与项目，DSH 按成员及授权代次续接会话。模型返回后，Gateway 再次核验工具回执与当前权限并生成项目署名。飞书接入管理位于 Bot 页的「飞书接入」入口。
 - `GET /api/v1/projects` 返回 `can_create`。`GET /api/v1/projects/{projectID}/overview` 返回 `can_manage_profile` 与档案版本。`POST /api/v1/projects` 支持以 `Idempotency-Key` 重试创建。档案修改和归档分别使用 `PUT /api/v1/projects/{projectID}/profile` 与 `POST /api/v1/projects/{projectID}/archive`。
 - `internal/project/profile_test.go` 覆盖 PostgreSQL 项目生命周期，`tests/integration/project_workbench_browser.test.mjs` 覆盖工作台操作和冲突恢复。
