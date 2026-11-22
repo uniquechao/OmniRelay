@@ -289,7 +289,11 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 		name := f.Name
 		switch f.Category {
 		case "docs", "minutes":
-			name += ".txt"
+			if info.mime == "application/vnd.omnirelay.docx+json" {
+				name += ".json"
+			} else {
+				name += ".txt"
+			}
 		case "tasks":
 			name += ".json"
 		}
@@ -481,6 +485,9 @@ func (s *Service) versionInfo(ctx context.Context, p identity.Principal, f item,
 }
 
 func contentType(f item, detected string) string {
+	if f.Category == "docs" && detected == "application/vnd.omnirelay.docx+json" {
+		return "application/json"
+	}
 	if f.Category == "docs" || f.Category == "minutes" {
 		return "text/plain; charset=utf-8"
 	}

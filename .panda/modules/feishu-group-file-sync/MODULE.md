@@ -15,9 +15,11 @@
 - 逻辑文件、消息来源、来源可读版本和物理内容分别标识。租户内相同 SHA-256 可复用一个对象；版本访问必须命中当前可读消息在 `feishu_file_share_versions` 中的记录。
 - 新原件及文档正文通过私有 S3 存储，旧分块仍可读取。对象上传与数据库完成状态分别提交，领取时间和凭据代次防止过期任务发布。已发布对象与未发布上传分别追踪，后者可在宽限期后回收。
 
+- Docx 图文采集与预览复用同一文件版本和来源授权。块分页固定文档修订，图片保存进快照；图片失败或修订变化不发布新版本。预览只渲染规范化块和允许的链接，通过 canvas 展示已授权图片，不放开 CSP 或暴露平台临时地址。
+
 ## 接口与测试
 
-- `/api/v1/feishu/files` 提供列表、来源、版本、预览、归属和原件读取。下载和分段播放均经服务端授权；项目来源可附带 `source_project` 限定入口。Docx 提供纯文本版本。
+- `/api/v1/feishu/files` 提供列表、来源、版本、预览、归属和原件读取。下载和分段播放均经服务端授权；项目来源可附带 `source_project` 限定入口。Docx 新版本保存结构化图文快照，旧纯文本版本保持可读。
 - 定向用例见 `internal/drive/group_sync_test.go`、`internal/drive/drive_test.go`、`internal/feishu/files_test.go`、`migrations/group_files_test.go` 及 `tests/integration/chat_reader_browser.test.mjs`。数据库回归需要隔离的 `OMNIRELAY_TEST_DATABASE_URL`；在专用的测试桶配置下设置 `OMNIRELAY_TEST_S3=1` 可验证真实对象读写和回收。
 
 <!-- panda:module-meta:start -->

@@ -23,7 +23,103 @@ function table(rows, fields) {
   return '<div class="table-box drive-preview-table" tabindex="0" role="region" aria-label="表格预览"><table>' +
     header + '<tbody>' + rows.map(row => '<tr>' + row.map(v => '<td>' + cell(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
 }
+// Render only normalized document nodes. Provider HTML and image URLs are never inserted.
+export function renderDocumentBlocks(blocks) {
+  let imageIndex = 0;
+  function runs(items = []) {
+    return items.map(run => {
+      let text = esc(run.text ?? '');
+      if (run.code) text = '<code>' + text + '</code>';
+      if (run.bold) text = '<strong>' + text + '</strong>';
+      if (run.italic) text = '<em>' + text + '</em>';
+      if (run.underline) text = '<u>' + text + '</u>';
+      if (run.strike) text = '<s>' + text + '</s>';
+      const colors = [];
+      if (Number.isInteger(run.color) && run.color >= 1 && run.color <= 7) colors.push('doc-color-' + run.color);
+      if (Number.isInteger(run.background) && run.background >= 1 && run.background <= 14) colors.push('doc-background-' + run.background);
+      if (colors.length) text = '<span class="' + colors.join(' ') + '">' + text + '</span>';
+      try {
+        const link = new URL(run.link);
+        if (['https:', 'http:'].includes(link.protocol)) text = '<a href="' + esc(link.href) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+      } catch {}
+      return text;
+    }).join('');
+  }
+  function render(items, depth = 0) {
+    if (depth > 40 || !Array.isArray(items)) return '';
+    let html = '';
+    for (let i = 0; i < items.length; i++) {
+      const b = items[i];
+      const text = runs(b.runs);
+      const cls = ['left', 'center', 'right'].includes(b.align) ? ' class="doc-align-' + b.align + '"' : '';
+      if (b.type === 'bullet' || b.type === 'ordered') {
+        const tag = b.type === 'ordered' ? 'ol' : 'ul';
+        html += '<' + tag + '>';
+        let j = i;
+        while (j < items.length && items[j].type === b.type) {
+          html += '<li>' + runs(items[j].runs) + render(items[j].children, depth + 1) + '</li>';
+          j++;
+        }
+        i = j - 1;
+        html += '</' + tag + '>';
+        continue;
+      }
+      if (b.type === 'image') {
+        html += '<figure><canvas data-document-image="' + imageIndex++ + '" role="img" aria-label="文档图片"></canvas><figcaption class="aux" hidden></figcaption></figure>';
+      } else if (b.type === 'table') {
+        html += '<div class="table-box drive-preview-table" tabindex="0" role="region" aria-label="文档表格"><table><tbody>' +
+          (b.rows ?? []).map(row => '<tr>' + row.map(cell => '<td>' + render(cell, depth + 1) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+      } else if (b.type === 'divider') html += '<hr>';
+      else if (b.type === 'heading') {
+        const level = Math.max(1, Math.min(6, Number(b.level) || 1));
+        html += '<h' + level + cls + '>' + text + '</h' + level + '>';
+      } else if (b.type === 'code') html += '<pre><code>' + text + '</code></pre>';
+      else if (b.type === 'quote') html += '<blockquote>' + text + '</blockquote>';
+      else if (b.type === 'todo') html += '<p' + cls + '><input type="checkbox" disabled' + (b.checked ? ' checked' : '') + ' aria-label="待办状态"> ' + text + '</p>';
+      else if (text) html += '<p' + cls + '>' + text + '</p>';
+      html += render(b.children, depth + 1);
+    }
+    return html;
+  }
+  return '<article class="drive-document">' + render(blocks) + '</article>';
+}
+
+export async function renderDocumentImages(root, data, signal) {
+  const images = [];
+  function visit(blocks, depth = 0) {
+    if (depth > 40 || !Array.isArray(blocks)) return;
+    for (const b of blocks) {
+      if (b.type === 'image') images.push(b.image);
+      if (b.type === 'table') for (const row of b.rows ?? []) for (const cell of row) visit(cell, depth + 1);
+      visit(b.children, depth + 1);
+    }
+  }
+  visit(data?.document);
+  for (const canvas of root.querySelectorAll('[data-document-image]')) {
+    if (signal?.aborted) return;
+    const image = images[Number(canvas.dataset.documentImage)];
+    try {
+      if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(image?.mime) || typeof image.data !== 'string') throw new Error();
+      const bytes = Uint8Array.from(atob(image.data), c => c.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], {type:image.mime}));
+      try {
+        if (signal?.aborted || !canvas.isConnected) return;
+        if (bitmap.width * bitmap.height > 40000000) throw new Error();
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      } finally { bitmap.close(); }
+    } catch {
+      canvas.hidden = true;
+      const caption = canvas.nextElementSibling;
+      caption.textContent = '此图片暂时无法显示，请重新同步文档后重试。';
+      caption.hidden = false;
+    }
+  }
+}
+
 export function renderResult(kind, data, meta) {
+  if (Array.isArray(data?.document)) return renderDocumentBlocks(data.document);
   const paragraph = value => '<p class="drive-preview-text">' + esc(value) + '</p>';
   if (typeof data?.text === 'string') return paragraph(data.text || '本页没有正文');
   if (!Array.isArray(data)) throw new Error();
@@ -51,7 +147,7 @@ export async function previewCanvas(data, label) {
 
 export function openFilePreview(row, trigger, refresh, lifetime, {request, mountMetadata, restoreFocus}) {
   const dialog = window.OmniRelayUI.openDialog({title:row.name, drawer:'wide', restoreFocus,
-    description:row.format + (row.category === 'docs' && row.version_id ? ' · 已同步纯文本正文' : '') + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
+    description:row.format + (row.category === 'docs' && row.version_id ? ' · 已同步正文' : '') + (row.version_id ? ' · 版本 ' + row.version_id : ' · 尚无可读版本'),
     body:'<div data-metadata></div><section class="drive-preview-content"><p role="status" tabindex="-1"></p>' +
       '<div data-preview-controls></div><div data-preview-body></div></section>'});
   mountMetadata(dialog, dialog.querySelector('[data-metadata]'));
@@ -171,8 +267,11 @@ export function openFilePreview(row, trigger, refresh, lifetime, {request, mount
         body.replaceChildren(canvas);
       } else {
         body.innerHTML = renderResult(kind, data, meta);
+        await renderDocumentImages(body, data, signal);
+        signal.throwIfAborted();
       }
       displayedTask = {path, signal, checking:false};
+      if (row.category === 'docs') dialog.querySelector('.dialog-heading p').textContent = row.format + (meta.document_format === 'rich' ? ' · 含格式与图片' : ' · 历史纯文本版本') + ' · 版本 ' + row.version_id;
       const summary = [];
       if (row.sync_state === 'partial') summary.push(messages.partial);
       if (entry) summary.push(meta.name);
