@@ -50,7 +50,10 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   host.innerHTML = `<form class="chat-composer" aria-label="发送消息" hidden>
     <div class="chat-composer-box">
       <ul class="chat-composer-files" aria-label="待发送附件" hidden></ul>
-      <textarea rows="1" aria-label="消息内容"></textarea>
+      <div class="chat-composer-editor">
+        <div class="chat-composer-mirror" aria-hidden="true"></div>
+        <textarea rows="1" aria-label="消息内容"></textarea>
+      </div>
       <div class="chat-composer-tools">${tools.map(([key, label]) =>
         `<button type="button" class="chat-icon-button" data-tool="${key}" aria-label="${label}" title="${label}" ${key === 'file' ? '' : 'aria-expanded="false"'}>${key === 'format' ? '<span class="chat-format-icon">Aa</span>' : icon('compose-' + key)}</button>`).join('')}
         <button type="submit" class="chat-icon-button chat-send" aria-label="发送消息" disabled>${icon('compose-send')}</button>
@@ -66,6 +69,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
   const editor = get('textarea'), send = get('[type=submit]'), chooser = get('[type=file]');
   const list = get('ul'), panel = get('[role=group]'), recover = get('[data-recover]');
   const mentionButton = get('[data-tool=mention]');
+  const mirror = get('.chat-composer-mirror'), box = get('.chat-composer-box');
   const drafts = draftScope?.drafts ?? new Map();
   let active, menu, mentionPicker, beforeEdit;
   let composing = false;
@@ -79,12 +83,59 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
         ['blob', 'busy', 'uploading'].includes(key) ? undefined : value));
     } catch {}
   }
+  function paintMentions(d) {
+    const content = document.createDocumentFragment();
+    let start = 0;
+    for (const mention of d.mentions) {
+      const mark = document.createElement('mark');
+      mark.textContent = d.text.slice(mention.start, mention.end);
+      content.append(d.text.slice(start, mention.start), mark);
+      start = mention.end;
+    }
+    content.append(d.text.slice(start));
+    mirror.replaceChildren(content);
+    mirror.parentElement.toggleAttribute('data-has-mentions', d.mentions.length > 0);
+    syncEditorScroll();
+  }
+  function syncEditorScroll() {
+    mirror.scrollTop = editor.scrollTop;
+    mirror.scrollLeft = editor.scrollLeft;
+    positionMentionPicker();
+  }
+  function positionMentionPicker() {
+    if (!mentionPicker) return;
+    let anchor = mentionButton.getBoundingClientRect();
+    if (mentionPicker.start !== null) {
+      let offset = mentionPicker.start;
+      for (const node of mirror.childNodes) {
+        if (offset < node.textContent.length) {
+          const range = document.createRange();
+          const text = node.firstChild || node;
+          range.setStart(text, offset);
+          range.setEnd(text, offset + 1);
+          anchor = range.getBoundingClientRect();
+          break;
+        }
+        offset -= node.textContent.length;
+      }
+    }
+    const bounds = box.getBoundingClientRect();
+    const left = anchor.left - bounds.left - box.clientLeft;
+    panel.style.left = Math.max(0, Math.min(left, box.clientWidth - panel.offsetWidth)) + 'px';
+    const top = Math.max(bounds.top, Math.min(anchor.top, bounds.bottom));
+    panel.style.bottom = bounds.bottom - box.clientTop - top + 6 + 'px';
+  }
+  editor.addEventListener('scroll', syncEditorScroll);
+  const layout = new ResizeObserver(syncEditorScroll);
+  for (const element of [box, editor, panel]) layout.observe(element);
+  signal.addEventListener('abort', () => layout.disconnect(), { once: true });
   function refresh(d) {
     if (d !== active?.draft || signal?.aborted) return;
     const locked = Boolean(d.operation);
     editor.readOnly = locked;
     editor.rows = Math.min(4, d.text.split('\n').length);
     if (editor.value !== d.text) editor.value = d.text;
+    paintMentions(d);
     const cap = active.cap;
     const reason = !cap?.can_send ? active.reason : locked ? '请先核对本次发送结果。' :
       d.files.some(f => !usable(f)) ? '请等待上传完成或处理异常附件。' :
@@ -113,6 +164,8 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
     mentionPicker = null;
     panel.hidden = true;
     panel.replaceChildren();
+    panel.style.removeProperty('left');
+    panel.style.removeProperty('bottom');
   }
   async function capabilities(view) {
     if (active === view && menu === mentionButton) closeMenu();
@@ -243,6 +296,7 @@ export function mountChatComposer(host, api, { signal, draftScope, onConfirmed =
           matches ? '' : picker.hasMore ? '已加载成员中没有匹配项。' :
           query ? '没有匹配的群成员。' : '暂无可提及成员。';
         notice.hidden = !notice.textContent;
+        positionMentionPicker();
       }
       async function page(offset) {
         picker.loading = true;

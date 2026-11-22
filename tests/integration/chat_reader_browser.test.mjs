@@ -719,6 +719,10 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   await tool('表情').click();
   await tool('🎉').click();
   await tool('提及成员').click();
+  const trigger = await tool('提及成员').boundingBox();
+  const choices = await box.getByRole('group', { name: '提及成员' }).boundingBox();
+  assert.ok(choices.x <= trigger.x + trigger.width && choices.x + choices.width >= trigger.x);
+  assert.ok(choices.y + choices.height <= trigger.y);
   await tool('林晓').click();
   await tool('展开输入框').click();
   assert.equal(await tool('收起输入框').getAttribute('aria-expanded'), 'true');
@@ -736,6 +740,7 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
   assert.equal(await editor.inputValue(), '');
   await page.locator('[data-chat-id="oc_group"]').first().click();
   assert.equal(await editor.inputValue(), '**正文**\n🎉@林晓 ');
+  assert.deepEqual(await box.locator('.chat-composer-mirror mark').allTextContents(), ['@林晓']);
   await editor.press('Enter');
   await tool('查询发送结果').waitFor();
   assert.deepEqual(sends[0].paragraphs, [[{ text: '正文', styles: ['bold'] }], [{ text: '🎉' }, { mention_open_id: 'ou_user' }, { text: ' ' }]]);
@@ -806,7 +811,10 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     const member = picker.getByRole('button', { name: '林晓' });
     await member.waitFor();
     const bounds = await picker.boundingBox();
+    const field = await editor.boundingBox();
     assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1);
+    assert.ok(bounds.x >= field.x - 1 && bounds.x <= field.x + 30);
+    assert.ok(bounds.y + bounds.height <= field.y + 8);
     if (width === 390) await member.tap();
     else {
       await editor.press('ArrowDown');
@@ -815,16 +823,48 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     }
     assert.deepEqual(sends, []);
     assert.equal(await editor.inputValue(), '🎉@林晓 ');
+    const mirror = box.locator('.chat-composer-mirror');
+    const marks = mirror.locator('mark');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
+    assert.ok(await marks.first().isVisible());
+    assert.ok(await marks.first().evaluate(mark => getComputedStyle(mark).color !== getComputedStyle(mark.parentElement).color));
     await page.keyboard.insertText('请查收 ');
     await page.keyboard.insertText('@');
     await picker.getByRole('button', { name: '王宁' }).waitFor();
+    if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
+      await page.screenshot({ path: process.env.OMNIRELAY_CHAT_EVIDENCE + '/mention-' + width + '-' + theme + '.png' });
+    }
     await editor.press('Escape');
     await picker.waitFor({ state: 'hidden' });
     await page.keyboard.insertText('王宁');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
+    assert.equal(await mirror.textContent(), await editor.inputValue());
+    await box.getByRole('button', { name: '提及成员' }).click();
+    await picker.getByRole('button', { name: '王宁' }).click();
+    assert.deepEqual(await marks.allTextContents(), ['@林晓', '@王宁']);
+    await editor.press('Backspace');
+    await editor.press('Backspace');
+    assert.deepEqual(await marks.allTextContents(), ['@林晓']);
     await editor.press('Enter');
     await box.getByText('飞书已确认接收。').waitFor();
     assert.equal(sends.length, 1);
-    assert.deepEqual(sends[0].paragraphs, [[{ text: '🎉' }, { mention_open_id: 'ou_lin' }, { text: ' 请查收 @王宁' }]]);
+    assert.deepEqual(sends[0].paragraphs, [[{ text: '🎉' }, { mention_open_id: 'ou_lin' }, { text: ' 请查收 @王宁@王' }]]);
+
+    await editor.fill('换行正文\n'.repeat(10));
+    await editor.press('ControlOrMeta+End');
+    await page.keyboard.insertText('@');
+    await picker.getByRole('button', { name: '王宁' }).click();
+    await page.keyboard.insertText(' 后续文字');
+    await page.keyboard.insertText('＠');
+    await picker.getByRole('button', { name: '王宁' }).waitFor();
+    const scrolledField = await editor.boundingBox();
+    const visibleMention = await marks.boundingBox();
+    const scrolledPicker = await picker.boundingBox();
+    assert.ok(await editor.evaluate(node => node.scrollTop > 0));
+    assert.ok(visibleMention.y >= scrolledField.y && visibleMention.y + visibleMention.height <= scrolledField.y + scrolledField.height);
+    assert.ok(scrolledPicker.y + scrolledPicker.height <= visibleMention.y);
+    assert.ok(scrolledPicker.y + scrolledPicker.height >= visibleMention.y - 8);
+    await editor.press('Escape');
 
     await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + direct.id);
     await box.getByRole('textbox', { name: '消息内容' }).and(page.getByPlaceholder('发送给 林晓')).waitFor();
@@ -834,7 +874,7 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     await page.keyboard.insertText('@');
     assert.equal(await editor.inputValue(), '@');
     assert.ok(await picker.isHidden());
-    assert.deepEqual(memberRequests, Array(3).fill(base + '/oc_group/members'));
+    assert.deepEqual(memberRequests, Array(6).fill(base + '/oc_group/members'));
     await page.close();
   }
 });
