@@ -1,5 +1,4 @@
 import { chatAPI, mountChatReader } from './chat-reader.js';
-import { mountProjectBot } from './project-bot.js';
 import { openProjectProfile } from './project-profile.js';
 
 const tabs = {
@@ -747,7 +746,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
       memory.tabFocus = false;
     }
     if (tab === 'bot' && !botSettings) {
-      await mountProjectBot(body, id, base, request, signal);
+      const { mountProjectBot } = await import('./project-bot.jsx');
+      if (current()) mountProjectBot(body, id, base, request, signal);
       return;
     }
     if (tab === 'chats') {

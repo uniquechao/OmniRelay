@@ -488,17 +488,21 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await visible('正在加载…');
       await go(path + 'bot');
       await page.getByRole('tab', {name:'Bot', exact:true}).waitFor();
-      const input = page.getByRole('textbox', {name: '消息', exact: true});
+      const input = page.getByRole('textbox', {name: '给项目 PM 发消息…'});
       const starter = page.getByRole('button', {name: '查看进行中任务'});
-      const send = page.getByRole('button', {name: '发送', exact: true});
+      const send = page.getByRole('button', {name: '发送消息', exact: true});
       await starter.waitFor();
       const tab = await page.getByRole('tab', {name: 'Bot', selected: true}).boundingBox();
       assert.ok(tab.x >= 0 && tab.x + tab.width <= width);
       assert.ok(await send.isDisabled());
+      const chatBox = await page.locator('.dsh-project-chat').boundingBox();
+      const workBox = await page.locator('.workspace').boundingBox();
+      assert.ok(Math.abs(chatBox.x - workBox.x) < 2 && Math.abs(chatBox.width - workBox.width) < 2);
+      assert.ok(Math.abs(chatBox.y + chatBox.height - (workBox.y + workBox.height)) < 2);
       const proof = process.env.OMNIRELAY_PM_EVIDENCE;
       if (proof) await page.screenshot({path: proof + '/empty-' + width + '-' + theme + '.png'});
       await starter.click();
-      assert.equal(await input.inputValue(), '哪些任务还在进行中？');
+      assert.equal(await input.innerText(), '哪些任务还在进行中？');
       assert.ok(await input.evaluate(el => el === document.activeElement));
       await input.fill('你好，项目 PM');
       assert.ok(await starter.isDisabled());
@@ -907,4 +911,53 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   assert.doesNotMatch(await page.locator('#page').innerText(), /暂无记录|交付文档|启明群|已送达/);
   assert.deepEqual(writes, []);
   assert.deepEqual(first.errors, []);
+});
+
+test('DSH 项目对话长历史、键盘发送、重试与撤权', {skip: !moduleName}, async t => {
+  const browser = await require(moduleName).chromium.launch({executablePath: process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 390, height: 844}});
+  const f = await fixture(page);
+  const items = Array.from({length: 50}, (_, i) => ({
+    id: String(i), state: 'sent', question: '任务 ' + i, answer: '项目 PM\n**已确认**',
+  }));
+  const keys = [];
+  let deny = false;
+  await page.route(origin + root + '/bot/messages', route => {
+    if (deny) return route.fulfill({status: 403, json: {error: 'project_access_denied'}});
+    if (route.request().method() === 'POST') {
+      const {text} = route.request().postDataJSON();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) return route.fulfill({status: 503, json: {error: 'unavailable'}});
+      items.push({id: 'next', question: text, state: 'running'});
+      return route.fulfill({status: 202, json: {id: 'next'}});
+    }
+    return route.fulfill({json: {items}});
+  });
+  await page.goto(origin + '/#/projects/p-21/bot');
+  const input = page.getByRole('textbox', {name: '给项目 PM 发消息…'});
+  const history = page.getByRole('list', {name: '我的项目对话'});
+  await history.getByText('任务 49', {exact: true}).waitFor();
+  assert.equal(await history.locator('article strong').filter({hasText: '已确认'}).count(), 50);
+  const area = page.locator('[data-conversation-scroll]');
+  assert.ok(await area.evaluate(el => el.scrollHeight > el.clientHeight && el.scrollTop > 0));
+  await area.evaluate(el => { el.scrollTop = 0; });
+  const box = await input.boundingBox();
+  assert.ok(box.y > 0 && box.y + box.height <= 844);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1));
+  await input.fill('第一行');
+  await input.press('Shift+Enter');
+  await page.keyboard.insertText('第二行');
+  assert.equal(keys.length, 0);
+  await input.press('Enter');
+  await page.getByText('发送未确认，可以重试。').waitFor();
+  assert.match(await input.innerText(), /第一行\s+第二行/);
+  await page.getByRole('button', {name: '发送消息', exact: true}).click();
+  await page.getByText('项目 PM 正在回复…').waitFor();
+  assert.ok(keys[0] && keys[0] === keys[1]);
+  assert.match(items.at(-1).question, /第一行\s+第二行/);
+  deny = true;
+  await page.getByText('当前项目对话不可访问。').waitFor();
+  assert.equal(await history.count(), 0);
+  assert.deepEqual(f.errors, []);
 });

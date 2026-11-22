@@ -21,6 +21,7 @@ export default defineConfig({
   server: { proxy: { '/api': upstream, '/auth': upstream, '^/setup(?:\\?|$)': upstream } },
   build: {
     outDir: '../web/dist', emptyOutDir: true, assetsInlineLimit: 0,
+    license: {fileName: 'assets/third-party-licenses.txt'},
     rollupOptions: { input: [resolve('frontend/index.html'), resolve('frontend/setup.html')] }
   }
 });
