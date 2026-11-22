@@ -270,7 +270,12 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return
 			}
 			if id == 0 {
-				list(w, r, files)
+				page, err := FilePage(r.URL.Query(), listEntries(files))
+				if err != nil {
+					problem(w, 400, err.Error())
+					return
+				}
+				jsonResponse(w, 200, page)
 				return
 			}
 			if len(files) != 1 {
@@ -412,39 +417,79 @@ func (s *Service) content(ctx context.Context, w http.ResponseWriter, r *http.Re
 
 var categoryLabels = map[string]string{"docs": "飞书文档", "minutes": "会议纪要", "tasks": "任务表格（多维表格）", "files": "文件"}
 
-func list(w http.ResponseWriter, r *http.Request, files []item) {
-	q := r.URL.Query()
+// ListEntry 的网盘记录使用数值 ID，本地来源使用带前缀的字符串 ID。
+type ListEntry struct {
+	item
+	Key           any        `json:"id"`
+	SharedAt      *time.Time `json:"shared_at"`
+	LocalSourceID string     `json:"local_source_id,omitempty"`
+}
+
+func listEntries(files []item) []ListEntry {
+	entries := make([]ListEntry, 0, len(files))
+	for _, f := range files {
+		// 来源已按分享时间倒序排列。
+		entries = append(entries, ListEntry{item: f, Key: f.ID, SharedAt: &f.Sources[0].SentAt})
+	}
+	return entries
+}
+
+func LocalDocument(project, id, name string) ListEntry {
+	return ListEntry{Key: "document:" + id, LocalSourceID: id, item: item{
+		Name: name, Category: "files", Format: "项目文档", FormatKey: "generic", State: "local",
+		Projects: []string{project}, Sources: []share{},
+	}}
+}
+
+func (entry ListEntry) listCategory() string {
+	if entry.FormatKey == "image" || entry.FormatKey == "video" {
+		return entry.FormatKey
+	}
+	if entry.Category == "files" {
+		return "attachments"
+	}
+	return entry.Category
+}
+
+func (entry ListEntry) sourceName() string {
+	if len(entry.Sources) == 0 {
+		return ""
+	}
+	return entry.Sources[0].ChatName
+}
+
+func FilePage(q url.Values, files []ListEntry) (map[string]any, error) {
 	offset, limit := 0, 20
 	var err error
 	if q.Has("offset") {
 		offset, err = strconv.Atoi(q.Get("offset"))
 		if err != nil || offset < 0 {
-			problem(w, 400, "invalid_page")
-			return
+			return nil, errors.New("invalid_page")
 		}
 	}
 	if q.Has("limit") {
 		limit, err = strconv.Atoi(q.Get("limit"))
 		if err != nil || limit < 1 || limit > 100 {
-			problem(w, 400, "invalid_page")
-			return
+			return nil, errors.New("invalid_page")
 		}
 	}
 	key := q.Get("sort")
 	order := q.Get("order")
-	if !slices.Contains([]string{"", "name", "size", "category", "project", "format", "updated_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
-		problem(w, 400, "invalid_sort")
-		return
+	if !slices.Contains([]string{"", "name", "size", "category", "project", "format", "updated_at", "shared_at", "source"}, key) || !slices.Contains([]string{"", "asc", "desc"}, order) {
+		return nil, errors.New("invalid_sort")
 	}
 	projectOptions := map[string]string{}
-	selected := []item{}
+	selected := []ListEntry{}
+	category := q.Get("category")
 	term := strings.ToLower(strings.TrimSpace(q.Get("q")))
 	for _, f := range files {
 		for _, project := range f.Projects {
 			projectOptions[project] = project
 		}
-		category := q.Get("category")
-		if category != "" && category != "all" && category != f.Category {
+		if category != "" && category != "all" && category != f.Category && category != f.listCategory() {
+			continue
+		}
+		if state := q.Get("sync_state"); state != "" && state != f.State {
 			continue
 		}
 		if format := q.Get("format"); format != "" && f.Format != format && f.FormatKey != format {
@@ -474,13 +519,17 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 			} else {
 				ordering = cmp.Compare(*a.Size, *b.Size)
 			}
-		case "updated_at", "":
-			if a.Updated == nil || b.Updated == nil {
-				if a.Updated != b.Updated {
-					return a.Updated != nil
+		case "updated_at", "", "shared_at":
+			left, right := a.Updated, b.Updated
+			if key == "shared_at" {
+				left, right = a.SharedAt, b.SharedAt
+			}
+			if left == nil || right == nil {
+				if left != right {
+					return left != nil
 				}
 			} else {
-				ordering = a.Updated.Compare(*b.Updated)
+				ordering = left.Compare(*right)
 			}
 		case "name":
 			ordering = strings.Compare(a.Name, b.Name)
@@ -489,11 +538,14 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 		case "format":
 			ordering = strings.Compare(a.Format, b.Format)
 		case "source":
-			ordering = strings.Compare(a.Sources[0].ChatName, b.Sources[0].ChatName)
+			ordering = strings.Compare(a.sourceName(), b.sourceName())
 		case "category":
-			ordering = strings.Compare(a.Category, b.Category)
+			ordering = strings.Compare(a.listCategory(), b.listCategory())
 		}
 		if ordering == 0 {
+			if a.ID == b.ID {
+				return a.LocalSourceID < b.LocalSourceID
+			}
 			return a.ID < b.ID
 		}
 		if order == "desc" || (order == "" && key == "") {
@@ -504,7 +556,7 @@ func list(w http.ResponseWriter, r *http.Request, files []item) {
 	total := len(selected)
 	offset = min(offset, total)
 	end := offset + min(total-offset, limit)
-	jsonResponse(w, 200, map[string]any{"projects": projectOptions, "items": selected[offset:end], "total": total, "offset": offset, "limit": limit})
+	return map[string]any{"projects": projectOptions, "items": selected[offset:end], "total": total, "offset": offset, "limit": limit}, nil
 }
 
 func (s *Service) versionChunks(ctx context.Context, p identity.Principal, f item, sources []string, v int64) (pgx.Rows, error) {

@@ -320,7 +320,7 @@ window.OmniRelayUI = (() => {
     const states = config.states ?? listStates;
     if (!states.has(config.key)) {
       const initial = {
-        query: '', filters: {}, page: 0, pageSize: pageSizes[0], selected: new Set(),
+        query: config.initialQuery ?? '', filters: {}, page: 0, pageSize: pageSizes[0], selected: new Set(),
         sort: config.defaultSort ?? null, mode: config.selection === false ? 'none' : 'multiple', columnWidths: null
       };
       states.set(config.key, initial);
@@ -382,7 +382,7 @@ window.OmniRelayUI = (() => {
       <span class="sr-only" data-column-notice role="status"></span>
       <div class="list-popover" id="${popoverId}" popover="auto" aria-labelledby="${popoverId}-title">
         <h2 id="${popoverId}-title">${optionsLabel}</h2>
-        ${filters.map(filter => '<label>' + filter.label + '<select class="select" data-filter="' + filter.key + '">' +
+        ${filters.map(filter => '<label>' + escape(filter.label) + '<select class="select" aria-label="' + escape(filter.label) + '" data-filter="' + filter.key + '">' +
           options({ '': '全部', ...filter.options }, state.filters[filter.key] ?? '') + '</select></label>').join('')}
         ${config.selection === false ? '' : '<label>选择模式<select class="select" data-mode>' + options(selectionModes, state.mode) + '</select></label>'}
         <div class="popover-actions">

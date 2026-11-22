@@ -10,7 +10,7 @@
   color: var(--or-link);
 }
 #drive-file-list { display: flex; flex: 1 1 auto; min-height: 0; }
-#drive-file-list .list-scroll table { min-width: 610px; }
+#drive-file-list .list-scroll table { min-width: 840px; }
 #drive-file-list .list-scroll th[data-column="name"] { min-width: 138px; }
 #drive-file-list .list-scroll th[data-column="preview"] { min-width: 62px; }
 .drive-file-name {
@@ -76,3 +76,10 @@
 }
 .drive-projects .kind { overflow-wrap: anywhere; }
 .or-dialog:has(#drive-project-picker) .combo-box { position: static; max-height: min(11rem, 30vh); }
+
+#project-panel:has(> #drive-file-list) { gap: 0; }
+#project-panel > #drive-file-list { flex: 1 1 auto; min-height: 245px; }
+.drive-source { display: block; width: fit-content; text-decoration: none; }
+.drive-source + .drive-source { margin-top: 6px; }
+.drive-source small { display: block; color: var(--or-text-secondary); }
+.drive-source span { text-decoration: underline; }
