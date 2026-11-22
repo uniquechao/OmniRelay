@@ -82,7 +82,7 @@ func (s *Service) applyMove(ctx context.Context, k taskScope, actor identity.Pri
 			}
 			anchor := func(key *string) (int64, error) {
 				var position int64
-				err := tx.QueryRow(ctx, "SELECT position FROM project_tasks WHERE "+projectWhere+" AND id=$4 AND column_id=$5 AND id!=$6 AND status!='cancelled'", k.args(*key, in.TargetColumnID, id)...).Scan(&position)
+				err := tx.QueryRow(ctx, "SELECT position FROM project_tasks WHERE "+projectWhere+" AND id=$4 AND column_id=$5 AND id!=$6 AND deleted_at IS NULL AND status!='cancelled'", k.args(*key, in.TargetColumnID, id)...).Scan(&position)
 				if errors.Is(err, pgx.ErrNoRows) {
 					return 0, errInput
 				}

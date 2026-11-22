@@ -55,7 +55,7 @@ func (s *Service) readPanel(ctx context.Context, actor identity.Principal, id, p
 	case "overview":
 		return s.overview(ctx, actor, id)
 	case "members":
-		return s.localMembers(ctx, scope(actor, id))
+		return s.localMembers(ctx, scope(actor, id), actor)
 	case "meetings", "docs":
 		return s.sourcePanel(ctx, actor, id, panel, query)
 	case "reports":

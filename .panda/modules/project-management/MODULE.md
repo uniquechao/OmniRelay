@@ -46,3 +46,11 @@ created_ts: 1795196363019
 last_used_ts: 1795196363110
 ---
 <!-- panda:module-meta:end -->
+
+## 成员资料与任务删除
+
+- 成员 `role` 为访问角色；`role_title` 为业务角色名称，`responsibility` 为项目职责。资料版本 `version` 与权限代次 `generation` 分开：资料修改只递增版本，访问角色变化另外更换代次。`PUT /api/v1/projects/{projectID}/members/{accountID}` 要求 `expected_version`，新增账号使用候选查询返回的版本。
+- 项目设置权限可搜索启用的候选账号并管理普通成员，负责人任免另验委派权限。移除最后一位有效负责人或仍负责/参与未完成任务的成员会冲突；需先通过正式任务命令交接。成员变更和审计同事务提交。
+- `DELETE /api/v1/projects/{projectID}/tasks/{taskID}` 要求任务管理权、`expected_version` 和 `change_reason`；`request_key` 可重放原回执。任务逻辑删除保留活动和来源引用，但退出看板、搜索、详情、评论和来源任务查询，同时解除节点绑定。插件 `task_delete` 共用同一命令，由 Gateway 回执账本去重。
+- 插件 `member_candidates`、`member_update` 分别提供候选查询和按资料版本修改；`task_create` / `task_update` 接受日期、验收条件、里程碑、参与人与标签，仍执行字段级权限。
+- 关键回归：`TestMemberTaskCRUDAtomicity`、`TestProjectMemberTaskCRUDBrowser`、`TestProjectPMToolMatrix`、`TestProjectToolCRUDRecoveryGate`。浏览器通过真实登录与独立 PostgreSQL 验证网页操作；Gateway 回调独立验证插件重试和撤权。

@@ -70,7 +70,7 @@ func (s *Service) AuthorizeToolReceipt(ctx context.Context, tx pgx.Tx, actor ide
 		if !g.CanAssign && (!g.CanUpdateOwn || !ownTask(task, g.MemberID)) {
 			return errDenied
 		}
-	case "member_add", "member_set_role", "member_remove":
+	case "member_add", "member_set_role", "member_update", "member_remove":
 		var manager bool
 		err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_members WHERE "+projectWhere+" AND account_id=$4 AND role='manager')", scope(actor, projectID).args(a.String("account_id"))...).Scan(&manager)
 		if err != nil {
@@ -131,16 +131,18 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			return nil, errInput
 		}
 		return s.updateProfile(ctx, k, actor, version, &in, nil)
+	case "member_candidates":
+		return s.findMemberCandidates(ctx, k, actor, a.String("q"), int(page))
 	case "member_list":
-		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('member_id',m.member_id,'account_id',a.id,'name',a.name,'role',m.role,'generation',m.generation)
+		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('member_id',m.member_id,'account_id',a.id,'name',a.name,'role',m.role,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility)
    FROM project_members m JOIN accounts a ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id)
    WHERE (m.tenant_key,m.app_id,m.project_id)=($1,$2,$3) AND a.active AND m.role!='revoked'
-   AND ($4='' OR m.role=$4) AND strpos(lower(a.name||' '||m.member_id),lower($5))>0 ORDER BY m.member_id LIMIT 25 OFFSET $6`, k.args(a.String("role"), a.String("q"), (page-1)*25)...)
+   AND ($4='' OR m.role=$4) AND strpos(lower(a.name||' '||m.member_id||' '||m.role_title||' '||m.responsibility),lower($5))>0 ORDER BY m.member_id LIMIT 25 OFFSET $6`, k.args(a.String("role"), a.String("q"), (page-1)*25)...)
 		if err != nil {
 			return nil, err
 		}
 		return collectToolItems(rows)
-	case "member_add", "member_set_role", "member_remove":
+	case "member_add", "member_set_role", "member_update", "member_remove":
 		target := a.String("account_id")
 		role := a.String("role")
 		if role == "revoked" {
@@ -171,11 +173,28 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			if current == "" || current == "revoked" {
 				return nil, errDenied
 			}
-			if a.String("generation") != generation {
+			if name != "member_update" && a.String("generation") != generation {
 				return nil, errConflict
 			}
 		}
-		return s.changeMember(ctx, k, actor, target, memberChange{Role: role})
+		in := memberChange{Role: role}
+		if name == "member_add" {
+			in.Expected = new(int64)
+		}
+		if name == "member_update" {
+			in.Expected = &version
+		}
+		raw, _ := json.Marshal(a)
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return nil, errInput
+		}
+		if name == "member_remove" {
+			in.Role = "revoked"
+		}
+		if name == "member_add" && current == "revoked" {
+			in.Expected = nil
+		}
+		return s.changeMember(ctx, k, actor, target, in)
 	case "chat_list":
 		if id := a.String("candidate_chat_id"); id != "" {
 			if err := s.requireSettingsMutation(ctx, tx, actor, k.project); err != nil {
@@ -254,7 +273,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		return s.reports(ctx, actor, k.project, q)
 	case "task_search":
 		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('id',id,'title',title,'status',status,'version',version,'owner_member_id',owner_member_id)
-   FROM project_tasks WHERE `+projectWhere+` AND strpos(lower(title||' '||description),lower($4))>0 AND ($5='' OR status=$5) AND ($6='' OR owner_member_id=$6)
+   FROM project_tasks WHERE `+projectWhere+` AND deleted_at IS NULL AND strpos(lower(title||' '||description),lower($4))>0 AND ($5='' OR status=$5) AND ($6='' OR owner_member_id=$6)
    ORDER BY id LIMIT 25 OFFSET $7`, k.args(q.Get("q"), q.Get("status"), q.Get("owner_member_id"), (page-1)*25)...)
 		if err != nil {
 			return nil, err
@@ -279,6 +298,11 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return nil, errInput
 		}
+		for _, p := range []**string{&in.Owner, &in.Milestone, &in.Priority, &in.Start, &in.Due} {
+			if *p != nil && **p == "" {
+				*p = nil
+			}
+		}
 		if name == "task_create" && in.Owner == nil {
 			grant, err := s.roles.ProjectGrant(ctx, tx, actor, k.project)
 			if err != nil {
@@ -295,6 +319,8 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			return nil, err
 		}
 		return map[string]any{"id": saved.ID, "version": saved.Version, "status": saved.Status}, nil
+	case "task_delete":
+		return s.removeTask(ctx, k, a.String("task_id"), actor, deleteTaskInput{Expected: version, Reason: a.String("change_reason")})
 	case "task_add_progress":
 		// The outer tool ledger deduplicates this command. The task domain also requires its own key.
 		var key string

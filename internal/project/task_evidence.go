@@ -132,6 +132,9 @@ func (s *Service) linkEvidence(w http.ResponseWriter, r *http.Request, a identit
 		return nil, errInput
 	}
 	err := k.write(ctx, s, a, "project.assign", func(tx pgx.Tx, _ int64) error {
+		if _, err := k.task(ctx, tx, task, time.Now()); err != nil {
+			return err
+		}
 		if _, err := s.source(ctx, tx, k, a, kind, id); err != nil {
 			return err
 		}
@@ -186,7 +189,7 @@ func (s *Service) localSourceTasks(r *http.Request, a identity.Principal) (any, 
 		if kind == "message" && src.Chat != r.URL.Query().Get("chat_id") {
 			return errDenied
 		}
-		rows, err := tx.Query(ctx, "SELECT task_id FROM project_task_sources WHERE "+projectWhere+" AND kind=$4 AND source_id=$5 ORDER BY task_id", k.args(kind, id)...)
+		rows, err := tx.Query(ctx, "SELECT task_id FROM project_task_sources WHERE "+projectWhere+" AND kind=$4 AND source_id=$5 AND task_id IN (SELECT id FROM project_tasks WHERE tenant_key=$1 AND app_id=$2 AND project_id=$3 AND deleted_at IS NULL) ORDER BY task_id", k.args(kind, id)...)
 		if err != nil {
 			return err
 		}

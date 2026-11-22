@@ -19,7 +19,7 @@ bash tests/integration/group-agent-gate.sh
 | `TestDirectedNoticeGate` | 通过应用接口登记一次群和个人提醒。Runtime 自行发现计划，Harness 登记定时器。到期前重启 Runtime 后，同一原生定时器触发两个独立工作，内部 Channel 各有一条回执。群会话和群消息都不含个人标记。重复登记和触发均可重试 |
 | `TestNoticePermissionGate` | 普通成员、非项目收件人、错误 owner 代次、错误定时器标识及错误触发时间均被拒。撤销个人会籍只抑制该人的投递，其余有效目标继续处理。停用的计划拒绝后续回调 |
 | `TestWorkbenchChatGate` | 同一项目按账号隔离对话；重复消息复用工作，回答带当前项目署名 |
-| `TestProjectPMToolMatrix` | 20 个目录项逐项验证业务结果和权限，缺少任一目录项的测试即失败 |
+| `TestProjectPMToolMatrix` | 23 个目录项逐项验证业务结果和权限，缺少任一目录项的测试即失败 |
 | `TestProjectToolRecoveryGate` | 并发和跨代次重试仅写入一次；相同命令序号换参数、过期轮次和撤权重放被拒 |
 | `TestProjectToolHistoryGate` | 来源撤权后抑制交付与历史正文；后续模型会话与受限正文隔离 |
 | `TestProjectToolAudienceImageGate` | 内部群请求经真实 DSH 镜像、双向 TLS 在正确项目建任务，原话题得到署名回执，个人工作台显示结果 |

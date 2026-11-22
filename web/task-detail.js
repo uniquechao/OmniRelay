@@ -56,12 +56,12 @@ const options = (entries, value) =>
     )
     .join('');
 
-export async function mountTaskDetail(host, { task, project, route, back, request, signal, navigation }) {
+export async function mountTaskDetail(host, { task, project, route, back, request, signal, navigation, creating = false, capabilities = {} }) {
   const root = '/api/v1/projects/' + route.id,
     url = root + '/tasks/' + task.id;
   const get = (path) => request(path, { signal });
   const [permissions, directory, tagList, nodes] = await Promise.allSettled([
-    get(url + '/actions'),
+    creating ? Promise.resolve({edit_fields:capabilities.can_create,update_progress:capabilities.can_create,assign:capabilities.can_assign}) : get(url + '/actions'),
     get(root + '/members'),
     get(root + '/task-tags'),
     get(root + '/milestones'),
@@ -91,7 +91,8 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
   const el = host.firstElementChild,
     q = (s) => el.querySelector(s);
   q('.task-path-project').textContent = project;
-  q('.task-path-code').textContent = task.id;
+  q('.task-path-code').textContent = creating ? '新建任务' : task.id;
+  if (creating) q('[data-save]').textContent = '创建任务';
   q('[data-close]').href = back;
   q('[data-close]').innerHTML = window.OmniRelayUI.icon('action-close');
   q('[data-close]').classList.add('dialog-close');
@@ -248,6 +249,10 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     ])
       q('[data-field="' + k + '"]').hidden = !show;
     q('[data-save]').disabled = !canSave();
+    if (q('[data-delete]')) {
+      q('[data-delete]').hidden = !actions.delete;
+      q('[data-delete]').disabled = busy || dirty() || !!latest;
+    }
     control('status').dataset.stage =
       { in_progress: 'progress', blocked: 'danger', done: 'success' }[draft.status] || 'pending';
   }
@@ -423,10 +428,11 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     sync();
     q('.task-edit-grid').inert = true;
     try {
-      task = await request(url, { method: 'PUT', body: { ...body, request_key: pendingKey }, signal });
+      task = await request(creating ? root + '/tasks' : url, { method: creating ? 'POST' : 'PUT', body: { ...body, request_key: pendingKey }, signal });
       baseline = fields(task);
       draft = structuredClone(baseline);
       pendingBody = null;
+      if (creating) { location.hash = route.base + '/tasks/' + task.id; return true; }
       actions = await get(url + '/actions').catch(() => ({}));
       render();
       notice(actions.update_progress ? '任务已保存。' : '任务已保存，当前任务只读。');
@@ -453,11 +459,35 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       sync();
     }
   }
+  if (actions.delete && !creating) {
+    q('[data-save]').insertAdjacentHTML('beforebegin','<button type="button" class="button" data-delete aria-haspopup="dialog" title="请先保存修改，再删除任务">删除任务</button>');
+    q('[data-delete]').onclick = () => {
+      const key=crypto.randomUUID();
+      const dialog=openDialog({title:'删除任务？',description:task.title,variant:'form',confirm:'删除任务',tone:'warning',
+        body:'<p>删除后任务将从看板和搜索中移除，操作历史仍会保留。</p><label class="field"><span>删除原因</span><textarea name="reason" required maxlength="4000"></textarea></label><p role="status" data-delete-error></p>',
+        async onSubmit(form){
+          if(!form.elements.reason.value.trim())return {field:form.elements.reason,message:'请填写删除原因。'};
+          try{
+            await request(url,{method:'DELETE',body:{expected_version:task.version,request_key:key,change_reason:form.elements.reason.value.trim()},signal});
+            baseline=structuredClone(draft);location.hash=back;
+          }catch(error){form.querySelector('[data-delete-error]').textContent=error.status===409?'任务已更新，请关闭后重新加载。':[403,404].includes(error.status)?'任务已移除，或当前账号无权删除。':'删除失败，请重试。';return {keepOpen:true};}
+        },
+        onClose(){signal.removeEventListener('abort',abort);},
+      });
+      const abort=()=>dialog.close();signal.addEventListener('abort',abort,{once:true});
+    };
+  }
   render();
+  if (creating) {
+    q('.task-edit-comment').hidden = true;
+    q('.task-edit-activity').hidden = true;
+    q('.task-edit-metadata').hidden = true;
+    if (!actions.assign) control('status').disabled = true;
+  }
   if (!actions.update_progress) notice('当前任务只读。');
   if ([permissions, directory, tagList, nodes].some((r) => r.status === 'rejected'))
     notice('部分编辑选项暂不可用。');
-  const activity = mountTaskActivity(el, {
+  const activity = creating ? {refresh(){},hasDraft:()=>false,isSending:()=>false,saveDrafts:async()=>true} : mountTaskActivity(el, {
     url,
     root,
     route,
