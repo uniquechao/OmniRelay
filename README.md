@@ -28,6 +28,22 @@ OmniRelay 是面向 **500 人以内单飞书组织**的项目助手，采用自�
 - [飞书 Bot 卡片](design/prototype/omni-relay-feishu-prototype.html) · 试用任务查询、任务分派和项目简报三种交互。
 - [色彩系统](design/prototype/omni-relay-color-system.html) · 查看浅色、深色主题及设计色值。
 
+## 在个人 Harness 中使用 OmniRelay CLI
+
+在工作台头像菜单为自己的账号创建个人 API Key。在仓库根目录运行 `go build -o bin/omnirelaycli ./cmd/omnirelaycli`，把生成的可执行文件放到个人 Harness 可以调用的命令路径。通过该 Harness 的环境配置指定 `OMNIRELAY_URL`（OmniRelay 的 HTTPS 站点根地址），通过凭据配置注入 `OMNIRELAY_API_KEY`。允许 Harness 调用这个命令即可，无需注册 Agent 或连接 DSH Runtime。
+
+```sh
+omnirelaycli whoami
+omnirelaycli projects
+omnirelaycli project "$PROJECT_ID"
+omnirelaycli pm ask "$PROJECT_ID" "$REQUEST_ID" "我今天的项目日报是什么？"
+omnirelaycli pm messages "$PROJECT_ID"
+```
+
+从项目目录选取一个项目，将其 ID 设为 `PROJECT_ID`。目录默认显示第一页，可以用 `omnirelaycli projects 2` 翻页。发送问题前为 `REQUEST_ID` 生成一个 8–96 位的唯一标识，只使用英文字母、数字、下划线或连字符。中断后重试同一问题时复用该标识。成功提交会返回工作 ID，在本人的项目消息中按该 ID 读取状态和 PM 回复。命令用标准输出返回 JSON，失败时以非零状态退出并写入标准错误。
+
+服务端逐请求校验密钥所有者的账号、会籍和资源权限。个人工具向 PM 提问时，发起人是该用户，回答仍使用项目 PM 的名字和空间署名。用户可以在工作台独立撤销为某个 Harness 签发的密钥。
+
 ## 运行工作台
 
 工作台由 Go 服务同源提供。准备支持 TLS 的 PostgreSQL 和飞书自建应用，参照[环境变量模板](config/backend.env.example)向服务注入凭据。将 HTTPS 入口设置为 `OMNIRELAY_PUBLIC_ORIGIN`，并在飞书应用内登记该地址下的 `/auth/feishu/callback`。首次启动需要本应用下首位管理员的飞书 Open ID。
