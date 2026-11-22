@@ -940,6 +940,9 @@ test('DSH 项目对话长历史、键盘发送、重试与撤权', {skip: !modul
   const items = Array.from({length: 50}, (_, i) => ({
     id: String(i), state: 'sent', question: '任务 ' + i, answer: '项目 PM\n**已确认**',
   }));
+  items[0] = {id: 'stale', question: '查询主群', state: 'stale'};
+  items[1] = {id: 'primary', question: '设置主群', state: 'suppressed', primary_saved: true};
+  items[2] = {id: 'restricted', question: '查看受限文件', state: 'suppressed'};
   const keys = [];
   let deny = false;
   await page.route(origin + root + '/bot/messages', route => {
@@ -957,7 +960,10 @@ test('DSH 项目对话长历史、键盘发送、重试与撤权', {skip: !modul
   const input = page.getByRole('textbox', {name: '给项目 PM 发消息…'});
   const history = page.getByRole('list', {name: '我的项目对话'});
   await history.getByText('任务 49', {exact: true}).waitFor();
-  assert.equal(await history.locator('article strong').filter({hasText: '已确认'}).count(), 50);
+  assert.equal(await history.locator('article strong').filter({hasText: '已确认'}).count(), 47);
+  await history.getByText('查询时的来源数据已变化，请重新查询。').waitFor();
+  await history.getByText('这次主群设置已保存。').waitFor();
+  await history.getByText('当前无法显示这条回复。').waitFor();
   const area = page.locator('[data-conversation-scroll]');
   assert.ok(await area.evaluate(el => el.scrollHeight > el.clientHeight && el.scrollTop > 0));
   await area.evaluate(el => { el.scrollTop = 0; });

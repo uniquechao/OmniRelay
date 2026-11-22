@@ -24,10 +24,11 @@ func validQuestion(s string) bool {
 }
 
 type chatMessage struct {
-	ID       string `json:"id"`
-	Question string `json:"question"`
-	Answer   string `json:"answer,omitempty"`
-	State    string `json:"state"`
+	ID           string `json:"id"`
+	Question     string `json:"question"`
+	Answer       string `json:"answer,omitempty"`
+	State        string `json:"state"`
+	PrimarySaved bool   `json:"primary_saved,omitempty"`
 }
 
 func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
@@ -93,7 +94,8 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 				return err
 			}
 			rows, err := tx.Query(ctx, `SELECT w.id,coalesce(w.question,w.group_question),CASE WHEN w.group_answer IS NOT NULL AND w.state IN ('ready','sending','sent','unknown','failed') THEN w.group_answer WHEN w.state='sent' THEN w.response_text ELSE '' END,
-				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired' ELSE w.state END
+				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired'
+				     WHEN w.state='suppressed' AND w.reason='tool_source_changed' THEN 'stale' ELSE w.state END
 				FROM agent_group_work w JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
 				JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(w.tenant_key,w.app_id,w.account_id,w.project_id)
 				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND (w.mode='project_chat' OR w.group_question IS NOT NULL)
@@ -114,15 +116,23 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 			}
 			rows.Close()
 			for i := range items {
-				if items[i].Answer == "" {
-					continue
+				message := &items[i]
+				if message.Answer != "" {
+					switch err = s.checkToolReads(ctx, tx, message.ID, actor, project); {
+					case errors.Is(err, errToolReadStale):
+						message.Answer, message.State = "", "stale"
+					case errors.Is(err, access.ErrForbidden):
+						message.Answer, message.State = "", "suppressed"
+					case err != nil:
+						return err
+					}
 				}
-				err = s.checkToolReads(ctx, tx, items[i].ID, actor, project)
-				if errors.Is(err, access.ErrForbidden) {
-					items[i].Answer = ""
-					items[i].State = "suppressed"
-				} else if err != nil {
-					return err
+				switch message.State {
+				case "stale", "suppressed", "expired":
+					message.PrimarySaved, err = s.savedPrimaryReceipt(ctx, tx, message.ID, actor, project)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			return nil

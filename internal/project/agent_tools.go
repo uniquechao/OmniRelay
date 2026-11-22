@@ -191,7 +191,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			if link.ProjectID != "" && link.ProjectID != k.project {
 				return nil, errDenied
 			}
-			return map[string]any{"id": id, "assignment": link}, nil
+			return chatListCandidate{Assignment: link, ID: id}, nil
 		}
 		return s.visibleChats(ctx, actor, k.project)
 	case "chat_search_messages":

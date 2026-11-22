@@ -243,11 +243,15 @@ func (s *Service) Step(ctx context.Context) error {
 			if err == nil {
 				err = s.checkToolReads(ctx, tx, current.Work, current.Actor, current.Scope.ProjectID)
 			}
-			if err != nil && !errors.Is(err, access.ErrForbidden) {
+			if err != nil && !errors.Is(err, access.ErrForbidden) && !errors.Is(err, errToolReadStale) {
 				return err
 			}
 			if err != nil || current.Scope != receipt {
-				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',lease_until=NULL WHERE id=$1", w.Work)
+				reason := ""
+				if errors.Is(err, errToolReadStale) {
+					reason = "tool_source_changed"
+				}
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason=$2,lease_until=NULL WHERE id=$1", w.Work, reason)
 				return err
 			}
 			if w.Kind == "project_group_chat" {

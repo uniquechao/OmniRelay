@@ -15,6 +15,12 @@ const prompts = [
   ['查询项目成员', '列出项目成员和他们的角色。'],
 ];
 const pending = new Set(['route', 'running', 'ready', 'sending']);
+const replyStatus = {
+  stale: '查询时的来源数据已变化，请重新查询。',
+  suppressed: '当前无法显示这条回复。',
+  expired: '项目 PM 回复超时，可以重新提问。',
+  unknown: '暂未确认回复结果。',
+};
 const markdownLabels = {
   code: {copyLabel: '复制代码', copiedLabel: '已复制', toolbarLabels: {codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '关闭换行'}},
   footnotes: '脚注',
@@ -161,7 +167,8 @@ function ProjectConversation({project, base, request, signal}) {
           return <li key={message.id}>
             <UserMessageBubble className="dsh-question" aria-label="我">{message.question}</UserMessageBubble>
             {(answer || !pending.has(message.state)) && <article><strong>{author}</strong>
-              {answer ? <MarkdownText text={answer} labels={markdownLabels} omitHtml/> : <p>这条消息未能完成。</p>}
+              {answer ? <MarkdownText text={answer} labels={markdownLabels} omitHtml/> :
+                <p>{message.primary_saved ? '这次主群设置已保存。' : replyStatus[message.state] ?? '这条消息未能完成。'}</p>}
             </article>}
           </li>;
         })}</ol>}
