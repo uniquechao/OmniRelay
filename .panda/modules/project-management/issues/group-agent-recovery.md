@@ -44,3 +44,7 @@ Runtime 使用单副本 StatefulSet、独立持久卷、集群内双向 TLS 服�
 [逐工具功能和权限验收表](../../../../design/engineering/project-pm-tool-capabilities.md) 与 `TestProjectPMToolMatrix` 对应。内部门槛另覆盖跨项目、跨账号、委派失效、写入重试、来源撤权、DSH 镜像、原话题署名和工作台历史，不要求真实飞书账号。生产部署和外部渠道联调独立记录。
 
 内部验收已通过。真实 DSH 镜像调用 Go 工具后，在北辰创建了一条由发起人负责的任务；原话题只收到署名提示，另一成员无法读取其私人回复。20 个工具的同名用例、9 项 Gateway/Runtime 门槛、SQLite 命令日志恢复和带隔离 PostgreSQL 的全仓 Go 回归均通过。逐项结果保存在本地 `.runtime/group-gate.0Q4U4k/pm-tools.log`、`.runtime/group-gate.0Q4U4k/gates.log` 与 `.runtime/pm-tools.buJ7bd/all-final.log`。
+
+## 项目 PM 业务工具生产发布
+
+应用提交 `c2a466b` 的 Gateway 与 DSH Runtime 已在目标节点构建并部署，两个工作负载分别就绪。迁移 34 完成，账本与应用源码一致。通过正式 HTTPS 以项目成员身份发起只读日报请求，收到正确署名的回答，数据库核对为一次授权的工具读取、零次业务写入。非成员项目访问返回 403。生产实测覆盖站内入口；群内路由及写工具的逐项验收使用隔离环境。
