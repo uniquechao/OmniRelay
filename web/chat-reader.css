@@ -156,5 +156,68 @@ a.chat-card-action:hover { background: var(--or-hover-bg); }
 }
 .chat-delivery-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--or-text-secondary); font-size: .75rem; }
 .chat-composer-choice { overflow-y: auto; max-height: min(35dvh, 16rem); }
+.chat-composer-editor {
+  position: relative;
+  flex: 1 1 130px;
+  min-width: min(100%, 130px);
+}
+.chat-composer[data-expanded] .chat-composer-editor { flex-basis: 100%; }
+.chat-composer-editor textarea, .chat-composer-mirror {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 7px 0 5px;
+  font: inherit;
+  font-size: .8125rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow-y: auto;
+}
+.chat-composer-mirror {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+  color: var(--or-text);
+}
+.chat-composer-mirror::after { content: '\200b'; }
+.chat-composer-mirror mark {
+  color: var(--or-link);
+  background: var(--or-selected-bg);
+  border-radius: 3px;
+}
+.chat-composer-editor[data-has-mentions] .chat-composer-mirror { visibility: visible; }
+.chat-composer-editor textarea { position: relative; }
+.chat-composer-editor[data-has-mentions] textarea {
+  color: transparent;
+  caret-color: var(--or-text);
+}
+.chat-composer-editor textarea::selection { background: Highlight; color: HighlightText; }
+.chat-composer-box:has(textarea:focus-visible) { outline: 2px solid var(--or-focus); }
+.chat-composer-editor textarea:focus-visible { outline: none; }
+.chat-composer-choice[data-compose-kind="mention"] {
+  right: auto;
+  width: min(14rem, 100%);
+  display: grid;
+  gap: 2px;
+  overscroll-behavior: contain;
+}
+.chat-composer-choice[data-compose-kind="mention"] .button {
+  justify-content: flex-start;
+  text-align: start;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  background: transparent;
+  border-color: transparent;
+  color: var(--or-text);
+}
+.chat-composer-choice[data-compose-kind="mention"] .button:is(:hover, :focus-visible) {
+  color: var(--or-link);
+  background: var(--or-selected-bg);
+}
+@media (pointer: coarse) {
+  .chat-composer-choice[data-compose-kind="mention"] .button { min-height: 44px; }
+}
 
 #project-panel > .chat-reader-host { flex: 1 1 auto; }
