@@ -88,6 +88,7 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	check("project_update", "manager", `{"expected_version":1,"name":"北辰二期"}`, "2")
 	call(t, "manager", "project_update", `{"expected_version":1,"name":"过期"}`, 409)
 	check("member_list", "reader", `{"role":"editor"}`, "editor")
+	check("member_candidates", "manager", `{"q":"new"}`, "new")
 	check("member_add", "manager", `{"account_id":"new","role":"member"}`, "member")
 	generation := func(id string) string {
 		var g string
@@ -99,6 +100,8 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	call(t, "manager", "member_add", `{"account_id":"new","role":"member"}`, 409)
 	call(t, "manager", "member_set_role", `{"account_id":"new","role":"reader","generation":"stale"}`, 409)
 	check("member_set_role", "manager", fmt.Sprintf(`{"account_id":"new","generation":%q,"role":"reader"}`, generation("new")), "reader")
+	check("member_update", "manager", `{"account_id":"new","expected_version":2,"role_title":"测试负责人","responsibility":"接口验收"}`, "reader")
+	call(t, "manager", "member_update", `{"account_id":"new","expected_version":2,"responsibility":"过期"}`, 409)
 	check("member_remove", "manager", fmt.Sprintf(`{"account_id":"new","generation":%q}`, generation("new")), "revoked")
 	call(t, "manager", "member_remove", fmt.Sprintf(`{"account_id":"manager","generation":%q}`, generation("manager")), 409)
 	call(t, "reader", "chat_list", `{"candidate_chat_id":"oc"}`, 403)
@@ -174,6 +177,19 @@ func TestProjectPMToolMatrix(t *testing.T) {
  INSERT INTO project_tasks(tenant_key,app_id,project_id,id,title,status,column_id,position) VALUES('tenant','app','south','foreign-task','跨项目','todo','todo',1)`)
 	call(t, "manager", "task_get", `{"task_id":"foreign-task"}`, 403)
 	call(t, "manager", "task_update", `{"task_id":"foreign-task","expected_version":1,"title":"禁止"}`, 403)
+	removed := call(t, "manager", "task_create", `{"title":"待删除任务","due_at":"2026-12-01","acceptance":"验收","participant_ids":["member"]}`, 200)
+	var removedTask struct{ ID string }
+	if err := json.Unmarshal([]byte(removed), &removedTask); err != nil {
+		t.Fatal(err)
+	}
+	deleteArgs := fmt.Sprintf(`{"task_id":%q,"expected_version":1,"change_reason":"重复任务"}`, removedTask.ID)
+	call(t, "member", "task_delete", deleteArgs, 403)
+	check("task_delete", "manager", deleteArgs, `"deleted":true`)
+	call(t, "manager", "task_get", fmt.Sprintf(`{"task_id":%q}`, removedTask.ID), 403)
+	if got := call(t, "manager", "task_search", `{"q":"待删除"}`, 200); strings.Contains(got, removedTask.ID) {
+		t.Fatal(got)
+	}
+
 	sql("INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES('tenant','app','north','outside','outside','reader')")
 	call(t, "outside", "project_update", `{"expected_version":2,"background":"项目内系统管理员"}`, 200)
 	// A delegated admin is authorized for settings only during that membership generation.

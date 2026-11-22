@@ -87,7 +87,7 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	request("POST", base, fmt.Sprintf(`{"title":"跨项目","milestone_id":%q}`, foreign), 400)
 	request("POST", "b/milestones", fmt.Sprintf(`{"title":"跨项目节点","task_id":%q}`, first), 400)
 	second := create(base, fmt.Sprintf(`{"title":"合同复核","owner_member_id":"u","milestone_id":%q}`, m))
-	create(base, fmt.Sprintf(`{"title":"合同复核","owner_member_id":"v","milestone_id":%q}`, m))
+	handoverTask := create(base, fmt.Sprintf(`{"title":"合同复核","owner_member_id":"v","milestone_id":%q}`, m))
 	create(base, fmt.Sprintf(`{"title":"评审","owner_member_id":"u","milestone_id":%q}`, m))
 	other := create("b/tasks", fmt.Sprintf(`{"title":"合同复核","owner_member_id":"u","milestone_id":%q}`, foreign))
 	projectBoard := func(path, filter string) taskBoard {
@@ -313,17 +313,20 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	progress := `{"expected_task_version":3,"request_key":"progress","title":"新标题","owner_member_id":"u","participant_ids":["v"],"acceptance":"交付完整","status":"in_progress"}`
 	request("PUT", detailPath, progress, 200)
 	actor = testActor
+	request("PUT", "a/members/second/access", `{"role":"revoked"}`, 409)
+	request("PUT", detailPath, `{"expected_task_version":4,"title":"新标题","owner_member_id":"u","participant_ids":[],"acceptance":"交付完整","status":"in_progress"}`, 200)
+	request("PUT", "a/tasks/"+handoverTask, `{"expected_task_version":1,"title":"合同复核","owner_member_id":"u"}`, 200)
 	request("PUT", "a/members/second/access", `{"role":"revoked"}`, 200)
 	actor = secondActor
 	request("PUT", detailPath, progress, 404)
 	actor = testActor
-	suggestion := request("POST", detailPath+"/update-suggestions", `{"task_version":4,"request_key":"f2","proposed_status":"done","note":"已核查"}`, 200)
+	suggestion := request("POST", detailPath+"/update-suggestions", `{"task_version":5,"request_key":"f2","proposed_status":"done","note":"已核查"}`, 200)
 	// 两个不同的保存命令从同一版本开始，只有一个可以提交。
 	for i := range codes {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			body := fmt.Sprintf(`{"expected_task_version":4,"request_key":"race%d","title":"并发%d","owner_member_id":"u"}`, i, i)
+			body := fmt.Sprintf(`{"expected_task_version":5,"request_key":"race%d","title":"并发%d","owner_member_id":"u"}`, i, i)
 			codes[i], _ = call("PUT", detailPath, body)
 		}()
 	}
@@ -334,7 +337,7 @@ func TestLocalTaskHTTPContracts(t *testing.T) {
 	staleReview := "a/task-update-suggestions/" + suggestion["id"].(string) + "/review"
 	request("POST", staleReview, review, 409)
 	request("POST", staleReview, strings.Replace(review, "accept", "reject", 1), 200)
-	if task := request("GET", detailPath, "", 200); task["version"] != float64(5) {
+	if task := request("GET", detailPath, "", 200); task["version"] != float64(6) {
 		t.Fatal(task)
 	}
 

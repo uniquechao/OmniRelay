@@ -131,7 +131,8 @@ try {
 
   await member('member');
   await b.reload();
-  assert.ok(await field(b, 'title').isDisabled());
+  // Members may edit collaboration fields of tasks they own or participate in.
+  assert.ok(await field(b, 'title').isEnabled());
   assert.ok(await field(b, 'status').isEnabled());
   await b.getByPlaceholder('留下评论…').fill('第二人的评论');
   await button(b, '提交评论').click();
@@ -180,6 +181,7 @@ try {
       await button(a,choice).click();
       if (choice === '继续编辑') {
         assert.equal(await field(a,'title').inputValue(),draft);
+        await a.waitForURL(detail);
         assert.equal(a.url(), detail);
         await exit();
         await button(a,'不保存').click();

@@ -7,6 +7,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -207,5 +208,63 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 	who = "bob"
 	if strings.Contains(history(), "PM_GATE_CREATE") {
 		t.Fatal("another member saw private result")
+	}
+}
+
+// The callback path must deduplicate newly registered writes as well as the task domain.
+func TestProjectToolCRUDRecoveryGate(t *testing.T) {
+	g := newGate(t)
+	g.sql("UPDATE project_members SET role='manager' WHERE account_id='alice'")
+	g.projectMention("crud-recovery", "维护成员职责并清理重复任务")
+	work, err := g.claim(g.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := ToolCall{Binding: work.Binding, Turn: 9}
+	if _, err = g.useTurn(g.ctx, binding, true); err != nil {
+		t.Fatal(err)
+	}
+	call := func(name string, slot int, input string) json.RawMessage {
+		t.Helper()
+		var args pmtools.Args
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			t.Fatal(err)
+		}
+		var first json.RawMessage
+		for range 2 {
+			result, err := g.projectTool(g.ctx, projectCall{ToolCall: binding, Name: name, Slot: slot, Args: args})
+			if err != nil {
+				t.Fatal(name, err)
+			}
+			if first != nil {
+				var before, after any
+				if json.Unmarshal(first, &before) != nil || json.Unmarshal(result, &after) != nil || !reflect.DeepEqual(before, after) {
+					t.Fatal("receipt changed", name)
+				}
+			}
+			first = result
+		}
+		return first
+	}
+	call("member_update", 1, `{"account_id":"bob","expected_version":1,"role_title":"验收负责人","responsibility":"质量验收"}`)
+	var version int
+	if err = g.DB.QueryRow(g.ctx, "SELECT version FROM project_members WHERE account_id='bob'").Scan(&version); err != nil || version != 2 {
+		t.Fatal("duplicate member mutation", version, err)
+	}
+	created := call("task_create", 2, `{"title":"重复任务样本","due_at":"2026-12-01","acceptance":"接口验收"}`)
+	var task struct{ ID string }
+	if err = json.Unmarshal(created, &task); err != nil || task.ID == "" {
+		t.Fatal(string(created), err)
+	}
+	raw, _ := json.Marshal(task.ID)
+	call("task_delete", 3, `{"task_id":`+string(raw)+`,"expected_version":1,"change_reason":"重复任务清理"}`)
+	var events int
+	if err = g.DB.QueryRow(g.ctx, "SELECT count(*) FROM project_task_activity WHERE task_id=$1 AND action='task.deleted'", task.ID).Scan(&events); err != nil || events != 1 {
+		t.Fatal("duplicate deletion", events, err)
+	}
+	g.sql("UPDATE project_members SET role='reader' WHERE account_id='alice'")
+	_, err = g.projectTool(g.ctx, projectCall{ToolCall: binding, Name: "task_delete", Slot: 3, Args: pmtools.Args{"task_id": raw, "expected_version": json.RawMessage("1"), "change_reason": json.RawMessage(`"重复任务清理"`)}})
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatal("revoked delete replay", err)
 	}
 }

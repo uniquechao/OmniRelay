@@ -163,7 +163,7 @@ func (k taskScope) task(ctx context.Context, db taskReader, id string, now time.
 	var raw []byte
 	var version int64
 	var zone string
-	err := db.QueryRow(ctx, "SELECT to_jsonb(t), b.version,b.business_timezone FROM project_tasks t JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4", k.args(id)...).Scan(&raw, &version, &zone)
+	err := db.QueryRow(ctx, "SELECT to_jsonb(t), b.version,b.business_timezone FROM project_tasks t JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4 AND t.deleted_at IS NULL", k.args(id)...).Scan(&raw, &version, &zone)
 	if err != nil {
 		return result, taskError(err)
 	}
@@ -186,13 +186,16 @@ type boardColumn struct {
 	Cursor *string      `json:"next_cursor"`
 }
 type taskBoard struct {
-	CanMove  bool          `json:"can_move"`
-	Owners   []string      `json:"owner_member_ids"`
-	Project  string        `json:"project_id"`
-	Version  int64         `json:"version"`
-	Timezone string        `json:"business_timezone"`
-	Columns  []boardColumn `json:"columns"`
-	Total    int           `json:"total"`
+	CanMove   bool          `json:"can_move"`
+	CanCreate bool          `json:"can_create"`
+	MemberID  string        `json:"member_id"`
+	CanAssign bool          `json:"can_assign"`
+	Owners    []string      `json:"owner_member_ids"`
+	Project   string        `json:"project_id"`
+	Version   int64         `json:"version"`
+	Timezone  string        `json:"business_timezone"`
+	Columns   []boardColumn `json:"columns"`
+	Total     int           `json:"total"`
 }
 
 func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Values, now time.Time) (taskBoard, error) {
@@ -249,7 +252,7 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 		if cursorVersion != 0 && cursorVersion != board.Version {
 			return errConflict
 		}
-		rows, err := tx.Query(ctx, "SELECT DISTINCT owner_member_id FROM project_tasks WHERE "+projectWhere+" AND owner_member_id IS NOT NULL ORDER BY owner_member_id", k.args()...)
+		rows, err := tx.Query(ctx, "SELECT DISTINCT owner_member_id FROM project_tasks WHERE "+projectWhere+" AND deleted_at IS NULL AND owner_member_id IS NOT NULL ORDER BY owner_member_id", k.args()...)
 		if err != nil {
 			return err
 		}
@@ -262,7 +265,7 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 				continue
 			}
 			c := boardColumn{ID: id, Name: columnNames[id], Items: []storedTask{}}
-			filter := " FROM project_tasks t WHERE " + projectWhere + ` AND column_id=$4 AND ($5='' OR strpos(lower(title||' '||description),lower($5))>0) AND ($6='' OR owner_member_id=$6) AND ($7='' OR milestone_id=$7) AND (NOT $8 OR milestone_id IS NULL) AND ($9='' OR status=$9)`
+			filter := " FROM project_tasks t WHERE " + projectWhere + ` AND deleted_at IS NULL AND column_id=$4 AND ($5='' OR strpos(lower(title||' '||description),lower($5))>0) AND ($6='' OR owner_member_id=$6) AND ($7='' OR milestone_id=$7) AND (NOT $8 OR milestone_id IS NULL) AND ($9='' OR status=$9)`
 			args := k.args(id, query.Get("q"), query.Get("owner_member_id"), query.Get("milestone_id"), query.Get("milestone_unassigned") == "true", query.Get("status"))
 			if err := tx.QueryRow(ctx, "SELECT count(*)"+filter, args...).Scan(&c.Total); err != nil {
 				return err

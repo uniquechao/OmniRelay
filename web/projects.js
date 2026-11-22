@@ -1,5 +1,6 @@
 import { chatAPI, mountChatReader } from './chat-reader.js';
 import { mountProjectBot } from './project-bot.js';
+import { wireProjectMembers } from './project-members.js';
 import { openProjectProfile } from './project-profile.js';
 
 const tabs = {
@@ -439,16 +440,17 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
       '项目成员',
       filters(route, false) +
         table(
-          ['成员', '角色', '职责'],
+          ['成员', '访问角色', '项目角色', '职责', ...(data.can_manage ? ['操作'] : [])],
           data.members
             .filter((row) =>
-              [row.display_name, row.role_title || memberRoles[row.role], row.responsibility].some((value) =>
+              [row.display_name, memberRoles[row.role], row.role_title, row.responsibility].some((value) =>
                 String(value ?? '').includes(route.params.get('q') || ''),
               ),
             )
-            .map((row) => [esc(row.display_name), esc(row.role_title || memberRoles[row.role]), esc(row.responsibility)]),
+            .map((row) => [esc(row.display_name), esc(memberRoles[row.role]), esc(row.role_title || '—'), `<span class="project-member-responsibility">${esc(row.responsibility || '—')}</span>`, ...(data.can_manage ? [`<button class="button" type="button" data-member-edit="${esc(row.account_id)}">编辑<span class="sr-only"> ${esc(row.display_name)}</span></button>`] : [])]),
           '暂无项目成员。',
         ),
+      data.can_manage ? '<button class="button primary" type="button" data-member-add aria-haspopup="dialog">添加成员</button>' : '',
     );
   if (tab === 'feishu') {
     if (data.state === 'source_denied') return empty('已失去目标群的访问权限。');
@@ -708,6 +710,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     }
     const overviewURL = '/api/v1/projects/' + id + '/overview';
     const overview = request(overviewURL, { signal });
+    const creatingTask = tab === 'tasks' && parts[0] === 'new';
     const boardView = tab === 'tasks' && (!parts.length || parts[0] === 'list');
     const botSettings = tab === 'bot' && route.params.get('view') === 'connection';
     const contentRoute = botSettings ? {...route, tab: 'feishu'} : route;
@@ -716,7 +719,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         ? overview
         : tab === 'chats' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
-          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
+          : creatingTask ? request('/api/v1/projects/' + id + '/tasks', {signal}) : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
     const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
     const tagList = boardView && !parts.length ? request('/api/v1/projects/' + id + '/task-tags', { signal }) : undefined;
     const [header, result, directory, tagDirectory] = await Promise.allSettled([overview, content, members, tagList]);
@@ -769,7 +772,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (tab === 'tasks' && parts.length === 1 && parts[0] !== 'list') {
       const { mountTaskDetail } = await import('./task-detail.js');
       if (!current()) return;
-      await mountTaskDetail(body, { task: data, project: project?.name || id, route, request, signal,
+      if (creatingTask && !data.can_create) { body.innerHTML = empty('当前账号无权创建任务。'); return; }
+      await mountTaskDetail(body, { creating: creatingTask, capabilities: data, task: creatingTask ? {title:'',description:'',status:'todo',version:0,owner_member_id:data.member_id} : data, project: project?.name || id, route, request, signal,
         back: taskViews.get(id) || base + '/tasks', navigation });
       return;
     }
@@ -779,6 +783,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
       contents(contentRoute, data, header.value?.data.milestones?.items || [],
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
+    if (tab === 'members') wireProjectMembers(body,{data,projectId:id,request,signal,navigation,refresh});
+    if (boardView && data.can_create) body.querySelector('.task-toolbar')?.insertAdjacentHTML('beforeend', `<a class="button primary" href="${base}/tasks/new">新建任务</a>`);
     const settings = body.querySelector('[data-project-settings]');
     if (settings) settings.onclick = () => openProfile(settings, workspace.project_types, project);
     if (boardView && data.can_move) wireMoves(body, route, data, request, signal, () =>
