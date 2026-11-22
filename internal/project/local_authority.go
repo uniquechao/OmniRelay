@@ -23,11 +23,20 @@ func (s *Service) localMembers(ctx context.Context, k taskScope) (any, error) {
 
 func (s *Service) setMember(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 	ctx, k, account := r.Context(), scope(a, r.PathValue("projectID")), r.PathValue("accountID")
-	var in struct {
-		Role   string `json:"role"`
-		Member string `json:"member_id"`
+	var in memberChange
+	if !decode(w, r, &in) {
+		return nil, errInput
 	}
-	if !identifier.MatchString(account) || !decode(w, r, &in) {
+	return s.changeMember(ctx, k, a, account, in)
+}
+
+type memberChange struct {
+	Role   string `json:"role"`
+	Member string `json:"member_id"`
+}
+
+func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Principal, account string, in memberChange) (any, error) {
+	if !identifier.MatchString(account) {
 		return nil, errInput
 	}
 	switch in.Role {
@@ -38,13 +47,23 @@ func (s *Service) setMember(w http.ResponseWriter, r *http.Request, a identity.P
 	if in.Member != "" && !identifier.MatchString(in.Member) {
 		return nil, errInput
 	}
-	err := s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	err := s.withMutation(ctx, func(tx pgx.Tx) error {
 		// 首位管理员由系统角色管理员指派。已有项目由当前有效项目管理员维护。
 		var managers int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role='manager' AND a.active`, k.args()...).Scan(&managers); err != nil {
 			return err
 		}
-		action, project := "project.delegate", k.project
+		var oldRole, oldID string
+		var active bool
+		err := tx.QueryRow(ctx, `SELECT m.role,m.member_id,a.active FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
+ WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.account_id=$4`, k.args(account)...).Scan(&oldRole, &oldID, &active)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		action, project := "project.settings", k.project
+		if in.Role == "manager" || oldRole == "manager" {
+			action = "project.delegate"
+		}
 		if managers == 0 {
 			if in.Role != "manager" {
 				return errDenied
@@ -58,12 +77,8 @@ func (s *Service) setMember(w http.ResponseWriter, r *http.Request, a identity.P
 		if !ok {
 			return errDenied
 		}
-		var oldRole, oldID string
-		var active bool
-		err = tx.QueryRow(ctx, `SELECT m.role,m.member_id,a.active FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
- WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.account_id=$4`, k.args(account)...).Scan(&oldRole, &oldID, &active)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
+		if a.AccountID == account && in.Role != oldRole && in.Role != "revoked" && managers != 0 && oldRole != "manager" {
+			return errDenied
 		}
 		if active && oldRole == "manager" && in.Role != "manager" && managers <= 1 {
 			return errConflict

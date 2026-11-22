@@ -15,7 +15,7 @@ var projectStatuses = []string{"planned", "active", "paused", "blocked", "comple
 
 const profileColumns = `coalesce(p.status,'active'), coalesce(p.project_type,''),
 	coalesce(b.business_timezone,'Asia/Shanghai'), coalesce(p.background,''), coalesce(p.version,0),
-	coalesce(to_char(p.planned_start,'YYYY-MM-DD'),''), coalesce(to_char(p.planned_end,'YYYY-MM-DD'),''), coalesce(b.version,0)`
+	coalesce(to_char(p.planned_start,'YYYY-MM-DD'),''), coalesce(to_char(p.planned_end,'YYYY-MM-DD'),''), coalesce(b.version,0), p.updated_at`
 
 func (s *Service) directory(ctx context.Context, actor identity.Principal, filter url.Values, page, size int) (ProjectPage, error) {
 	result := ProjectPage{Items: []Project{}, Page: page, PageSize: size, Types: projectTypeOptions}
@@ -40,7 +40,7 @@ func (s *Service) directory(ctx context.Context, actor identity.Principal, filte
 			return err
 		}
 		rows, err := tx.Query(ctx, "SELECT m.project_id, coalesce(p.name,m.project_id), "+profileColumns+visible+
-			" ORDER BY lower(coalesce(p.name,m.project_id)), m.project_id LIMIT $7 OFFSET $8", append(args, size, (page-1)*size)...)
+			" ORDER BY p.updated_at DESC NULLS LAST, lower(coalesce(p.name,m.project_id)), m.project_id LIMIT $7 OFFSET $8", append(args, size, (page-1)*size)...)
 		if err != nil {
 			return err
 		}
@@ -76,6 +76,6 @@ func (k taskScope) profile(ctx context.Context, db taskReader) (Project, error) 
 		LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=($1,$2,$3)
 		LEFT JOIN project_task_boards b ON (b.tenant_key,b.app_id,b.project_id)=($1,$2,$3)`, k.args()...).
 		Scan(&p.ID, &p.Name, &p.Status, &p.Type, &p.Timezone, &p.Background, &p.Version,
-			&p.PlannedStart, &p.PlannedEnd, &p.BoardVersion)
+			&p.PlannedStart, &p.PlannedEnd, &p.BoardVersion, &p.UpdatedAt)
 	return p, err
 }

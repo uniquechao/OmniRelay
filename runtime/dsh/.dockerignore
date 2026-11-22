@@ -1,0 +1,13 @@
+*
+!requirements.txt
+!instance.py
+!runtime.py
+!whoami.cjs
+!group.patch.yml
+!project-pm.md
+!query.md
+!clock.cjs
+!clock.patch.yml
+!notice_clock.py
+!probe.py
+!probe.patch.yml

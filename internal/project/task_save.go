@@ -15,6 +15,7 @@ import (
 )
 
 type saveTask struct {
+	BoardVersion *int64 `json:"expected_board_version,omitempty"`
 	taskFields
 	Expected   int64   `json:"expected_task_version"`
 	Key        string  `json:"request_key"`
@@ -90,7 +91,13 @@ func (k taskScope) relationNames(ctx context.Context, tx pgx.Tx, f taskFields) (
 
 func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 	var in saveTask
-	if !decodeLimit(w, r, &in, 96<<10) || strings.TrimSpace(in.Title) == "" || !textLimit(in.Title, 200) || !textLimit(in.Description, 10000) || !textLimit(in.Acceptance, 4000) || !textLimit(in.Change, 4000) || in.Key != "" && !validKey(in.Key) {
+	if !decodeLimit(w, r, &in, 96<<10) {
+		return nil, errInput
+	}
+	return s.saveTaskInput(r.Context(), scope(a, r.PathValue("projectID")), r.PathValue("taskID"), a, in)
+}
+func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a identity.Principal, in saveTask) (any, error) {
+	if strings.TrimSpace(in.Title) == "" || !textLimit(in.Title, 200) || !textLimit(in.Description, 10000) || !textLimit(in.Acceptance, 4000) || !textLimit(in.Change, 4000) || in.Key != "" && !validKey(in.Key) {
 		return nil, errInput
 	}
 	for _, field := range []*string{in.Blocked, in.Completion} {
@@ -126,12 +133,11 @@ func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Pr
 			}
 		}
 	}
-	k, id, ctx := scope(a, r.PathValue("projectID")), r.PathValue("taskID"), r.Context()
 	if id == "" && in.Expected != 0 || id != "" && (!identifier.MatchString(id) || in.Expected < 1) {
 		return nil, errInput
 	}
 	var result json.RawMessage
-	err := k.write(ctx, s, a, "project.read", func(tx pgx.Tx, _ int64) error {
+	err := k.write(ctx, s, a, "project.read", func(tx pgx.Tx, boardVersion int64) error {
 		grant, err := s.roles.ProjectGrant(ctx, tx, a, k.project)
 		if err != nil {
 			return err
@@ -143,11 +149,30 @@ func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Pr
 				return err
 			}
 		}
-		if !grant.Member || !grant.CanAssign && (!grant.CanUpdateOwn || in.Change != "" || !ownTask(old, grant.MemberID) || !reflect.DeepEqual(old.taskFields, in.taskFields)) {
+		if !grant.Member {
 			return errDenied
 		}
+		if !grant.CanAssign {
+			if !grant.CanUpdateOwn || in.Change != "" {
+				return errDenied
+			}
+			if id == "" {
+				if in.Owner == nil {
+					in.Owner = &grant.MemberID
+				}
+				if *in.Owner != grant.MemberID || len(in.Participants) > 0 || len(in.Tags) > 0 || in.Milestone != nil || in.Priority != nil || in.Start != nil || in.Due != nil || in.Acceptance != "" || (in.Status != "" && in.Status != "todo") {
+					return errDenied
+				}
+			} else {
+				permitted := old.taskFields
+				permitted.Title, permitted.Description = in.Title, in.Description
+				if !ownTask(old, grant.MemberID) || !reflect.DeepEqual(permitted, in.taskFields) {
+					return errDenied
+				}
+			}
+		}
 		result, err = k.command(ctx, tx, a, in.Key, []any{"save", id, in}, func() (any, error) {
-			if !canUpdateProgress(old, grant) {
+			if id != "" && !canUpdateProgress(old, grant) {
 				return nil, errDenied
 			}
 			if in.Start != nil && in.Due != nil {
@@ -164,6 +189,9 @@ func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Pr
 				if due.Before(start) {
 					return nil, errInput
 				}
+			}
+			if in.BoardVersion != nil && *in.BoardVersion != boardVersion {
+				return nil, errBoardVersion
 			}
 			if old.Version != in.Expected {
 				return nil, errTaskVersion

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -63,6 +64,10 @@ func serveBuildFile(w http.ResponseWriter, r *http.Request, files fs.FS, name st
 	}
 	if strings.HasPrefix(name, "assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		switch path.Ext(name) {
+		case ".woff", ".woff2", ".ttf":
+			w.Header().Set("Content-Type", "font/"+strings.TrimPrefix(path.Ext(name), "."))
+		}
 	}
 	http.ServeFileFS(w, r, files, name)
 }

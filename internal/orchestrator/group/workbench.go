@@ -1,0 +1,153 @@
+package group
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/identity"
+)
+
+var chatRequestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,96}$`)
+var errChatBusy = errors.New("another message is pending")
+
+func validQuestion(s string) bool {
+	return strings.TrimSpace(s) != "" && utf8.RuneCountInString(s) <= 2000 && !strings.ContainsRune(s, 0)
+}
+
+type chatMessage struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	Answer   string `json:"answer,omitempty"`
+	State    string `json:"state"`
+}
+
+func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
+	ch := Channel{Resolve: func(_ context.Context, _ pgx.Tx, e Envelope) (Assignment, error) {
+		if e.Mode != ProjectChat || e.Project != e.Chat || e.Channel != "workbench" || e.Thread != "" || e.Project == "" {
+			return Assignment{}, access.ErrForbidden
+		}
+		return Assignment{Project: e.Project, Bot: "workbench"}, nil
+	}}
+	s.Channels["workbench"] = ch
+	handle := func(w http.ResponseWriter, r *http.Request) {
+		post := r.Method == http.MethodPost
+		policy := identity.ValidateSession
+		if post {
+			policy = identity.RefreshSessionWithCSRF
+		}
+		actor, ok := authenticate(w, r, policy)
+		if !ok {
+			return
+		}
+		project := r.PathValue("projectID")
+		if !identity.ValidProjectID(project) || actor.TenantKey != s.Tenant || actor.AppID != s.App {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		var body struct {
+			Text string `json:"text"`
+		}
+		key := r.Header.Get("Idempotency-Key")
+		if post {
+			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 20<<10))
+			d.DisallowUnknownFields()
+			if d.Decode(&body) != nil || d.Decode(&struct{}{}) != io.EOF || !validQuestion(body.Text) || !chatRequestID.MatchString(key) {
+				http.Error(w, "invalid message", 400)
+				return
+			}
+		}
+		ctx := r.Context()
+		items := []chatMessage{}
+		var id string
+		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+			grant, err := s.Roles.ProjectGrant(ctx, tx, actor, project)
+			if err != nil {
+				return err
+			}
+			if !grant.Member {
+				return access.ErrForbidden
+			}
+			if post {
+				lock, _ := json.Marshal([]string{s.Tenant, s.App, actor.AccountID, project})
+				if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))", string(lock)); err != nil {
+					return err
+				}
+				var busy bool
+				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND account_id=$3 AND project_id=$4 AND mode='project_chat' AND message_id!=$5 AND deadline>now() AND state IN ('route','running','ready','sending')) AND NOT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND channel='workbench' AND message_id=$5)`, s.Tenant, s.App, actor.AccountID, project, key).Scan(&busy)
+				if err != nil {
+					return err
+				}
+				if busy {
+					return errChatBusy
+				}
+				id, err = Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Channel: "workbench", Account: actor.AccountID, Chat: project, Project: project, Mode: ProjectChat, Message: key, Text: strings.TrimSpace(body.Text), Received: time.Now()})
+				return err
+			}
+			rows, err := tx.Query(ctx, `SELECT w.id,coalesce(w.question,w.group_question),CASE WHEN w.group_answer IS NOT NULL AND w.state IN ('ready','sending','sent','unknown','failed') THEN w.group_answer WHEN w.state='sent' THEN w.response_text ELSE '' END,
+				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired' ELSE w.state END
+				FROM agent_group_work w JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
+				JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(w.tenant_key,w.app_id,w.account_id,w.project_id)
+				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND (w.mode='project_chat' OR w.group_question IS NOT NULL)
+				AND w.membership_generation=$5 AND a.active AND w.permission_version=a.permission_version ORDER BY coalesce(w.asked_at,w.group_asked_at) DESC,w.id DESC LIMIT 50`, s.Tenant, s.App, actor.AccountID, project, grant.MembershipGeneration)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var m chatMessage
+				if err := rows.Scan(&m.ID, &m.Question, &m.Answer, &m.State); err != nil {
+					return err
+				}
+				items = append(items, m)
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			rows.Close()
+			for i := range items {
+				if items[i].Answer == "" {
+					continue
+				}
+				err = s.checkToolReads(ctx, tx, items[i].ID, actor, project)
+				if errors.Is(err, access.ErrForbidden) {
+					items[i].Answer = ""
+					items[i].State = "suppressed"
+				} else if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		switch {
+		case errors.Is(err, access.ErrForbidden):
+			http.Error(w, "forbidden", 403)
+		case errors.Is(err, errChatBusy):
+			http.Error(w, "message pending", 409)
+		case err != nil:
+			http.Error(w, "conversation unavailable", 503)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			if post {
+				w.WriteHeader(202)
+				_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+				return
+			}
+			for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+				items[i], items[j] = items[j], items[i]
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		}
+	}
+	const path = "/api/v1/projects/{projectID}/bot/messages"
+	mux.HandleFunc("GET "+path, handle)
+	mux.HandleFunc("POST "+path, handle)
+}

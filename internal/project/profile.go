@@ -95,7 +95,7 @@ func (s *Service) createProject(w http.ResponseWriter, r *http.Request, actor id
 	}
 	fingerprint := fmt.Sprintf("%x", sha256.Sum256(payload))
 	ctx := r.Context()
-	err = s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	err = s.withMutation(ctx, func(tx pgx.Tx) error {
 		allowed, err := s.roles.CheckInOrganizationMutation(ctx, tx, actor, "project.create", "")
 		if err != nil {
 			return err
@@ -171,9 +171,11 @@ func (s *Service) archiveProject(w http.ResponseWriter, r *http.Request, actor i
 }
 
 func (s *Service) changeProject(r *http.Request, actor identity.Principal, expected int64, in *profileInput, boardVersion *int64) (any, error) {
-	k, ctx := scope(actor, r.PathValue("projectID")), r.Context()
+	return s.updateProfile(r.Context(), scope(actor, r.PathValue("projectID")), actor, expected, in, boardVersion)
+}
+func (s *Service) updateProfile(ctx context.Context, k taskScope, actor identity.Principal, expected int64, in *profileInput, boardVersion *int64) (any, error) {
 	var version int64
-	err := s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	err := s.withMutation(ctx, func(tx pgx.Tx) error {
 		if err := s.requireSettingsMutation(ctx, tx, actor, k.project); err != nil {
 			return err
 		}

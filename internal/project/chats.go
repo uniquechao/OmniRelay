@@ -26,7 +26,7 @@ type projectGroups struct {
 
 func (s *Service) projectGroups(ctx context.Context, actor identity.Principal, id string) (projectGroups, error) {
 	result := projectGroups{ProjectID: id, Items: []assignedGroup{}}
-	rows, err := s.pool.Query(ctx, `SELECT coalesce(p.version,0),coalesce(a.chat_id,''),
+	rows, err := s.reader().Query(ctx, `SELECT coalesce(p.version,0),coalesce(a.chat_id,''),
 		coalesce(a.primary_group,false),coalesce(a.version,0)
 		FROM (VALUES ($1::text,$2::text,$3::text)) AS scope(tenant_key,app_id,project_id)
 		LEFT JOIN project_chat_primary p USING (tenant_key,app_id,project_id)
@@ -49,14 +49,22 @@ func (s *Service) projectGroups(ctx context.Context, actor identity.Principal, i
 }
 
 func (s *Service) getChats(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-	ctx, id := r.Context(), r.PathValue("projectID")
+	return s.visibleChats(r.Context(), actor, r.PathValue("projectID"))
+}
+func (s *Service) visibleChats(ctx context.Context, actor identity.Principal, id string) (any, error) {
 	snapshot, err := s.projectGroups(ctx, actor, id)
 	if err != nil {
 		return nil, err
 	}
 	visible := make([]assignedGroup, 0, len(snapshot.Items))
 	for _, group := range snapshot.Items {
-		entry, err := s.chat.ProjectGroup(ctx, actor, group.ID)
+		var entry chat.Group
+		var err error
+		if s.mutation != nil {
+			entry, err = s.chat.ProjectGroupForMutation(ctx, s.mutation, actor, group.ID)
+		} else {
+			entry, err = s.chat.ProjectGroup(ctx, actor, group.ID)
+		}
 		if errors.Is(err, chat.ErrAccessLost) {
 			continue
 		}
@@ -130,7 +138,7 @@ func (s *Service) setAssignment(ctx context.Context, actor identity.Principal, g
 		return chat.ProjectAssignment{}, errInput
 	}
 	var result chat.ProjectAssignment
-	err := s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	err := s.withMutation(ctx, func(tx pgx.Tx) error {
 		if _, err := s.chat.ProjectGroupForMutation(ctx, tx, actor, groupID); err != nil {
 			return err
 		}
@@ -194,7 +202,7 @@ func (s *Service) setPrimary(ctx context.Context, actor identity.Principal, id, 
 		return primaryGroup{}, errInput
 	}
 	var result primaryGroup
-	err := s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	err := s.withMutation(ctx, func(tx pgx.Tx) error {
 		if _, err := s.chat.ProjectGroupForMutation(ctx, tx, actor, groupID); err != nil {
 			return err
 		}

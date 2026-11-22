@@ -2,6 +2,7 @@ import {useEffect,useRef,useState,type RefObject} from 'react';
 import {Dialog} from '../../ui/components/Widgets';
 import {Facts, TextField, notify} from '../../ui/components/Elements';
 import {client} from '../../api/session';
+import {APIKeys} from './APIKeys';
 
 export type User=NonNullable<typeof client.session>['user'] & {
   name?:string;display_name?:string;auth_method?:string;can_change_password?:boolean
@@ -58,10 +59,12 @@ export function Account({user,logout,guard}:{user:User;logout:()=>Promise<void>;
   return <><div ref={menu} id="account-menu" className="account-menu" popover="auto" aria-label="用户菜单" onKeyDown={e=>{
     const buttons=Array.from(e.currentTarget.querySelectorAll('button'));
     const i=buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const index={ArrowDown:(i+1)%3,ArrowUp:(i+2)%3,Home:0,End:2}[e.key];
+    const count=buttons.length;
+    const index={ArrowDown:(i+1)%count,ArrowUp:(i+count-1)%count,Home:0,End:count-1}[e.key];
     if(index!==undefined){e.preventDefault();buttons[index].focus();}
   }}><div className="account-identity"><span className="account-avatar">{Array.from(name)[0]}</span><div><strong>{name}</strong><span>{role} · {source}</span></div></div>
-    {Object.entries({profile:'个人信息',password:'修改密码',logout:'退出'}).map(([id,label])=><button type="button" key={id} data-account={id} onClick={()=>{menu.current?.hidePopover();setAction(id);}}>{label}</button>)}</div>
+    {Object.entries({profile:'个人信息',password:'修改密码',keys:'个人 API Key',logout:'退出'}).map(([id,label])=><button type="button" key={id} data-account={id} onClick={()=>{menu.current?.hidePopover();setAction(id);}}>{label}</button>)}</div>
+    {action==='keys' && <Dialog title="个人 API Key" restoreFocus={()=>trigger.current} onClose={close}><APIKeys/></Dialog>}
     {action==='profile' && <Dialog title="个人信息" restoreFocus={()=>trigger.current} onClose={close}><Facts items={[{label:'用户名',value:name},{label:'角色',value:role},{label:'身份来源',value:source}]}/></Dialog>}
     {action==='password' && <Dialog title="修改密码" variant={editable?'form':'detail'} confirm={editable?'保存':undefined} restoreFocus={()=>trigger.current}
       isDirty={()=>dirty.current} onClose={close} onSubmit={async form=>{

@@ -17,6 +17,16 @@ window.OmniRelayUI = (() => {
 
   const avatarTones = ['indigo','teal','plum','amber','blue'];
 
+  function fileSourceLocator(fileId, group, route, ordinal) {
+    const name = escape(group);
+    const label = '定位原消息：' + name + '（来源 ' + ordinal + '）';
+    return '<div class="drive-source-row"><strong>' + name + '</strong>' +
+      '<a class="drive-source drive-source-locate" data-source-file="' + escape(fileId) + '" href="' + escape(route) +
+      '" aria-label="' + label + '" title="' + label + '">' +
+      '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">' +
+      '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></a></div>';
+  }
+
   function personAvatar(label, id = label) {
     const identity = id.normalize('NFKC').trim();
     let hash = 2166136261;
@@ -320,7 +330,7 @@ window.OmniRelayUI = (() => {
     const states = config.states ?? listStates;
     if (!states.has(config.key)) {
       const initial = {
-        query: '', filters: { ...config.defaultFilters }, page: 0, pageSize: pageSizes[0], selected: new Set(),
+        query: config.initialQuery ?? '', filters: { ...config.defaultFilters }, page: 0, pageSize: pageSizes[0], selected: new Set(),
         sort: config.defaultSort ?? null, mode: config.selection === false ? 'none' : 'multiple', columnWidths: null
       };
       states.set(config.key, initial);
@@ -382,7 +392,7 @@ window.OmniRelayUI = (() => {
       <span class="sr-only" data-column-notice role="status"></span>
       <div class="list-popover" id="${popoverId}" popover="auto" aria-labelledby="${popoverId}-title">
         <h2 id="${popoverId}-title">${optionsLabel}</h2>
-        ${filters.map(filter => '<label>' + filter.label + '<select class="select" data-filter="' + filter.key + '">' +
+        ${filters.map(filter => '<label>' + escape(filter.label) + '<select class="select" aria-label="' + escape(filter.label) + '" data-filter="' + filter.key + '">' +
           options({ '': '全部', ...filter.options }, state.filters[filter.key] ?? '') + '</select></label>').join('')}
         ${config.selection === false ? '' : '<label>选择模式<select class="select" data-mode>' + options(selectionModes, state.mode) + '</select></label>'}
         <div class="popover-actions">
@@ -1074,6 +1084,6 @@ window.OmniRelayUI = (() => {
     if (initial) sync();
   }
 
-  return { combo, mountCombo, escape, icon, personAvatar, personButton, personView, mountPersonCards,
+  return { combo, mountCombo, escape, icon, fileSourceLocator, personAvatar, personButton, personView, mountPersonCards,
     openDialog, mountList, mountOrganizationTree, toast };
 })();

@@ -18,6 +18,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator"
 	"github.com/uniquechao/OmniRelay/internal/project"
+	"github.com/uniquechao/OmniRelay/internal/routing"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 	"github.com/uniquechao/OmniRelay/internal/system"
 	"github.com/uniquechao/OmniRelay/migrations"
@@ -91,6 +92,11 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	chatService.ConfigureBusinessReceipts(projectService)
 	projectService.ConfigureFiles(fileService)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
+	mux := http.NewServeMux()
+	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore, projectService)
+	if err != nil {
+		return nil, nil, err
+	}
 	var receiver *postgres.CandidateMessages
 	if cfg.appSecret != "" {
 		workers.chat = chatService
@@ -109,6 +115,9 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		if err != nil {
 			return nil, nil, err
 		}
+		if workers.groupAgent != nil && cfg.botSendEnabled && os.Getenv("OMNIRELAY_AGENT_FEISHU_ENABLED") != "0" {
+			inbox.EnableGroupAgent()
+		}
 		connection := feishu.NewConnection(executable, cfg.tenantKey, check, botStore, inbox, cfg.botHeartbeatTTL)
 		receiver = postgres.NewCandidateMessages(inbox, chatService.AcceptEvent, cfg.candidateReceiverToken != "")
 		connection.SetInboundInterceptor(receiver.Intercept, cfg.candidateReceiverToken != "")
@@ -126,7 +135,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		})
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
-	mux := http.NewServeMux()
+	routing.Gateway{Check: roles.Check}.Register(mux, identityService.AuthenticateWorkbench)
 	if run := cfg.candidateMessageRun; run != nil && run.MessageProject != "" {
 		registerCandidateReplies(mux, pool, identityService.AuthenticateWorkbench, roles, *run)
 	}
@@ -170,12 +179,16 @@ type backendWorkers struct {
 	directory  *directory.Service
 	bot        *system.Service
 	connection func(context.Context)
+	groupAgent func(context.Context)
 	chat       *chat.Service
 	files      *drive.Service
 }
 
 func (w *backendWorkers) Run(ctx context.Context) {
 	var running sync.WaitGroup
+	if w.groupAgent != nil {
+		running.Go(func() { w.groupAgent(ctx) })
+	}
 	running.Go(func() { w.directory.Run(ctx) })
 	running.Go(func() { w.bot.Run(ctx) })
 	if w.chat != nil {

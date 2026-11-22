@@ -1,0 +1,93 @@
+/* DSH supplies its palette and Markdown tokens. Workbench rules own the page canvas. */
+@import '@deepseek-ai/dsh-client-ui-theme/src/styles/design-platform.css' layer(dsh-theme);
+@import '@deepseek-ai/dsh-client-ui-theme/src/styles/gradient-shadow-text.css' layer(dsh-theme);
+@import '@deepseek-ai/dsh-client-ui-theme/src/styles/shiki.css' layer(dsh-theme);
+
+.page[data-layout="project"]:has(.dsh-project-chat) {
+  max-width: none;
+  padding-inline: 0;
+}
+.page:has(.dsh-project-chat) > :is(.head, .tabs) {
+  margin-inline: clamp(14px, 2vw, 22px);
+}
+.page:has(.dsh-project-chat) > .tabs { margin-bottom: 0; }
+#project-panel:has(> .dsh-project-chat) { padding: 0; margin: 0; overflow: hidden; }
+#project-panel > .dsh-project-chat {
+  flex: 1;
+  min-height: 0;
+  container-type: inline-size;
+  --dsw-radius-sm: 8px;
+  --dsw-radius-md: 12px;
+  --dsw-radius-lg: 16px;
+  --dsw-radius-xl: 20px;
+  --dsw-radius-panel: 28px;
+  --dsw-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  --ds-font-family-code: ui-monospace, monospace;
+  --dsh-composer-card-max-width: 100%;
+  --dsh-composer-side-clearance: 0px;
+  --dsh-composer-text-max-height: min(24dvh, 16rem);
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-project-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px clamp(14px, 2vw, 28px);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+.dsh-project-head h2 { font-size: .9375rem; }
+.dsh-project-head a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  color: var(--dsw-alias-label-secondary);
+  text-underline-offset: 3px;
+}
+.dsh-project-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  --chat-inset: clamp(14px, 2.5cqw, 36px);
+}
+.dsh-history {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+.dsh-history ol { display: grid; gap: 28px; list-style: none; margin: 0; padding: 24px var(--chat-inset); }
+.dsh-history li { display: grid; gap: 16px; min-width: 0; }
+.dsh-question { justify-self: end; max-width: 85%; overflow-wrap: anywhere; }
+.dsh-history article { min-width: 0; overflow-wrap: anywhere; }
+.dsh-history article > strong { display: block; font-size: .8125rem; color: var(--dsw-alias-label-secondary); margin-bottom: 6px; }
+.dsh-compose { flex: none; padding: 8px var(--chat-inset) max(12px, env(safe-area-inset-bottom)); }
+.dsh-project-body[data-hero="true"] { justify-content: center; overflow: auto; }
+.dsh-project-body[data-hero="true"] .dsh-history { flex: none; }
+.dsh-project-body[data-hero="true"] .dsh-compose { margin-block: auto; }
+.dsh-hero { margin-bottom: 22px; }
+.dsh-compose [data-composer-card]:has([data-composer-input]:focus-visible) { outline: 2px solid var(--or-focus); }
+.dsh-compose [data-composer-input]:focus-visible { outline: 0; }
+.dsh-compose [data-composer-dock]:empty { display: none; }
+.dsh-questions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.dsh-questions button {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 20px;
+  padding: 6px 14px;
+  min-height: 36px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-questions button:hover:enabled { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-compose [data-composer-overlay] { z-index: 1; }
+.dsh-compose [data-composer-overlay] .dsh-questions {
+  position: absolute; bottom: 4px; left: 0; margin: 0; justify-content: flex-start;
+}
+.dsh-notice { color: var(--dsw-alias-label-secondary); padding-bottom: 8px; }
+.dsh-notice:empty { display: none; }
+@media (pointer: coarse) {
+  .dsh-questions button, .dsh-compose button { min-height: 44px; min-width: 44px; }
+}

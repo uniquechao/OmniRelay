@@ -13,8 +13,9 @@ import (
 const inboundTimeout = 2500 * time.Millisecond
 
 type FeishuInbox struct {
-	bot      *FeishuBot
-	capacity int
+	groupAgent bool
+	bot        *FeishuBot
+	capacity   int
 }
 
 var _ orchestrator.InboxAcceptor = (*FeishuInbox)(nil)
@@ -111,9 +112,11 @@ func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orches
 		account = &id
 		state = "pending_route"
 		var full bool
-		if err := tx.QueryRow(ctx, `SELECT count(*) >= $3 FROM feishu_inbound_work
-			WHERE app_id=$1 AND tenant_id=$2 AND state='pending_route'`,
-			event.AppID, event.TenantID, s.capacity).Scan(&full); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM feishu_inbound_work
+			WHERE app_id=$1 AND tenant_id=$2 AND state='pending_route') +
+			(SELECT count(*) FROM agent_group_work WHERE $4 AND app_id=$1 AND tenant_key=$2
+			AND channel='feishu' AND state IN ('route','running','ready','sending')) >= $3`,
+			event.AppID, event.TenantID, s.capacity, s.groupAgent).Scan(&full); err != nil {
 			return "", err
 		}
 		if full {
@@ -123,7 +126,11 @@ func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orches
 		return "", err
 	}
 
-	return recordInbound(ctx, tx, event, account, state)
+	workID, err := recordInbound(ctx, tx, event, account, state)
+	if err == nil && s.groupAgent && account != nil {
+		err = s.enrollGroup(ctx, tx, workID, *account, event)
+	}
+	return workID, err
 }
 
 func recordInbound(ctx context.Context, tx pgx.Tx, event orchestrator.InboundEvent, account *string, state string) (orchestrator.WorkID, error) {

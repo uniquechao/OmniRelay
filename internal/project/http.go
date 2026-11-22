@@ -89,6 +89,19 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("GET "+base, "", list)
 	handle("POST "+base, "", s.createProject)
 	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
+	handle("GET "+project+"/files", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		return s.filePage(r.Context(), actor, r.PathValue("projectID"), r.URL.Query())
+	})
+	handle("GET "+project+"/files/documents/{sourceID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		var document taskSource
+		ctx := r.Context()
+		err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+			var err error
+			document, err = s.source(ctx, tx, scope(actor, r.PathValue("projectID")), actor, "document", r.PathValue("sourceID"))
+			return err
+		})
+		return document, err
+	})
 	handle("GET "+project+"/task-tags", "project.read", s.tags)
 	handle("PUT "+project+"/sources/{kind}/{sourceID}/readers", "project.delegate", s.setSourceReaders)
 	handle("PUT "+project+"/task-tags/{tagID}", "project.assign", s.setTag)
@@ -132,7 +145,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		}
 		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
 	})
-	handle("POST "+project+"/tasks", "project.assign", s.saveTask)
+	handle("POST "+project+"/tasks", "project.read", s.saveTask)
 	handle("PUT "+project+"/tasks/{taskID}", "project.read", s.saveTask)
 	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", func(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 		k := scope(a, r.PathValue("projectID"))
@@ -148,7 +161,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 			return nil, errDenied
 		}
 		own := ownTask(t, g.MemberID)
-		return map[string]bool{"edit_fields": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
+		return map[string]bool{"edit_fields": canUpdateProgress(t, g), "assign": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
 	})
 	handle("GET "+project+"/tasks/{taskID}/activity", "project.read", s.activity)
 	handle("POST "+project+"/tasks/{taskID}/comments", "project.comment", s.comment)

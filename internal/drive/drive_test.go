@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -514,6 +515,39 @@ func TestFileReferences(t *testing.T) {
 		format := Format("attachment", name)
 		if strings.Contains(format.Label, "其他") {
 			t.Fatal(name)
+		}
+	}
+}
+
+func TestFilePageCategoriesAndSharedTime(t *testing.T) {
+	older := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(24 * time.Hour)
+	files := listEntries([]item{
+		{ID: 1, Category: "videos", FormatKey: "video", State: "complete", Updated: &newer, Sources: []share{{SentAt: older}}},
+		{ID: 2, Category: "images", FormatKey: "image", State: "complete", Updated: &older, Sources: []share{{SentAt: newer}}},
+		{ID: 3, Category: "files", FormatKey: "pdf", State: "partial", Sources: []share{{SentAt: older}}},
+	})
+	files = append(files, LocalDocument("p", "note", "项目记录"))
+	for _, check := range []struct {
+		query string
+		total int
+		first any
+	}{
+		{"category=image", 1, int64(2)}, {"category=video", 1, int64(1)}, {"category=attachments&format=pdf", 1, int64(3)},
+		{"category=files", 2, int64(3)}, {"sort=shared_at&order=desc&limit=1", 4, int64(2)},
+		{"sort=shared_at&order=desc&limit=1&offset=3", 4, "document:note"}, {"sync_state=partial", 1, int64(3)},
+	} {
+		query, err := url.ParseQuery(check.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := FilePage(query, files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := page["items"].([]ListEntry)
+		if page["total"] != check.total || len(rows) == 0 || rows[0].Key != check.first {
+			t.Fatal(check.query, page)
 		}
 	}
 }

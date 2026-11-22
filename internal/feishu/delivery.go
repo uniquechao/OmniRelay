@@ -83,7 +83,41 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
 	}
 	body, _ := json.Marshal(map[string]string{"receive_id": target, "msg_type": kind, "content": content, "uuid": uuid})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, imURL+"/messages?receive_id_type=chat_id", bytes.NewReader(body))
+	return s.deliverPayload(ctx, target, bot, kind, "/messages?receive_id_type=chat_id", body)
+}
+
+// ReplyTo creates a reply under the verified inbound message, including in ordinary groups.
+func (s *ChatSource) ReplyTo(ctx context.Context, chatID, bot, messageID, text, uuid string) chat.DeliveryResult {
+	return s.replyTo(ctx, chatID, bot, messageID, text, uuid, true)
+}
+func (s *ChatSource) ReplyPrivate(ctx context.Context, chatID, bot, messageID, text, uuid string) chat.DeliveryResult {
+	return s.replyTo(ctx, chatID, bot, messageID, text, uuid, false)
+}
+func (s *ChatSource) replyTo(ctx context.Context, chatID, bot, messageID, text, uuid string, thread bool) chat.DeliveryResult {
+	if !validIMID(chatID, "oc_") || !validIMID(messageID, "om_") || text == "" || uuid == "" {
+		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
+	}
+	content, _ := json.Marshal(map[string]string{"text": text})
+	body, _ := json.Marshal(map[string]any{"msg_type": "text", "content": string(content), "uuid": uuid, "reply_in_thread": thread})
+	return s.deliverPayload(ctx, chatID, bot, "text", "/messages/"+messageID+"/reply", body)
+}
+
+// Notify creates a new message with an explicit recipient from the authorized work.
+func (s *ChatSource) Notify(ctx context.Context, person bool, target, bot, text, uuid string) chat.DeliveryResult {
+	field, prefix := "chat_id", "oc_"
+	if person {
+		field, prefix = "open_id", "ou_"
+	}
+	if !validIMID(target, prefix) || text == "" || uuid == "" {
+		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
+	}
+	content, _ := json.Marshal(map[string]string{"text": text})
+	body, _ := json.Marshal(map[string]string{"receive_id": target, "msg_type": "text", "content": string(content), "uuid": uuid})
+	return s.deliverPayload(ctx, target, bot, "text", "/messages?receive_id_type="+field, body)
+}
+
+func (s *ChatSource) deliverPayload(ctx context.Context, target, bot, kind, path string, body []byte) chat.DeliveryResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, imURL+path, bytes.NewReader(body))
 	if err != nil {
 		return chat.DeliveryResult{State: "failed", Reason: "delivery_unavailable"}
 	}
@@ -121,6 +155,13 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 		}
 		// An unclassified platform response is insufficient to permit retry.
 		return result
+	}
+	if validIMID(target, "ou_") {
+		// The create call addressed this exact open ID. Its receipt identifies the resulting private chat.
+		if !validIMID(value(data.ChatId), "oc_") {
+			return result
+		}
+		target = value(data.ChatId)
 	}
 	if value(data.ChatId) != "" && value(data.ChatId) != target {
 		return chat.DeliveryResult{State: "failed", Reason: "wrong_target_receipt"}

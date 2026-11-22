@@ -128,7 +128,7 @@ func taskError(err error) error {
 
 // 所有写命令先锁定同一项目的看板，回执与双版本在同一事务提交。
 func (k taskScope) write(ctx context.Context, s *Service, actor identity.Principal, action string, fn func(pgx.Tx, int64) error) error {
-	return taskError(s.roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+	return taskError(s.withMutation(ctx, func(tx pgx.Tx) error {
 		allowed, err := s.roles.CheckInOrganizationMutation(ctx, tx, actor, action, k.project)
 		if err != nil {
 			return err

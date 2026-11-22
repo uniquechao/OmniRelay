@@ -10,7 +10,7 @@ OmniRelay 自有内容使用 [MIT License](LICENSE)。以下浏览器分发文�
 
 Quill 和 markdown-it 浏览器包内嵌模块的许可文本见 [内嵌依赖许可证](design/prototype/vendor/BUNDLED-DEPENDENCIES-LICENSES.txt)。模块范围依据上游分发包的 source map，版本依据相应发布标签的锁文件。 [Quill 锁文件](https://github.com/slab/quill/blob/v2.0.3/package-lock.json) · [markdown-it 锁文件](https://github.com/markdown-it/markdown-it/blob/15.0.3/package-lock.json)
 
-README 中的第三方图形和品牌链接用于标明来源，相关权利归各权利人。DeepSeek Harness 是计划接入的运行时，DeepSeek SuperAgent 研究原型是设计参考。项目引用见 [开源项目与致谢](README.md#开源项目与致谢)。
+README 中的第三方图形和品牌链接用于标明来源，相关权利归各权利人。项目 Bot 页按需加载 DeepSeek Harness 0.2.2-rc.2 的会话容器、编辑器、输入栏、消息组件与主题；运行时使用同版本 SDK。DeepSeek SuperAgent 研究原型是设计参考。DSH 组件版权归 DeepSeek，按 [MIT License](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.2/LICENSE) 分发。构建会将依赖许可文本写入 `web/dist/assets/third-party-licenses-<hash>.txt`。项目引用见 [开源项目与致谢](README.md#开源项目与致谢)。
 
 开发工具位于 `.agents/skills/`，相应许可证如下。
 

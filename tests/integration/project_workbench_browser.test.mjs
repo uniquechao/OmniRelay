@@ -6,14 +6,21 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const moduleName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
 const origin = 'https://project.example.test';
-const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active' };
+const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active', updated_at: '2026-11-21T09:15:00Z' };
 const task = { id: 't-99', project_id: project.id, title: '联调验收', status: 'done' };
 const root = '/api/v1/projects/' + project.id;
 const list = (items) => ({ items, total: items.length });
 const projectTypes = [{ name: '研发', tone: 'blue' }, { name: '销售', tone: 'purple' }, { name: '售后', tone: 'amber' }];
 
+function localFiles(id, title, partial = false) {
+  const row = { id:'document:d-1', local_source_id:'d-1', name:title, format:'项目文档', format_key:'generic',
+    category:'files', sync_state:'local', project_ids:[id], sources:[] };
+  return {...list([row]), projects:{[id]:id}, partial};
+}
+
 async function fixture(page) {
   const errors = [];
+  const botMessages = [];
   page.on('pageerror', (err) => errors.push(err.message));
   let deny = false;
   let held;
@@ -42,6 +49,8 @@ async function fixture(page) {
         csrf_token: 'token',
         access: { navigation: { workbench: true }, default_route: '/#/workbench' },
       });
+    if (path === '/api/v1/projects' && url.searchParams.get('page_size') === '100')
+      return respond(list([project]));
     if (path === '/api/v1/projects')
       return respond({
         items: [project],
@@ -52,13 +61,14 @@ async function fixture(page) {
     if (path.startsWith(root + '/')) {
       const section = path.slice(root.length + 1);
       if (deny) return route.fulfill({ status: 404, json: { error: 'project_access_denied' } });
+      if (section === 'files') return respond(localFiles(project.id, '交付文档'));
+      if (section === 'files/documents/d-1') return respond({title:'交付文档', text:'交付记录正文'});
       const data = {
         overview: {
           workspace: { project },
           milestones: { items: [{ kind: 'milestone', id: 'm1', title: '验收节点', task_id: task.id }] },
         },
         members: { members: [{ display_name: '项目成员甲' }] },
-        docs: list([{ title: '交付文档', ref: { kind: 'document', source_id: 'd-1' } }]),
         meetings: list([{ title: '交付纪要', resource_type: 'minutes', resource_token: 'm-1' }]),
         tasks: { owner_member_ids: ['成员甲'], columns: [{ name: '进行中', items: [], total: 1, next_cursor: 'more' }] },
         reports: {
@@ -86,6 +96,16 @@ async function fixture(page) {
           action: 'allowed',
           public_scope: 'project_only',
         });
+      }
+      if (section === 'bot/messages') {
+        if (route.request().method() === 'POST') {
+          assert.deepEqual(route.request().postDataJSON(), {text:'你好，项目 PM'});
+          assert.equal(route.request().headers()['x-csrf-token'], 'token');
+          assert.ok(route.request().headers()['idempotency-key']);
+          botMessages.push({id:'one', question:'你好，项目 PM', answer:'项目 PM · 联调项目\n你好，已收到。', state:'sent'});
+          return route.fulfill({status:202, json:{id:'one'}});
+        }
+        return respond({items:botMessages});
       }
       if (section === 'feishu')
         return respond({
@@ -332,6 +352,8 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await main.getByRole('link', { name: '查看项目列表' }).click();
       await main.getByRole('link', { name: project.name }).waitFor();
+      await main.getByRole('columnheader', { name: '更新时间' }).waitFor();
+      assert.equal(await main.locator('tbody time').getAttribute('datetime'), project.updated_at);
       const filter = main.getByRole('combobox', { name: '项目状态' });
       assert.equal(await filter.inputValue(), 'active');
       assert.equal(await main.getByRole('link', { name: planned.name }).count(), 0);
@@ -339,6 +361,7 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       await filter.selectOption('');
       await main.getByRole('button', { name: '查询' }).click();
       await main.getByRole('link', { name: planned.name }).waitFor();
+      await main.getByRole('row').filter({ hasText: planned.name }).getByRole('cell', { name: '—' }).waitFor();
       await page.waitForURL(/#\/projects\?status=$/);
       await page.reload();
       await main.getByRole('link', { name: planned.name }).waitFor();
@@ -425,6 +448,17 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       ]) {
         await go(path + section);
         await visible(title);
+        if (section === 'docs') {
+          assert.deepEqual(await page.locator('[data-drive-category]').allTextContents(),
+            ['全部','会议纪要','飞书文档','任务表格（多维表格）','图片','视频','文件']);
+          await page.getByRole('button', { name:'预览', exact:true }).click();
+          await page.getByRole('dialog').getByText('交付记录正文').waitFor();
+          await page.keyboard.press('Escape');
+          const download = page.waitForEvent('download');
+          await page.getByRole('button',{name:'下载',exact:true}).click();
+          assert.equal((await download).suggestedFilename(),'交付文档.txt');
+          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        }
         await page.getByRole('link', { name: '查看关联任务' }).click();
         await page.getByRole('link', { name: '联调验收' }).click();
         await page.getByLabel('正文', { exact:true }).waitFor();
@@ -472,7 +506,32 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await go(path + 'members?q=甲');
       await delayed.started;
       await visible('正在加载…');
-      await go(path + 'feishu');
+      await go(path + 'bot');
+      await page.getByRole('tab', {name:'Bot', exact:true}).waitFor();
+      const input = page.getByRole('textbox', {name: '给项目 PM 发消息…'});
+      const starter = page.getByRole('button', {name: '查看进行中任务'});
+      const send = page.getByRole('button', {name: '发送消息', exact: true});
+      await starter.waitFor();
+      const tab = await page.getByRole('tab', {name: 'Bot', selected: true}).boundingBox();
+      assert.ok(tab.x >= 0 && tab.x + tab.width <= width);
+      assert.ok(await send.isDisabled());
+      const chatBox = await page.locator('.dsh-project-chat').boundingBox();
+      const workBox = await page.locator('.workspace').boundingBox();
+      assert.ok(Math.abs(chatBox.x - workBox.x) < 2 && Math.abs(chatBox.width - workBox.width) < 2);
+      assert.ok(Math.abs(chatBox.y + chatBox.height - (workBox.y + workBox.height)) < 2);
+      const proof = process.env.OMNIRELAY_PM_EVIDENCE;
+      if (proof) await page.screenshot({path: proof + '/empty-' + width + '-' + theme + '.png'});
+      await starter.click();
+      assert.equal(await input.innerText(), '哪些任务还在进行中？');
+      assert.ok(await input.evaluate(el => el === document.activeElement));
+      await input.fill('你好，项目 PM');
+      assert.ok(await starter.isDisabled());
+      await send.click();
+      await visible('你好，已收到。');
+      assert.ok(await starter.isHidden());
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      if (proof) await page.screenshot({path: proof + '/chat-' + width + '-' + theme + '.png'});
+      await page.getByRole('link',{name:'飞书接入'}).click();
       await visible('已送达');
       assert.equal(await page.evaluate(() => window.memberReadAborted), true);
       delayed.finish();
@@ -809,6 +868,7 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
         return send({ project_id: other.id, data: { workspace: { project: other }, milestones: { items: [] } } });
       case 'members':
         return send({ project_id: other.id, data: { members: [{ display_name: '启明成员' }] } });
+      case 'bot/messages': return send({items:[]});
       case 'feishu':
         return send({ project_id: other.id, state: 'available', can_check: false, target_name: '启明群',
           plan: { plan_enabled: false }, briefings: list([run]) });
@@ -816,8 +876,8 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
         return send(list([run]));
       case 'reports/briefings/r-1':
         return send({ error: 'project_access_denied' }, 404);
-      case 'docs':
-        return send({ project_id: other.id, data: { ...list([{ kind: 'document', title: '启明项目档案' }]), coverage: { state: 'partial' } } });
+      case 'files':
+        return send(localFiles(other.id, '启明项目档案', true));
       default:
         throw Error('意外的项目请求 ' + section);
     }
@@ -827,7 +887,8 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   const go = (hash) => page.evaluate((target) => { location.hash = target; }, hash);
   await page.goto(origin + '/#/projects');
   await page.getByRole('link', { name: project.name }).click();
-  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await page.getByRole('tab', { name: 'Bot', exact: true }).click();
+  await page.getByRole('link', { name: '飞书接入' }).click();
   await visible('联调群');
   await visible('已送达');
   await page.getByRole('button', { name: '接入验证' }).waitFor();
@@ -848,24 +909,123 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   assert.equal(await page.getByText('项目成员甲', { exact: true }).count(), 0);
   assert.equal(await page.locator('#page-heading').innerText(), other.name);
 
-  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await page.getByRole('tab', { name: 'Bot', exact: true }).click();
+  await page.getByRole('link', { name: '飞书接入' }).click();
   await visible('启明群');
   await visible('已生成');
   await visible('投递失败');
   assert.equal(await page.getByRole('button', { name: '接入验证' }).count(), 0);
   assert.doesNotMatch(await page.locator('#page').innerText(), /联调群|项目成员甲|已送达/);
   await go(base + '/brief/r-22');
+  await page.waitForURL((url) => url.hash === base + '/reports/brief/r-22');
   await visible('投递失败');
-  assert.equal(new URL(page.url()).hash, base + '/reports/brief/r-22');
   run.delivery_state = 'success';
   await page.reload();
   await visible('送达待确认');
   await go(base + '/brief/r-1');
   await visible('当前项目或来源已不可访问。');
-  await page.getByRole('tab', { name: '文档' }).click();
+  await page.getByRole('tab', { name: '文件' }).click();
   await visible('部分数据暂不可用。');
   await visible('启明项目档案');
   assert.doesNotMatch(await page.locator('#page').innerText(), /暂无记录|交付文档|启明群|已送达/);
   assert.deepEqual(writes, []);
   assert.deepEqual(first.errors, []);
+});
+
+test('DSH 项目对话长历史、键盘发送、重试与撤权', {skip: !moduleName}, async t => {
+  const browser = await require(moduleName).chromium.launch({executablePath: process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 390, height: 844}});
+  const f = await fixture(page);
+  const items = Array.from({length: 50}, (_, i) => ({
+    id: String(i), state: 'sent', question: '任务 ' + i, answer: '项目 PM\n**已确认**',
+  }));
+  const keys = [];
+  let deny = false;
+  await page.route(origin + root + '/bot/messages', route => {
+    if (deny) return route.fulfill({status: 403, json: {error: 'project_access_denied'}});
+    if (route.request().method() === 'POST') {
+      const {text} = route.request().postDataJSON();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) return route.fulfill({status: 503, json: {error: 'unavailable'}});
+      items.push({id: 'next', question: text, state: 'running'});
+      return route.fulfill({status: 202, json: {id: 'next'}});
+    }
+    return route.fulfill({json: {items}});
+  });
+  await page.goto(origin + '/#/projects/p-21/bot');
+  const input = page.getByRole('textbox', {name: '给项目 PM 发消息…'});
+  const history = page.getByRole('list', {name: '我的项目对话'});
+  await history.getByText('任务 49', {exact: true}).waitFor();
+  assert.equal(await history.locator('article strong').filter({hasText: '已确认'}).count(), 50);
+  const area = page.locator('[data-conversation-scroll]');
+  assert.ok(await area.evaluate(el => el.scrollHeight > el.clientHeight && el.scrollTop > 0));
+  await area.evaluate(el => { el.scrollTop = 0; });
+  const box = await input.boundingBox();
+  assert.ok(box.y > 0 && box.y + box.height <= 844);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1));
+  await input.fill('第一行');
+  await input.press('Shift+Enter');
+  await page.keyboard.insertText('第二行');
+  assert.equal(keys.length, 0);
+  await input.press('Enter');
+  await page.getByText('发送未确认，可以重试。').waitFor();
+  assert.match(await input.innerText(), /第一行\s+第二行/);
+  await page.getByRole('button', {name: '发送消息', exact: true}).click();
+  await page.getByText('项目 PM 正在回复…').waitFor();
+  assert.ok(keys[0] && keys[0] === keys[1]);
+  assert.match(items.at(-1).question, /第一行\s+第二行/);
+  deny = true;
+  await page.getByText('当前项目对话不可访问。').waitFor();
+  assert.equal(await history.count(), 0);
+  assert.deepEqual(f.errors, []);
+});
+
+test('项目文件分类、筛选、来源和版本操作保留项目范围', {skip:!moduleName}, async t => {
+  const browser = await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport:{width:390,height:844}});
+  page.setDefaultTimeout(5000);
+  await fixture(page);
+  const row = {id:17, name:'现场照片.png', format_key:'image', format:'图片', category:'files', version_id:2,
+    shared_at:'2026-11-21T12:00:00Z', sync_state:'complete', project_ids:[project.id],
+    sources:[{project_id:project.id, chat_id:'oc_21', message_id:'msg1', chat_name:'联调群', sender_name:'成员甲'}]};
+  let search;
+  await page.route(origin + root + '/files?**', route => {
+    search = new URL(route.request().url()).searchParams;
+    const items = ['all','images'].includes(search.get('category')) && row.name.includes(search.get('q') || '') ? [row] : [];
+    return route.fulfill({json:{...list(items), projects:{[project.id]:project.name}}});
+  });
+  const file = '/api/v1/feishu/files/17/versions';
+  await page.route(origin + file + '**', route => {
+    const url = new URL(route.request().url());
+    assert.equal(url.searchParams.get('source_project'),project.id);
+    return url.pathname === file ? route.fulfill({json:{items:[{id:2}]}}) :
+      route.fulfill({path:'design/prototype/omni-relay-logo.png',contentType:'image/png'});
+  });
+  await page.goto(origin + '/#/projects/' + project.id + '/docs');
+  await page.getByText(row.name,{exact:true}).waitFor();
+  assert.equal(search.get('sort'),'shared_at');
+  assert.equal(await page.locator('th[aria-sort="descending"] [data-sort]').getAttribute('data-sort'),'shared_at');
+  const source = page.getByRole('link',{name:'定位原消息：联调群（来源 1）'});
+  assert.equal(await source.getAttribute('href'),'#/projects/p-21/chats/oc_21/msg1');
+  assert.equal(await source.locator('xpath=ancestor::td').innerText(),'联调群');
+  await page.getByRole('button',{name:'视频',exact:true}).click();
+  await page.getByText('暂无文件。').waitFor();
+  await page.getByRole('button',{name:'图片',exact:true}).click();
+  await page.getByRole('searchbox',{name:'搜索文件'}).fill('现场');
+  await page.getByRole('button',{name:'筛选',exact:true}).click();
+  await page.getByLabel('同步状态',{exact:true}).selectOption('complete');
+  await page.keyboard.press('Escape');
+  await page.getByText(row.name,{exact:true}).waitFor();
+  assert.equal(search.get('category'),'images');
+  assert.equal(search.get('q'),'现场');
+  assert.equal(search.get('sync_state'),'complete');
+  assert.equal(await page.locator('[data-filter="project_id"]').count(),0);
+  await page.getByRole('button',{name:'预览',exact:true}).click();
+  await page.getByRole('dialog').getByRole('img',{name:row.name,exact:true}).evaluate(img => img.decode());
+  await page.keyboard.press('Escape');
+  const download = page.waitForEvent('download');
+  await page.getByRole('link',{name:'下载',exact:true}).click();
+  assert.equal(new URL((await download).url()).searchParams.get('source_project'),project.id);
 });

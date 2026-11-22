@@ -60,7 +60,10 @@ func TestPreviewUI(t *testing.T) {
 		for _, file := range files {
 			path := "/assets/" + file.Name()
 			out := check(handler, path, 200)
-			mime := map[string]string{".js": "javascript", ".css": "text/css", ".png": "image/png"}[filepath.Ext(path)]
+			mime := map[string]string{
+				".js": "javascript", ".css": "text/css", ".png": "image/png", ".txt": "text/plain",
+				".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
+			}[filepath.Ext(path)]
 			if mime == "" || !strings.Contains(out.Header().Get("Content-Type"), mime) || !strings.Contains(out.Header().Get("Cache-Control"), "immutable") {
 				t.Fatal(path, out.Header())
 			}

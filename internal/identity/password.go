@@ -26,11 +26,11 @@ var (
 )
 
 func (s *Service) RegisterPasswords(mux *http.ServeMux) {
-	mux.HandleFunc("POST /auth/login", requirePasswordTLS(s.passwordLogin))
-	mux.HandleFunc("POST /auth/password", requirePasswordTLS(s.changePassword))
+	mux.HandleFunc("POST /auth/login", requireTLS(s.passwordLogin))
+	mux.HandleFunc("POST /auth/password", requireTLS(s.changePassword))
 }
 
-func requirePasswordTLS(next http.HandlerFunc) http.HandlerFunc {
+func requireTLS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil {
 			identityHeaders(w)
@@ -81,7 +81,7 @@ func ProvisionPassword(ctx context.Context, pool *pgxpool.Pool, tenant, app, acc
 	})
 }
 
-func readPasswordJSON(w http.ResponseWriter, r *http.Request, out any) bool {
+func readCredentialJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" {
 		return false
@@ -151,7 +151,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if !readPasswordJSON(w, r, &input) || len(input.Password) > 256 || input.Password == "" {
+	if !readCredentialJSON(w, r, &input) || len(input.Password) > 256 || input.Password == "" {
 		writeFailure(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -195,7 +195,7 @@ func (s *Service) changePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"currentPassword"`
 		NewPassword     string `json:"newPassword"`
 	}
-	if !readPasswordJSON(w, r, &input) || !newPasswordAcceptable(input.NewPassword) ||
+	if !readCredentialJSON(w, r, &input) || !newPasswordAcceptable(input.NewPassword) ||
 		len(input.CurrentPassword) > 256 || input.NewPassword == input.CurrentPassword {
 		writeFailure(w, http.StatusBadRequest, "invalid_request")
 		return

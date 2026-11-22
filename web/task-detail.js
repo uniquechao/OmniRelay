@@ -104,7 +104,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
   const enabled = (k) =>
     ['status', 'blocked_reason', 'completion_note'].includes(k)
       ? actions.update_progress
-      : actions.edit_fields &&
+      : (['title', 'description'].includes(k) ? actions.edit_fields : (actions.assign ?? actions.edit_fields)) &&
         ({ owner_member_id: directory, participant_ids: directory, tag_ids: tagList, milestone_id: nodes }[k]
           ?.status ?? 'fulfilled') === 'fulfilled';
   function field(k, type = 'area', choices = []) {
@@ -208,7 +208,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       picker('participant_ids', people, true) +
       '</details>';
     const states = Object.entries(statuses).filter(
-      ([s]) => actions.edit_fields || s !== 'cancelled' || s === task.status,
+      ([s]) => (actions.assign ?? actions.edit_fields) || s !== 'cancelled' || s === task.status,
     );
     const ms = new Map(milestones);
     if (draft.milestone_id && !ms.has(draft.milestone_id)) ms.set(draft.milestone_id, draft.milestone_id);

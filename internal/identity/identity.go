@@ -153,6 +153,9 @@ func (s *Service) Register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET "+callbackPath, s.complete)
 	mux.HandleFunc("GET /api/v1/me", s.me)
+	for _, route := range []string{"GET " + keyPath, "POST " + keyPath, "DELETE " + keyPath + "/{id}"} {
+		mux.HandleFunc(route, requireTLS(s.manageKeys))
+	}
 	mux.HandleFunc("POST /auth/logout", s.logout)
 }
 
@@ -322,7 +325,7 @@ const (
 // Authenticate validates the current server session and writes a sanitized response
 // when authentication fails. Writes require the configured Origin and CSRF token.
 func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
-	p, _, ok := s.authenticate(w, r, policy)
+	p, _, ok := s.authenticateAPI(w, r, policy)
 	return p, ok
 }
 
@@ -343,7 +346,7 @@ func (s *Service) AuthenticateWorkbench(w http.ResponseWriter, r *http.Request, 
 // AuthenticateManagement uses the management API's common authorization errors.
 func (s *Service) AuthenticateManagement(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
 	identityHeaders(w)
-	p, _, status, code := s.authenticateSession(r, policy)
+	p, _, status, code := s.apiCredentials(r, policy)
 	switch status {
 	case 0:
 		return p, true
@@ -367,6 +370,9 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, policy Se
 }
 
 func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Principal, string, int, string) {
+	if len(r.Header.Values("Authorization")) != 0 {
+		return Principal{}, "", http.StatusUnauthorized, "browser_session_required"
+	}
 	token := cookieSecret(r, s.cookieName(sessionCookie))
 	if token == "" {
 		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
@@ -395,7 +401,7 @@ func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Pr
 }
 
 func (s *Service) me(w http.ResponseWriter, r *http.Request) {
-	p, token, ok := s.authenticate(w, r, ValidateSession)
+	p, token, ok := s.authenticateAPI(w, r, ValidateSession)
 	if !ok {
 		return
 	}
@@ -412,11 +418,15 @@ func (s *Service) me(w http.ResponseWriter, r *http.Request) {
 		}
 		access = &allowed
 	}
+	csrf := ""
+	if token != "" {
+		csrf = csrfToken(token)
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Principal Principal        `json:"principal"`
-		CSRFToken string           `json:"csrf_token"`
+		CSRFToken string           `json:"csrf_token,omitempty"`
 		Access    *WorkbenchAccess `json:"access,omitempty"`
-	}{Principal: p, CSRFToken: csrfToken(token), Access: access})
+	}{Principal: p, CSRFToken: csrf, Access: access})
 }
 
 const botChatsPath = "/#/feishu/bot-chats"
@@ -460,7 +470,7 @@ var projectIDPattern = regexp.MustCompile("^" + projectSegment + "$")
 // ValidProjectID 检查项目深链中使用的稳定标识。
 func ValidProjectID(id string) bool { return projectIDPattern.MatchString(id) }
 
-var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
+var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|bot|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
 
 func (a WorkbenchAccess) canReturnTo(path string) bool {
 	if _, ok := projectTarget(path); ok {

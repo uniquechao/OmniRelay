@@ -107,7 +107,7 @@ func TestProjectProfileLifecycle(t *testing.T) {
 	request("POST", "", `{"name":"其他请求"}`, 409)
 	path := "/" + key
 	checkJSON(request("GET", path+"/overview", "", 200), `"can_manage_profile":true`, `"status":"planned"`,
-		`"planned_start":"2026-11-22"`, `"planned_end":"2026-12-01"`, `"business_timezone":"UTC"`)
+		`"planned_start":"2026-11-22"`, `"planned_end":"2026-12-01"`, `"business_timezone":"UTC"`, `"updated_at":`)
 	checkJSON(request("GET", path+"/members", "", 200), `"id":"relay-user"`, `"role":"manager"`)
 	checkJSON(request("GET", "?q=本地试点", "", 200), `"total":1`, `"name":"本地试点"`)
 	actor = reader
@@ -124,6 +124,18 @@ func TestProjectProfileLifecycle(t *testing.T) {
 	request("PUT", path+"/profile", fmt.Sprintf(edit, 2), 200)
 	request("PUT", path+"/profile", fmt.Sprintf(edit, 2), 409)
 	checkJSON(request("GET", path+"/overview", "", 200), `"name":"试点交付"`, `"planned_end":"2026-12-01"`, `"business_timezone":"Asia/Shanghai"`)
+	exec(`INSERT INTO project_profiles (tenant_key,app_id,project_id,name,status,version,updated_at)
+		VALUES ('tenant','app','older','A 较早项目','active',1,'2020-01-01T00:00:00Z');
+		INSERT INTO project_members (tenant_key,app_id,project_id,account_id,member_id,role)
+		VALUES ('tenant','app','older','relay-user','relay-user','manager')`)
+	for i, want := range []string{key, "older", "legacy"} {
+		body := request("GET", fmt.Sprintf("?status=active&page_size=1&page=%d", i+1), "", 200)
+		var page ProjectPage
+		if err := json.Unmarshal([]byte(body), &page); err != nil || page.Total != 3 ||
+			len(page.Items) != 1 || page.Items[0].ID != want || (page.Items[0].UpdatedAt == nil) != (want == "legacy") {
+			t.Fatalf("project update order on page %d: %s (%v)", i+1, body, err)
+		}
+	}
 	const settings = `{"target_chat_id":"oc_primary","timezone":"Asia/Shanghai","local_time":"18:00","plan_enabled":true,"public_submission_count":true,"version":%d}`
 	request("PUT", path+"/feishu/settings", fmt.Sprintf(settings, 0), 200)
 	request("PUT", path+"/reports/mine/2026-11-22", `{"note":"保留的日报","expected_version":0}`, 200)

@@ -1,3 +1,4 @@
+import { mountDrive } from './drive.js';
 import { chatAPI, mountChatReader } from './chat-reader.js';
 import { openProjectProfile } from './project-profile.js';
 
@@ -6,10 +7,10 @@ const tabs = {
   members: '成员',
   chats: '群聊',
   meetings: '会议纪要',
-  docs: '文档',
+  docs: '文件',
   reports: '日报',
   tasks: '任务',
-  feishu: '飞书 Bot',
+  bot: 'Bot',
 };
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
 const sourceKinds = ['minutes', 'document', 'sheets', 'bitable', 'file', 'message'];
@@ -73,6 +74,7 @@ function table(headers, rows, missing) {
 const heading = (title) => `<h1 id="page-heading" tabindex="-1">${esc(title)}</h1>`;
 const withQuery = (path, params) => path + (params.size ? '?' + params : '');
 const directoryStatus = (params) => params.get('status') ?? 'active';
+const projectUpdatedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' });
 export function projectRoute(hash) {
   if (!hash || !/^#\/projects(?:[/?]|$)/.test(hash)) return;
   const [path, query = ''] = hash.split('?');
@@ -81,6 +83,7 @@ export function projectRoute(hash) {
   if (!id && path === '#/projects') return { hash: withQuery(path, params), params };
   if (!identifier.test(id || '') || !parts.every((s) => identifier.test(s))) return;
   const base = '#/' + area + '/' + id;
+  if (tab === 'feishu' && !parts.length) return projectRoute(withQuery(base + '/bot', params));
   if (tab === 'brief' && parts.length <= 1)
     return projectRoute(base + '/reports/brief' + (parts.length ? '/' + parts[0] : ''));
   if (!Object.hasOwn(tabs, tab)) return;
@@ -165,11 +168,12 @@ function briefings(base, items) {
 }
 function directoryRows(items, projectTypes) {
   return table(
-    ['项目名称', '类型', '阶段'],
+    ['项目名称', '类型', '阶段', '更新时间'],
     items.map((row) => [
       link('#/projects/' + row.id + '/overview', row.name),
       projectTypeBadge(row.project_type, projectTypes),
       label(row.status),
+      row.updated_at ? `<time class="date" datetime="${esc(row.updated_at)}">${esc(projectUpdatedTime.format(new Date(row.updated_at)))}</time>` : '—',
     ]),
     '没有符合条件的项目。',
   );
@@ -556,7 +560,7 @@ function endpoint(route) {
   const { id, tab, parts, params } = route;
   const root = '/api/v1/projects';
   const query = new URLSearchParams();
-  if (!id || (['docs', 'meetings', 'reports'].includes(tab) && !parts.length)) {
+  if (!id || (['meetings', 'reports'].includes(tab) && !parts.length)) {
     query.set('page', pageNumber(params));
     query.set('page_size', 25);
   }
@@ -648,6 +652,10 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         .join('')}</div>
       <section id="project-panel" class="stack" role="tabpanel" aria-labelledby="tab-${tab}" tabindex="0"></section>`;
     const nav = host.querySelector('.tabs');
+    const selected = nav.querySelector('[aria-selected="true"]');
+    if (selected && nav.scrollWidth > nav.clientWidth) {
+      nav.scrollLeft = Math.max(0, selected.getBoundingClientRect().right - nav.getBoundingClientRect().right);
+    }
     const switchTab = (next) => {
       memory.tabFocus = true;
       location.hash = next.dataset.tab === 'tasks' && taskViews.has(id) ? taskViews.get(id) : base + '/' + next.dataset.tab;
@@ -705,12 +713,14 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     const overviewURL = '/api/v1/projects/' + id + '/overview';
     const overview = request(overviewURL, { signal });
     const boardView = tab === 'tasks' && (!parts.length || parts[0] === 'list');
+    const botSettings = tab === 'bot' && route.params.get('view') === 'connection';
+    const contentRoute = botSettings ? {...route, tab: 'feishu'} : route;
     const content =
       tab === 'overview'
         ? overview
-        : tab === 'chats'
+        : tab === 'chats' || tab === 'docs' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
-          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(route), { signal });
+          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
     const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
     const tagList = boardView && !parts.length ? request('/api/v1/projects/' + id + '/task-tags', { signal }) : undefined;
     const [header, result, directory, tagDirectory] = await Promise.allSettled([overview, content, members, tagList]);
@@ -735,6 +745,15 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (memory.tabFocus) {
       host.querySelector('[aria-selected=true]').focus();
       memory.tabFocus = false;
+    }
+    if (tab === 'bot' && !botSettings) {
+      const { mountProjectBot } = await import('./project-bot.jsx');
+      if (current()) mountProjectBot(body, id, base, request, signal);
+      return;
+    }
+    if (tab === 'docs') {
+      mountDrive(body, request, signal, { projectId:id, memory:memory.files ??= {}, initialQuery:route.params.get('q') || '' });
+      return;
     }
     if (tab === 'chats') {
       let chatHash = route.hash;
@@ -765,7 +784,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     }
     body.innerHTML =
       (header.status === 'rejected' || directory.status === 'rejected' || tagDirectory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
-      contents(route, data, header.value?.data.milestones?.items || [],
+      (botSettings ? link(base + '/bot', '返回 Bot 对话') : '') +
+      contents(contentRoute, data, header.value?.data.milestones?.items || [],
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
     const settings = body.querySelector('[data-project-settings]');
