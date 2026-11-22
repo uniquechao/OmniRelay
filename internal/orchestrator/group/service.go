@@ -47,13 +47,13 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	var scope, member, plan string
 	var pv, av int64
 	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
-            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,'')
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,'')
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
         LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
         WHERE w.id=$1 AND w.tenant_key=$2 AND w.app_id=$3 AND a.active AND a.permission_version=w.permission_version
         AND (w.mode='private_reply' OR p.project_id IS NOT NULL) AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
-		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan)
+		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan, &w.Address.Text)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return w, access.ErrForbidden
 	}
@@ -111,6 +111,10 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	if w.Address.Mode == GroupNotice {
 		w.Scope.UserID = ""
 		w.Scope.UserName = ""
+	}
+	if w.Address.Mode == ProjectChat {
+		verified, _ := json.Marshal(w.Scope)
+		w.Prompt = fmt.Sprintf("当前登录账号和项目由工作台验证：%s\n用户消息：%s", verified, w.Address.Text)
 	}
 	digest := sha256.Sum256(fields)
 	w.Session = hex.EncodeToString(digest[:])
@@ -204,6 +208,22 @@ func (s *Service) Step(ctx context.Context) error {
          WHERE id=$1 AND generation=$2 AND state='running' AND tool_turn=$3 AND owner_id=$4 AND owner_epoch=$5
          AND deadline>now() AND lease_until>now() FOR UPDATE OF w`, w.Work, w.Generation, result.Turn, s.Owner, w.Epoch).Scan(&receipt)
 		if err != nil {
+			return err
+		}
+		if w.Address.Mode == ProjectChat {
+			if result.Answer == "" || len(result.Answer) > 48000 {
+				return errors.New("missing or oversized project chat response")
+			}
+			current, err := s.authorize(ctx, tx, w.Work)
+			if err != nil && !errors.Is(err, access.ErrForbidden) {
+				return err
+			}
+			if err != nil || current.Scope != receipt {
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',lease_until=NULL WHERE id=$1", w.Work)
+				return err
+			}
+			// Publication into the user's workbench and its receipt are the same database write.
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='sent',response_text=$2,platform_message_id=delivery_id::text,lease_until=NULL WHERE id=$1", w.Work, "项目 PM · "+current.Scope.ProjectName+"\n"+result.Answer)
 			return err
 		}
 		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(w.Address.Mode, receipt))

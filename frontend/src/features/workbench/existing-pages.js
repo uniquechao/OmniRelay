@@ -5,6 +5,7 @@ import {mountDrive} from '../../../../web/drive.js';
 import '../../../../design/prototype/omni-relay-split-pane.js';
 import '../../../../design/prototype/omni-relay-bot-chat.css';
 import '../../../../web/chat-reader.css';
+import '../../../../web/project-bot.css';
 import '../../../../design/prototype/omni-relay-drive.css';
 import '../../../../design/prototype/omni-relay-project.css';
 import '../../../../design/prototype/omni-relay-task-editor.css';

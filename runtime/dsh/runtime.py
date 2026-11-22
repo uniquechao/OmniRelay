@@ -29,9 +29,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def payload(self):
+    def payload(self, limit=4096):
         size = int(self.headers.get("Content-Length", 0))
-        if not 0 < size <= 4096:
+        if not 0 < size <= limit:
             raise ValueError("invalid size")
         return json.loads(self.rfile.read(size))
 
@@ -80,6 +80,7 @@ class Runtime:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS work(id TEXT PRIMARY KEY, agent TEXT, session TEXT, epoch INTEGER,
                     generation INTEGER, turn INTEGER, completed INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS chat_answers(work_id TEXT PRIMARY KEY, answer TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS owners(agent TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
             """)
         # One active DSH per logical instance. Other HTTP callers can query its journal.
@@ -123,7 +124,7 @@ class Runtime:
 
     def status(self, work):
         with self.db() as db:
-            return db.execute("SELECT session,turn,completed FROM work WHERE id=?", (work,)).fetchone()
+            return db.execute("SELECT session,turn,completed,answer FROM work LEFT JOIN chat_answers ON work_id=id WHERE id=?", (work,)).fetchone()
 
     def execute(self, b):
         agent, session, job = b["agent"], b["session"], b["work"]
@@ -147,19 +148,24 @@ class Runtime:
                 db.execute("INSERT INTO owners VALUES(?,?) ON CONFLICT(agent) DO UPDATE SET epoch=excluded.epoch",
                            (agent, epoch))
                 if row and row[5]:
-                    return 200, {"session": session, "turn": row[4]}
+                    answer = db.execute("SELECT answer FROM chat_answers WHERE work_id=?", (job,)).fetchone()
+                    return 200, {"session": session, "turn": row[4], **({"answer": answer[0]} if answer else {})}
                 db.execute("""INSERT INTO work(id,agent,session,epoch,generation) VALUES(?,?,?,?,?)
                            ON CONFLICT(id) DO UPDATE SET epoch=excluded.epoch,generation=excluded.generation""",
                            (job, agent, session, epoch, b["generation"]))
-            turn = self.run_turn(b)
+            turn, answer = self.run_turn(b)
             with self.db() as db:
+                if answer:
+                    db.execute("INSERT INTO chat_answers VALUES(?,?) ON CONFLICT(work_id) DO NOTHING", (job, answer))
                 db.execute("UPDATE work SET completed=1,turn=? WHERE id=?", (turn, job))
-            return 200, {"session": session, "turn": turn}
+            return 200, {"session": session, "turn": turn, **({"answer": answer} if answer else {})}
         finally:
             with self.lock:
                 self.busy.remove(agent)
 
     def run_turn(self, b):
+        binding = {k: v for k, v in b.items() if k != "prompt"}
+        chat = b.get("kind") == "project_chat"
         nonce = secrets.token_urlsafe(32)
         started = threading.Event()
         observed = {}
@@ -172,7 +178,7 @@ class Runtime:
                 try:
                     if self.payload() != {"session": b["session"]} or not started.wait(5):
                         return self.reply(403)
-                    request = urllib.request.Request(runtime.gateway + "/internal/tools/context.whoami", json.dumps({**b, "turn": observed["turn"]}).encode(),
+                    request = urllib.request.Request(runtime.gateway + "/internal/tools/context.whoami", json.dumps({**binding, "turn": observed["turn"]}).encode(),
                                                      headers={"Content-Type": "application/json"})
                     with runtime.http.open(request, timeout=10) as resp:
                         data = json.load(resp)
@@ -186,7 +192,7 @@ class Runtime:
                 return
             event = notification.payload.get("event", {})
             data = event.get("data", {})
-            if (event.get("type") == "turn/end" and observed.get("tool")
+            if (not chat and event.get("type") == "turn/end" and observed.get("tool")
                     and data.get("turn") == observed.get("turn") and data.get("reason", {}).get("kind") == "completed"):
                 # Persist before SDK shutdown or a lost HTTP acknowledgement.
                 with self.db() as db:
@@ -195,10 +201,16 @@ class Runtime:
             if event.get("type") == "turn/start":
                 observed["turn"] = event["data"]["turn"]
                 request = urllib.request.Request(self.gateway + "/internal/turns/start",
-                                                 json.dumps({**b, "turn": observed["turn"]}).encode(),
+                                                 json.dumps({**binding, "turn": observed["turn"]}).encode(),
                                                  headers={"Content-Type": "application/json"})
                 with self.http.open(request, timeout=10):
                     started.set()
+                if chat:
+                    # Keep a current grant receipt even when a conversational turn needs no model tool.
+                    scope = urllib.request.Request(self.gateway + "/internal/tools/context.whoami", request.data,
+                                                   headers={"Content-Type": "application/json"})
+                    with self.http.open(scope, timeout=10):
+                        observed["tool"] = True
 
         with ThreadingHTTPServer(("127.0.0.1", 0), LocalTool) as bridge:
             threading.Thread(target=bridge.serve_forever, daemon=True).start()
@@ -218,14 +230,17 @@ class Runtime:
                     try:
                         prompt = {"private_reply": "请用 context_whoami 核对我的账号。", "group_notice": "请用 context_whoami 获取群可见的项目提醒上下文。",
                                   "person_notice": "请用 context_whoami 获取本人的项目提醒上下文。"}.get(b.get("kind"), "请用 context_whoami 核对本轮发起人和当前项目。")
-                        result = session.run(prompt,
+                        result = session.run(b["prompt"] if chat else prompt,
                                              on_notification=events)
                     finally:
                         watchdog.cancel()
                         watchdog.join()
                 if not observed.get("tool") or result.finish_reason != "completed":
                     raise RuntimeError("no completed tool-backed turn")
-                return observed["turn"]
+                answer = result.final_response.strip()[:12000] if chat else ""
+                if chat and not answer:
+                    raise RuntimeError("empty chat response")
+                return observed["turn"], answer
             finally:
                 bridge.shutdown()
 
@@ -240,16 +255,18 @@ class API(Handler):
             return self.reply(404)
         try:
             if post:
-                b = self.payload()
-                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice")
-                        or (set(b) - {"kind"}) != {"work", "agent", "session", "owner", "epoch", "generation"}
+                b = self.payload(32 << 10)
+                chat = b.get("kind") == "project_chat"
+                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice", "project_chat")
+                        or (set(b) - {"kind"}) != ({"work", "agent", "session", "owner", "epoch", "generation"} | ({"prompt"} if chat else set()))
+                        or (chat and (not isinstance(b["prompt"], str) or not b["prompt"].strip()))
                         or any(type(b[k]) is not int for k in ("epoch", "generation")) or b["work"] != job):
                     return self.reply(400)
                 status, value = self.server.runtime.execute(b)
                 return self.reply(status, value)
             row = self.server.runtime.status(job)
             if row and row[2]:
-                return self.reply(200, {"session": row[0], "turn": row[1]})
+                return self.reply(200, {"session": row[0], "turn": row[1], **({"answer": row[3]} if row[3] else {})})
             return self.reply(202 if row else 404)
         except (ValueError, TypeError, KeyError):
             return self.reply(400)

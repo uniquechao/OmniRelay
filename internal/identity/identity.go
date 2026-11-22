@@ -460,7 +460,7 @@ var projectIDPattern = regexp.MustCompile("^" + projectSegment + "$")
 // ValidProjectID 检查项目深链中使用的稳定标识。
 func ValidProjectID(id string) bool { return projectIDPattern.MatchString(id) }
 
-var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
+var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|bot|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
 
 func (a WorkbenchAccess) canReturnTo(path string) bool {
 	if _, ok := projectTarget(path); ok {

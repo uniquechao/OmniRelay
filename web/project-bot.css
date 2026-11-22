@@ -1,0 +1,7 @@
+.project-bot {display:grid;gap:1rem}
+.project-bot ol {display:grid;gap:1rem;list-style:none;margin:0;padding:0;max-height:55vh;overflow:auto}
+.project-bot li p {white-space:pre-wrap;overflow-wrap:anywhere;margin:.25rem 0 0}
+.project-bot form {display:grid;gap:.5rem}
+.project-bot textarea {box-sizing:border-box;width:100%;resize:vertical;color:inherit;background:var(--surface,Canvas);font:inherit;border:1px solid var(--line,GrayText);border-radius:6px;padding:.7rem}
+.project-bot form button {justify-self:end}
+.project-bot [data-status]:empty {display:none}

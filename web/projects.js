@@ -1,4 +1,5 @@
 import { chatAPI, mountChatReader } from './chat-reader.js';
+import { mountProjectBot } from './project-bot.js';
 import { openProjectProfile } from './project-profile.js';
 
 const tabs = {
@@ -9,7 +10,7 @@ const tabs = {
   docs: '文档',
   reports: '日报',
   tasks: '任务',
-  feishu: '飞书 Bot',
+  bot: 'Bot',
 };
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
 const sourceKinds = ['minutes', 'document', 'sheets', 'bitable', 'file', 'message'];
@@ -82,6 +83,7 @@ export function projectRoute(hash) {
   if (!id && path === '#/projects') return { hash: withQuery(path, params), params };
   if (!identifier.test(id || '') || !parts.every((s) => identifier.test(s))) return;
   const base = '#/' + area + '/' + id;
+  if (tab === 'feishu' && !parts.length) return projectRoute(withQuery(base + '/bot', params));
   if (tab === 'brief' && parts.length <= 1)
     return projectRoute(base + '/reports/brief' + (parts.length ? '/' + parts[0] : ''));
   if (!Object.hasOwn(tabs, tab)) return;
@@ -707,12 +709,14 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     const overviewURL = '/api/v1/projects/' + id + '/overview';
     const overview = request(overviewURL, { signal });
     const boardView = tab === 'tasks' && (!parts.length || parts[0] === 'list');
+    const botSettings = tab === 'bot' && route.params.get('view') === 'connection';
+    const contentRoute = botSettings ? {...route, tab: 'feishu'} : route;
     const content =
       tab === 'overview'
         ? overview
-        : tab === 'chats'
+        : tab === 'chats' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
-          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(route), { signal });
+          : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
     const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
     const tagList = boardView && !parts.length ? request('/api/v1/projects/' + id + '/task-tags', { signal }) : undefined;
     const [header, result, directory, tagDirectory] = await Promise.allSettled([overview, content, members, tagList]);
@@ -737,6 +741,10 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (memory.tabFocus) {
       host.querySelector('[aria-selected=true]').focus();
       memory.tabFocus = false;
+    }
+    if (tab === 'bot' && !botSettings) {
+      await mountProjectBot(body, id, base, request, signal);
+      return;
     }
     if (tab === 'chats') {
       let chatHash = route.hash;
@@ -767,7 +775,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     }
     body.innerHTML =
       (header.status === 'rejected' || directory.status === 'rejected' || tagDirectory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
-      contents(route, data, header.value?.data.milestones?.items || [],
+      (botSettings ? link(base + '/bot', '返回 Bot 对话') : '') +
+      contents(contentRoute, data, header.value?.data.milestones?.items || [],
         new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
         new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
     const settings = body.querySelector('[data-project-settings]');

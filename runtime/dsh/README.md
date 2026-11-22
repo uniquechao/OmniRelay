@@ -41,6 +41,10 @@ Runtime 通过双向 TLS 发现归属自己的计划，为每个计划保留独�
 
 ## 运行配置
 
+工作台的「项目 → Bot」以当前登录会话向 `/api/v1/projects/{projectID}/bot/messages` 提交消息。Go 核验 CSRF、账号和当前会籍，按成员与项目保留独立 DSH 会话。回复从模型轮次持久化到成员自己的对话记录，署名从 Go 的项目档案生成。页面可展示最近 50 条问答，撤权后再次打开会重新检查权限。
+
+Go 侧使用 `bootstrap-gateway-tls.sh` 签发独立身份，在 Go 容器只读挂载 `omnirelay-agent-gateway-tls`，配置下表的 CA、证书、私钥和 Runtime Pod 稳定地址。集群私有回调使用 [Gateway Service](../../deploy/k8s/base/dsh/gateway-service.yaml) 的 8444 端口。只启用站内对话时设置 `OMNIRELAY_AGENT_FEISHU_ENABLED=0`。镜像验收脚本另外执行 `TestWorkbenchChatGate`，覆盖签名回程、重放、连续对话和成员隔离。
+
 独立部署使用 [StatefulSet 与内部 Service](../../deploy/k8s/base/dsh/runtime.yaml)。在目标工程构建带提交号的镜像，将清单中的 `omnirelay/dsh-runtime:release` 替换为该不可变版本。先用 `bash deploy/k8s/scripts/bootstrap-dsh-tls.sh CONTEXT NAMESPACE PRIVATE_DIRECTORY` 签发单实例服务证书，签发目录须由部署者保管。将清单在指定命名空间执行服务端 dry-run 后应用。Pod 将在专属卷中建立工作日志，私有端口 8443 使用双向 TLS。Go 后续接入时须使用同一 CA 签发、带 Gateway DNS 身份的独立客户端证书。
 
 运行 `bash deploy/k8s/scripts/configure-dsh-model.sh CONTEXT NAMESPACE` 可在终端隐藏输入 Key。脚本写入 `omnirelay-dsh-model` Secret，等待新内容投影到 Pod，再发一次真实 Harness 合成请求，成功输出 `model ok`。其他供应商可在清单中配置兼容 Messages 的 `DEEPSEEK_BASE_URL` 与 `DSH_MODEL`。挂载文件优先于环境变量，每个新轮次读取当前 Key。

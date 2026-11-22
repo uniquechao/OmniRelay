@@ -14,6 +14,7 @@ const projectTypes = [{ name: '研发', tone: 'blue' }, { name: '销售', tone: 
 
 async function fixture(page) {
   const errors = [];
+  const botMessages = [];
   page.on('pageerror', (err) => errors.push(err.message));
   let deny = false;
   let held;
@@ -86,6 +87,16 @@ async function fixture(page) {
           action: 'allowed',
           public_scope: 'project_only',
         });
+      }
+      if (section === 'bot/messages') {
+        if (route.request().method() === 'POST') {
+          assert.deepEqual(route.request().postDataJSON(), {text:'你好，项目 PM'});
+          assert.equal(route.request().headers()['x-csrf-token'], 'token');
+          assert.ok(route.request().headers()['idempotency-key']);
+          botMessages.push({id:'one', question:'你好，项目 PM', answer:'项目 PM · 联调项目\n你好，已收到。', state:'sent'});
+          return route.fulfill({status:202, json:{id:'one'}});
+        }
+        return respond({items:botMessages});
       }
       if (section === 'feishu')
         return respond({
@@ -475,7 +486,12 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       await go(path + 'members?q=甲');
       await delayed.started;
       await visible('正在加载…');
-      await go(path + 'feishu');
+      await go(path + 'bot');
+      await page.getByRole('tab', {name:'Bot', exact:true}).waitFor();
+      await page.getByRole('textbox',{name:'消息',exact:true}).fill('你好，项目 PM');
+      await page.getByRole('button',{name:'发送',exact:true}).click();
+      await visible('你好，已收到。');
+      await page.getByRole('link',{name:'飞书接入'}).click();
       await visible('已送达');
       assert.equal(await page.evaluate(() => window.memberReadAborted), true);
       delayed.finish();

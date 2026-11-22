@@ -115,7 +115,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		if err != nil {
 			return nil, nil, err
 		}
-		if workers.groupAgent != nil && cfg.botSendEnabled {
+		if workers.groupAgent != nil && cfg.botSendEnabled && os.Getenv("OMNIRELAY_AGENT_FEISHU_ENABLED") != "0" {
 			inbox.EnableGroupAgent()
 		}
 		connection := feishu.NewConnection(executable, cfg.tenantKey, check, botStore, inbox, cfg.botHeartbeatTTL)

@@ -15,6 +15,7 @@ import (
 )
 
 type Binding struct {
+	Prompt     string `json:"prompt,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	Work       string `json:"work"`
 	Agent      string `json:"agent"`
@@ -24,6 +25,7 @@ type Binding struct {
 	Session    string `json:"session"`
 }
 type Result struct {
+	Answer  string `json:"answer,omitempty"`
 	Session string `json:"session"`
 	Turn    int    `json:"turn"`
 }
@@ -94,7 +96,7 @@ func decode(resp *http.Response) (Result, error) {
 	if resp.StatusCode != 200 {
 		return r, errors.New("runtime has no completed execution")
 	}
-	err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&r)
+	err := json.NewDecoder(io.LimitReader(resp.Body, 128<<10)).Decode(&r)
 	if err == nil && (r.Session == "" || r.Turn < 0) {
 		err = errors.New("invalid runtime completion")
 	}

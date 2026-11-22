@@ -64,8 +64,8 @@ chmod 444 "$suite/model/DEEPSEEK_API_KEY"
 docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz
 docker exec "$OMNI_GATE_CONTAINER" python probe.py model
 grep -q '^DSH model probe path /anthropic/v1/messages$' "$suite/model.log"
-go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
-for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate; do
+go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate|TestWorkbenchChatGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
+for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate TestWorkbenchChatGate; do
     grep -q "^--- PASS: $gate " "$suite/gates.log"
 done
 printf 'Internal Agent messaging gates passed. Evidence: %s\n' "$suite"

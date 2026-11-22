@@ -36,7 +36,8 @@ func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, s
 	}
 	u, _ := url.Parse(endpoint)
 	svc := &group.Service{DB: pool, Roles: roles, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), Execute: client.Execute, Channels: map[string]group.Channel{}}
-	if cfg.botSendEnabled && cfg.appSecret != "" {
+	svc.RegisterWorkbench(mux, identities.AuthenticateWorkbench)
+	if os.Getenv("OMNIRELAY_AGENT_FEISHU_ENABLED") != "0" && cfg.botSendEnabled && cfg.appSecret != "" {
 		svc.Channels["feishu"] = group.Channel{Resolve: postgres.FeishuGroupScope(cfg.credentialsGeneration), Reply: func(ctx context.Context, e group.Envelope, bot, text, id string) group.Receipt {
 			var r chat.DeliveryResult
 			switch e.Mode {
