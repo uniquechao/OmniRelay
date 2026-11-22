@@ -11,6 +11,12 @@ const task = { id: 't-99', project_id: project.id, title: '联调验收', status
 const root = '/api/v1/projects/' + project.id;
 const list = (items) => ({ items, total: items.length });
 
+function localFiles(id, title, partial = false) {
+  const row = { id:'document:d-1', local_source_id:'d-1', name:title, format:'项目文档', format_key:'generic',
+    category:'files', sync_state:'local', project_ids:[id], sources:[] };
+  return {...list([row]), projects:{[id]:id}, partial};
+}
+
 async function fixture(page) {
   const errors = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -41,6 +47,8 @@ async function fixture(page) {
         csrf_token: 'token',
         access: { navigation: { workbench: true }, default_route: '/#/workbench' },
       });
+    if (path === '/api/v1/projects' && url.searchParams.get('page_size') === '100')
+      return respond(list([project]));
     if (path === '/api/v1/projects')
       return respond({
         items: [project],
@@ -51,13 +59,14 @@ async function fixture(page) {
     if (path.startsWith(root + '/')) {
       const section = path.slice(root.length + 1);
       if (deny) return route.fulfill({ status: 404, json: { error: 'project_access_denied' } });
+      if (section === 'files') return respond(localFiles(project.id, '交付文档'));
+      if (section === 'files/documents/d-1') return respond({title:'交付文档', text:'交付记录正文'});
       const data = {
         overview: {
           workspace: { project },
           milestones: { items: [{ kind: 'milestone', id: 'm1', title: '验收节点', task_id: task.id }] },
         },
         members: { members: [{ display_name: '项目成员甲' }] },
-        docs: list([{ title: '交付文档', ref: { kind: 'document', source_id: 'd-1' } }]),
         meetings: list([{ title: '交付纪要', resource_type: 'minutes', resource_token: 'm-1' }]),
         tasks: { owner_member_ids: ['成员甲'], columns: [{ name: '进行中', items: [], total: 1, next_cursor: 'more' }] },
         reports: {
@@ -336,6 +345,17 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       ]) {
         await go(path + section);
         await visible(title);
+        if (section === 'docs') {
+          assert.deepEqual(await page.locator('[data-drive-category]').allTextContents(),
+            ['全部','会议纪要','飞书文档','任务表格（多维表格）','图片','视频','文件']);
+          await page.getByRole('button', { name:'预览', exact:true }).click();
+          await page.getByRole('dialog').getByText('交付记录正文').waitFor();
+          await page.keyboard.press('Escape');
+          const download = page.waitForEvent('download');
+          await page.getByRole('button',{name:'下载',exact:true}).click();
+          assert.equal((await download).suggestedFilename(),'交付文档.txt');
+          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        }
         await page.getByRole('link', { name: '查看关联任务' }).click();
         await page.getByRole('link', { name: '联调验收' }).click();
         await page.getByLabel('正文', { exact:true }).waitFor();
@@ -727,8 +747,8 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
         return send(list([run]));
       case 'reports/briefings/r-1':
         return send({ error: 'project_access_denied' }, 404);
-      case 'docs':
-        return send({ project_id: other.id, data: { ...list([{ kind: 'document', title: '启明项目档案' }]), coverage: { state: 'partial' } } });
+      case 'files':
+        return send(localFiles(other.id, '启明项目档案', true));
       default:
         throw Error('意外的项目请求 ' + section);
     }
@@ -766,17 +786,64 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   assert.equal(await page.getByRole('button', { name: '接入验证' }).count(), 0);
   assert.doesNotMatch(await page.locator('#page').innerText(), /联调群|项目成员甲|已送达/);
   await go(base + '/brief/r-22');
+  await page.waitForURL(url => url.hash === base + '/reports/brief/r-22');
   await visible('投递失败');
-  assert.equal(new URL(page.url()).hash, base + '/reports/brief/r-22');
   run.delivery_state = 'success';
   await page.reload();
   await visible('送达待确认');
   await go(base + '/brief/r-1');
   await visible('当前项目或来源已不可访问。');
-  await page.getByRole('tab', { name: '文档' }).click();
+  await page.getByRole('tab', { name: '文件' }).click();
   await visible('部分数据暂不可用。');
   await visible('启明项目档案');
   assert.doesNotMatch(await page.locator('#page').innerText(), /暂无记录|交付文档|启明群|已送达/);
   assert.deepEqual(writes, []);
   assert.deepEqual(first.errors, []);
+});
+
+test('项目文件分类、筛选、来源和版本操作保留项目范围', {skip:!moduleName}, async t => {
+  const browser = await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport:{width:390,height:844}});
+  page.setDefaultTimeout(5000);
+  await fixture(page);
+  const row = {id:17, name:'现场照片.png', format_key:'image', format:'图片', category:'files', version_id:2,
+    shared_at:'2026-11-21T12:00:00Z', sync_state:'complete', project_ids:[project.id],
+    sources:[{project_id:project.id, chat_id:'oc_21', message_id:'msg1', chat_name:'联调群', sender_name:'成员甲'}]};
+  let search;
+  await page.route(origin + root + '/files?**', route => {
+    search = new URL(route.request().url()).searchParams;
+    const items = ['all','image'].includes(search.get('category')) && row.name.includes(search.get('q') || '') ? [row] : [];
+    return route.fulfill({json:{...list(items), projects:{[project.id]:project.name}}});
+  });
+  const file = '/api/v1/feishu/files/17/versions';
+  await page.route(origin + file + '**', route => {
+    const url = new URL(route.request().url());
+    assert.equal(url.searchParams.get('source_project'),project.id);
+    return url.pathname === file ? route.fulfill({json:{items:[{id:2}]}}) :
+      route.fulfill({path:'design/prototype/omni-relay-logo.png',contentType:'image/png'});
+  });
+  await page.goto(origin + '/#/projects/' + project.id + '/docs');
+  await page.getByText(row.name,{exact:true}).waitFor();
+  assert.equal(search.get('sort'),'shared_at');
+  assert.equal(await page.locator('th[aria-sort="descending"] [data-sort]').getAttribute('data-sort'),'shared_at');
+  assert.equal(await page.locator('tbody .drive-source').getAttribute('href'),'#/projects/p-21/chats/oc_21/msg1');
+  await page.getByRole('button',{name:'视频',exact:true}).click();
+  await page.getByText('暂无文件。').waitFor();
+  await page.getByRole('button',{name:'图片',exact:true}).click();
+  await page.getByRole('searchbox',{name:'搜索文件'}).fill('现场');
+  await page.getByRole('button',{name:'筛选',exact:true}).click();
+  await page.getByLabel('同步状态',{exact:true}).selectOption('complete');
+  await page.keyboard.press('Escape');
+  await page.getByText(row.name,{exact:true}).waitFor();
+  assert.equal(search.get('category'),'image');
+  assert.equal(search.get('q'),'现场');
+  assert.equal(search.get('sync_state'),'complete');
+  assert.equal(await page.locator('[data-filter="project_id"]').count(),0);
+  await page.getByRole('button',{name:'预览',exact:true}).click();
+  await page.getByRole('dialog').getByRole('img',{name:row.name,exact:true}).evaluate(img => img.decode());
+  await page.keyboard.press('Escape');
+  const download = page.waitForEvent('download');
+  await page.getByRole('link',{name:'下载',exact:true}).click();
+  assert.equal(new URL((await download).url()).searchParams.get('source_project'),project.id);
 });

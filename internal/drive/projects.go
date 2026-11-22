@@ -67,7 +67,7 @@ func (s *Service) registerProjectChanges(mux *http.ServeMux, auth func(http.Resp
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		files, err := s.visible(ctx, p, id, nil)
+		files, err := s.visibleInProject(ctx, p, id, nil, r.URL.Query().Get("source_project"))
 		if err != nil {
 			problem(w, 503, "source_unavailable")
 			return

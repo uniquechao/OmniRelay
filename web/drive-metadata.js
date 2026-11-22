@@ -1,16 +1,19 @@
 import { assignmentAPI } from './chat-assignment.js';
 
-export function fileSources(row) {
+export function fileSources(row, projectId) {
   const { escape } = window.OmniRelayUI;
   const seen = new Set();
   return row.sources.flatMap(source => {
     if (![source.chat_id, source.message_id].every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id))) return [];
-    const route = '#/feishu/bot-chats/' + source.chat_id + '/' + source.message_id;
+    const base = projectId && source.project_id === projectId ? '#/projects/' + encodeURIComponent(projectId) + '/chats/' : '#/feishu/bot-chats/';
+    const route = base + source.chat_id + '/' + source.message_id;
     if (seen.has(route)) return [];
     seen.add(route);
-    return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '">' + escape(source.chat_name || source.chat_id) +
-      ' · ' + escape(source.sender_name || '未知分享人') + '</a>';
-  }).join('<br>');
+    const date = source.sent_at ? ' · ' + escape(new Date(source.sent_at).toLocaleString('zh-CN')) : '';
+    return '<a class="drive-source" data-source-file="' + escape(row.id) + '" href="' + route + '"><strong>' +
+      escape(source.chat_name || source.chat_id) + '</strong><small>' + escape(source.sender_name || '未知分享人') +
+      date + '</small><span>定位原消息</span></a>';
+  }).join('');
 }
 
 export function fileProjects(row, names) {
@@ -105,12 +108,12 @@ export async function editFileProjects({ row, trigger, request, signal, refresh,
   input.focus();
 }
 
-export function mountFileMetadata(dialog, host, row, projects, edit, signal, category, size) {
+export function mountFileMetadata(dialog, host, row, projects, edit, signal, category, size, projectId) {
   let current = row;
   function paint(record) {
     if (!record || record.version_id !== row.version_id) { dialog.close(); return; }
     current = record;
-    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>分类</dt><dd>' + category + '</dd></div><div><dt>来源</dt><dd>' + fileSources(record) +
+    host.innerHTML = '<dl class="facts drive-preview-facts"><div><dt>分类</dt><dd>' + category + '</dd></div><div><dt>来源</dt><dd>' + fileSources(record, projectId) +
       '</dd></div><div><dt>所属项目</dt><dd>' + projects(record) + '</dd></div><div><dt>大小</dt><dd>' + size + '</dd></div></dl>';
   }
   paint(current);

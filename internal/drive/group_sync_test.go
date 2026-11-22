@@ -195,6 +195,13 @@ func TestCurrentGroupAndVersionAccess(t *testing.T) {
 	if got := get(path+"/content", 200); got != "乙版" {
 		t.Fatal(got)
 	}
+	// 全局可读的第二版只来自项目 q，项目 p 的预览和下载必须使用自己的来源。
+	get(path+"/content?source_project=p", 404)
+	scopedPreview := httptest.NewRecorder()
+	mux.ServeHTTP(scopedPreview, httptest.NewRequest("POST", "/api/v1/feishu/files/"+path+"/previews?page=1&source_project=p", nil))
+	if scopedPreview.Code != 404 {
+		t.Fatal(scopedPreview.Code, scopedPreview.Body.String())
+	}
 	src.denied["m2"] = true
 	file("extra", "p")
 	get(path+"/content", 404)

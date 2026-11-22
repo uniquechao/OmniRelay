@@ -162,11 +162,24 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		if body := request("GET", "/allowed/"+source.panel+"?q=本地", "", 200); !strings.Contains(body, "本地资料") || strings.Contains(body, "受限正文") {
 			t.Fatal(body)
 		}
+		if source.kind == "document" {
+			body := request("GET", "/allowed/files?category=attachments&q=本地&sort=shared_at&order=desc", "", 200)
+			if !strings.Contains(body, `"id":"document:local-note"`) || strings.Contains(body, "受限正文") {
+				t.Fatal(body)
+			}
+			if body := request("GET", "/allowed/files/documents/local-note", "", 200); !strings.Contains(body, "受限正文") {
+				t.Fatal(body)
+			}
+		}
 		request("GET", path+"/tasks", "", 200)
 		request("PUT", path+"/readers", `{"reader_account_ids":[]}`, 200)
 		if body := request("GET", "/allowed/"+source.panel, "", 200); strings.Contains(body, "本地资料") {
 			t.Fatal(body)
 		}
+		if body := request("GET", "/allowed/files", "", 200); strings.Contains(body, "本地资料") {
+			t.Fatal(body)
+		}
+		request("GET", "/allowed/files/documents/local-note", "", 404)
 		request("GET", path+"/tasks", "", 404)
 	}
 	const checkPath = "/allowed/feishu/check"
@@ -266,4 +279,5 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 	}
 	exec(`UPDATE project_members SET role='revoked' WHERE project_id='allowed' AND account_id='relay-user'`)
 	request("GET", "/allowed/docs", "", 404)
+	request("GET", "/allowed/files", "", 404)
 }
