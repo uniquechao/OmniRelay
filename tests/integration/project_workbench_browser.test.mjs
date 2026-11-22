@@ -828,6 +828,7 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
         return send({ project_id: other.id, data: { workspace: { project: other }, milestones: { items: [] } } });
       case 'members':
         return send({ project_id: other.id, data: { members: [{ display_name: '启明成员' }] } });
+      case 'bot/messages': return send({items:[]});
       case 'feishu':
         return send({ project_id: other.id, state: 'available', can_check: false, target_name: '启明群',
           plan: { plan_enabled: false }, briefings: list([run]) });
@@ -846,7 +847,8 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   const go = (hash) => page.evaluate((target) => { location.hash = target; }, hash);
   await page.goto(origin + '/#/projects');
   await page.getByRole('link', { name: project.name }).click();
-  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await page.getByRole('tab', { name: 'Bot', exact: true }).click();
+  await page.getByRole('link', { name: '飞书接入' }).click();
   await visible('联调群');
   await visible('已送达');
   await page.getByRole('button', { name: '接入验证' }).waitFor();
@@ -867,13 +869,15 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
   assert.equal(await page.getByText('项目成员甲', { exact: true }).count(), 0);
   assert.equal(await page.locator('#page-heading').innerText(), other.name);
 
-  await page.getByRole('tab', { name: '飞书 Bot' }).click();
+  await page.getByRole('tab', { name: 'Bot', exact: true }).click();
+  await page.getByRole('link', { name: '飞书接入' }).click();
   await visible('启明群');
   await visible('已生成');
   await visible('投递失败');
   assert.equal(await page.getByRole('button', { name: '接入验证' }).count(), 0);
   assert.doesNotMatch(await page.locator('#page').innerText(), /联调群|项目成员甲|已送达/);
   await go(base + '/brief/r-22');
+  await page.waitForURL((url) => url.hash === base + '/reports/brief/r-22');
   await visible('投递失败');
   assert.equal(new URL(page.url()).hash, base + '/reports/brief/r-22');
   run.delivery_state = 'success';
