@@ -10,7 +10,7 @@ exports.apply = (ctx) => {
     output: {
       schema: {type: 'object', properties: Object.fromEntries(
         ['user_id', 'user_name', 'project_id', 'project_name'].map(key => [key, {type: 'string'}])
-      ), required: ['user_id', 'user_name', 'project_id', 'project_name'], additionalProperties: false},
+      ), additionalProperties: false},
       render: (_, value) => [{type: 'text', text: JSON.stringify(value)}],
     },
     async execute(args, exec) {

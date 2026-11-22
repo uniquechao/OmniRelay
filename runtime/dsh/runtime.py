@@ -6,7 +6,10 @@ import json
 import os
 import re
 import secrets
+import signal
 import sqlite3
+import subprocess
+import sys
 import ssl
 import threading
 import urllib.error
@@ -72,6 +75,36 @@ class Runtime:
     def db(self):
         with contextlib.closing(sqlite3.connect(self.journal, timeout=5)) as db, db:
             yield db
+
+    def watch_plans(self, stopping):
+        clocks = {}
+        def stop(clock):
+            if clock.poll() is None:
+                try:
+                    os.killpg(clock.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            clock.wait()
+        try:
+            while not stopping.is_set():
+                clocks = {plan: proc for plan, proc in clocks.items() if proc.poll() is None}
+                try:
+                    with self.http.open(self.gateway + "/internal/schedules", timeout=5) as response:
+                        pending = json.load(response) or []
+                    if not isinstance(pending, list) or len(pending) > 4 or not all(WORK.fullmatch(p) for p in pending):
+                        raise ValueError("invalid schedule assignment")
+                    for plan in set(clocks) - set(pending):
+                        stop(clocks.pop(plan))
+                    for plan in pending:
+                        if plan not in clocks:
+                            clocks[plan] = subprocess.Popen([sys.executable, str(HERE / "notice_clock.py"), plan],
+                                                            start_new_session=True)
+                except (OSError, TypeError, ValueError):
+                    pass  # Keep existing native timers alive during a Gateway outage.
+                stopping.wait(2)
+        finally:
+            for proc in clocks.values():
+                stop(proc)
 
     def status(self, work):
         with self.db() as db:
@@ -155,7 +188,7 @@ class Runtime:
         with ThreadingHTTPServer(("127.0.0.1", 0), LocalTool) as bridge:
             threading.Thread(target=bridge.serve_forever, daemon=True).start()
             try:
-                with open_instance(self.root / "agents", b["agent"], HERE / "project-pm.md",
+                with open_instance(self.root / "agents", b["agent"], HERE / ("query.md" if b.get("kind") == "private_reply" else "project-pm.md"),
                                    patches=(str(HERE / "group.patch.yml"),),
                                    tool_env={"OMNI_TOOL_URL": f"http://127.0.0.1:{bridge.server_port}",
                                              "OMNI_TOOL_NONCE": nonce}, **self.model) as host:
@@ -168,7 +201,9 @@ class Runtime:
                     watchdog = threading.Timer(60, host.close)
                     watchdog.start()
                     try:
-                        result = session.run("请用 context_whoami 核对本轮发起人和当前项目。",
+                        prompt = {"private_reply": "请用 context_whoami 核对我的账号。", "group_notice": "请用 context_whoami 获取群可见的项目提醒上下文。",
+                                  "person_notice": "请用 context_whoami 获取本人的项目提醒上下文。"}.get(b.get("kind"), "请用 context_whoami 核对本轮发起人和当前项目。")
+                        result = session.run(prompt,
                                              on_notification=events)
                     finally:
                         watchdog.cancel()
@@ -191,7 +226,8 @@ class API(Handler):
         try:
             if post:
                 b = self.payload()
-                if (set(b) != {"work", "agent", "session", "owner", "epoch", "generation"}
+                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice")
+                        or (set(b) - {"kind"}) != {"work", "agent", "session", "owner", "epoch", "generation"}
                         or any(type(b[k]) is not int for k in ("epoch", "generation")) or b["work"] != job):
                     return self.reply(400)
                 status, value = self.server.runtime.execute(b)
@@ -229,7 +265,14 @@ def main():
         app.runtime = runtime
         app.gateway_name = env["AGENT_GATEWAY_NAME"]
         app.socket = server.wrap_socket(app.socket, server_side=True)
-        app.serve_forever()
+        stopping = threading.Event()
+        watcher = threading.Thread(target=runtime.watch_plans, args=(stopping,), daemon=True)
+        watcher.start()
+        try:
+            app.serve_forever()
+        finally:
+            stopping.set()
+            watcher.join()
 
 
 if __name__ == "__main__":

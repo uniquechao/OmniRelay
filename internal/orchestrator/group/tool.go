@@ -36,7 +36,7 @@ func (s *Service) useTurn(ctx context.Context, c ToolCall, bind bool) (Who, erro
 		if err != nil {
 			return err
 		}
-		if c.Owner != s.Owner || c.Session != w.Session || c.Agent != w.Agent || c.Turn <= 0 {
+		if c.Kind != w.Kind || c.Owner != s.Owner || c.Session != w.Session || c.Agent != w.Agent || c.Turn <= 0 {
 			return access.ErrForbidden
 		}
 		if bind {
@@ -60,10 +60,13 @@ func (s *Service) useTurn(ctx context.Context, c ToolCall, bind bool) (Who, erro
 	})
 	return who, err
 }
+func (s *Service) trustedRuntime(r *http.Request) bool {
+	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && r.TLS.VerifiedChains[0][0].VerifyHostname(s.Owner) == nil
+}
 func (s *Service) Tools() http.Handler {
 	mux := http.NewServeMux()
 	handle := func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || r.TLS.VerifiedChains[0][0].VerifyHostname(s.Owner) != nil {
+		if !s.trustedRuntime(r) {
 			http.Error(w, "forbidden", 403)
 			return
 		}
@@ -93,5 +96,6 @@ func (s *Service) Tools() http.Handler {
 	}
 	mux.HandleFunc("POST /internal/tools/context.whoami", handle)
 	mux.HandleFunc("POST /internal/turns/start", handle)
+	s.registerSchedule(mux)
 	return mux
 }

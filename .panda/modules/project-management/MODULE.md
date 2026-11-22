@@ -19,6 +19,8 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 
 项目群 Agent 从可信通道取得群绑定与消息主体，按正式会籍代次、账号权限版本和群绑定版本确定工作授权。工具读取和向群回复前重验。Gateway、Runtime 的验收由内部通道完成，外部消息适配器单独验证。
 
+私聊身份查询使用发件人的已启用账号和全局查询助手，会话与项目群隔离。主动项目提醒由具备 `project.settings` 权限的项目成员登记。Go 固化项目、群或个人地址和相应的授权版本，Harness 持有原生定时器。每次触发按登记目标分别去重，取数和发送各自重新验证授权。群提醒的工具取数限于项目，个人提醒使用收件人本人的字段。
+
 ## 接口与测试
 
 - `GET /api/v1/projects` 返回 `can_create`。`GET /api/v1/projects/{projectID}/overview` 返回 `can_manage_profile` 与档案版本。`POST /api/v1/projects` 支持以 `Idempotency-Key` 重试创建。档案修改和归档分别使用 `PUT /api/v1/projects/{projectID}/profile` 与 `POST /api/v1/projects/{projectID}/archive`。

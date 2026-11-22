@@ -13,12 +13,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
+	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/feishu"
+	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/orchestrator/group"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 )
 
-func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, source *feishu.ChatSource) (func(context.Context), error) {
+func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, source *feishu.ChatSource, mux *http.ServeMux, identities *identity.Service, bot *postgres.FeishuBot) (func(context.Context), error) {
 	endpoint := os.Getenv("OMNIRELAY_AGENT_RUNTIME_URL")
 	if endpoint == "" {
 		return nil, nil
@@ -36,9 +38,20 @@ func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, s
 	svc := &group.Service{DB: pool, Roles: roles, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), Execute: client.Execute, Channels: map[string]group.Channel{}}
 	if cfg.botSendEnabled && cfg.appSecret != "" {
 		svc.Channels["feishu"] = group.Channel{Resolve: postgres.FeishuGroupScope(cfg.credentialsGeneration), Reply: func(ctx context.Context, e group.Envelope, bot, text, id string) group.Receipt {
-			r := source.ReplyTo(ctx, e.Chat, bot, e.Message, text, id)
+			var r chat.DeliveryResult
+			switch e.Mode {
+			case group.PrivateReply:
+				r = source.ReplyPrivate(ctx, e.Chat, bot, e.Message, text, id)
+			case group.GroupNotice, group.PersonNotice:
+				r = source.Notify(ctx, e.Mode == group.PersonNotice, e.Recipient, bot, text, id)
+			case group.GroupReply:
+				r = source.ReplyTo(ctx, e.Chat, bot, e.Message, text, id)
+			default:
+				return group.Receipt{State: "failed", Reason: "unknown_mode"}
+			}
 			return group.Receipt{State: r.State, MessageID: r.MessageID, Reason: r.Reason}
 		}}
+		svc.RegisterNotices(mux, identities.AuthenticateWorkbench, "feishu", func(ctx context.Context) (int64, error) { status, err := bot.Status(ctx); return status.Version, err })
 	}
 	addr := os.Getenv("OMNIRELAY_AGENT_LISTEN")
 	if addr == "" {

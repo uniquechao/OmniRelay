@@ -12,17 +12,23 @@ class Model(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         tools = {tool["name"] for tool in req.get("tools", [])}
-        if tools != {"context_whoami"}:
+        if tools not in ({"context_whoami"}, {"activate_notice"}):
             print("model-visible tools", sorted(tools), flush=True)
             self.send_error(400, "Unexpected tool roster")
             return
         last = req["messages"][-1]["content"]
         finished = isinstance(last, list) and any(x.get("type") == "tool_result" for x in last)
+        history = str(req["messages"])
+        if "群可见的项目提醒" in history and ("PRIVATE_ONLY_GATE" in history or "user_id" in history):
+            self.send_error(400,"private field in group context")
+            return
+        if tools == {"activate_notice"} and "OMNI_NOTICE_DUE" in json.dumps(last):
+            finished = True
         if finished:
-            if any(x.get("is_error") for x in last): print("synthetic tool error", last, flush=True)
+            if isinstance(last, list) and any(x.get("is_error") for x in last): print("synthetic tool error", last, flush=True)
             block, delta, reason = {"type":"text","text":""}, {"type":"text_delta","text":"已核对"}, "end_turn"
         else:
-            block = {"type":"tool_use","id":"call_"+uuid.uuid4().hex,"name":"context_whoami","input":{}}
+            block = {"type":"tool_use","id":"call_"+uuid.uuid4().hex,"name":next(iter(tools)),"input":{}}
             delta, reason = {"type":"input_json_delta","partial_json":"{}"}, "tool_use"
         usage = {"input_tokens":10,"output_tokens":3}
         events = [

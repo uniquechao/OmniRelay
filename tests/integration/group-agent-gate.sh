@@ -52,8 +52,8 @@ docker run -d --name "$OMNI_GATE_CONTAINER" --network host --read-only --tmpfs /
 code=$(curl --retry 15 --retry-connrefused --retry-delay 1 --max-time 4 -so /dev/null -w '%{http_code}' --cacert "$suite/ca.crt" \
     --cert "$suite/intruder.crt" --key "$suite/intruder.key" "https://localhost:$OMNI_GATE_RUNTIME_PORT/works/00000000-0000-4000-8000-000000000000")
 test "$code" = 403
-go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
-for gate in TestGatewayPermissionGate TestRuntimeImageGate; do
+go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
+for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate; do
     grep -q "^--- PASS: $gate " "$suite/gates.log"
 done
-printf 'Internal group Agent gates passed. Evidence: %s\n' "$suite"
+printf 'Internal Agent messaging gates passed. Evidence: %s\n' "$suite"

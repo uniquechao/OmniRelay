@@ -92,7 +92,8 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	chatService.ConfigureBusinessReceipts(projectService)
 	projectService.ConfigureFiles(fileService)
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
-	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource)
+	mux := http.NewServeMux()
+	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -134,7 +135,6 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		})
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
-	mux := http.NewServeMux()
 	routing.Gateway{Check: roles.Check}.Register(mux, identityService.AuthenticateWorkbench)
 	if run := cfg.candidateMessageRun; run != nil && run.MessageProject != "" {
 		registerCandidateReplies(mux, pool, identityService.AuthenticateWorkbench, roles, *run)

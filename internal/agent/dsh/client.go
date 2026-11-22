@@ -15,6 +15,7 @@ import (
 )
 
 type Binding struct {
+	Kind       string `json:"kind,omitempty"`
 	Work       string `json:"work"`
 	Agent      string `json:"agent"`
 	Owner      string `json:"owner"`

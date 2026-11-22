@@ -1,0 +1,25 @@
+- id: persistent-bash
+  disabled: true
+- id: persistent-pwsh
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-working-directory
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- insert:
+    - id: storage
+      name: '@deepseek-ai/dsh-storage'
+    - id: storage-json
+      name: '@deepseek-ai/dsh-storage-json'
+      config:
+        root: !!js dshHomePath('storages')
+    - id: storage-domain
+      name: '@deepseek-ai/dsh-storage-domain'
+      config:
+        backend: json
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'
+    - id: omni-plan
+      name: /opt/omnirelay-runtime/clock.cjs

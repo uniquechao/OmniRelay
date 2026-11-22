@@ -65,10 +65,22 @@ func newGate(t *testing.T) *gate {
 	roles.ProjectAccess = access.LocalProjects{Pool: db}
 	g := &gate{Service: &Service{DB: db, Roles: roles, Tenant: "tenant", App: "app", Owner: "localhost"}, t: t, ctx: ctx, version: 1}
 	g.Channels = map[string]Channel{"internal": {Resolve: func(_ context.Context, _ pgx.Tx, e Envelope) (Assignment, error) {
+		if e.Mode == PrivateReply {
+			if e.Chat != "dm-"+e.Account {
+				return Assignment{}, access.ErrForbidden
+			}
+			return Assignment{Bot: "internal-bot", Version: 1}, nil
+		}
+		if e.Mode == PersonNotice {
+			if e.Account != e.Chat {
+				return Assignment{}, access.ErrForbidden
+			}
+			return Assignment{Project: e.Project, Bot: "internal-bot", Recipient: "person-" + e.Account, Version: 1}, nil
+		}
 		if e.Chat != "group-north" {
 			return Assignment{}, access.ErrForbidden
 		}
-		return Assignment{Project: "north", Bot: "internal-bot", Version: g.version}, nil
+		return Assignment{Project: "north", Bot: "internal-bot", Version: g.version, Recipient: e.Chat}, nil
 	}, Reply: func(ctx context.Context, e Envelope, bot, text, id string) Receipt {
 		if bot != "internal-bot" || id == "" {
 			t.Fatal("unbound delivery")
@@ -175,7 +187,7 @@ func TestGatewayPermissionGate(t *testing.T) {
 		t.Fatal("received an unauthorized reply")
 	}
 }
-func TestRuntimeImageGate(t *testing.T) {
+func openImageGate(t *testing.T) (*gate, *dsh.Client, *tls.Config, string) {
 	dir := os.Getenv("OMNI_GATE_CERTS")
 	if dir == "" {
 		t.Skip("run tests/integration/group-agent-gate.sh")
@@ -196,6 +208,11 @@ func TestRuntimeImageGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.Execute = client.Execute
+	return g, client, certs, dir
+}
+func TestRuntimeImageGate(t *testing.T) {
+	g, client, certs, dir := openImageGate(t)
 	// Exercise transport identity and input boundaries with valid private CA certificates.
 	intruder, err := dsh.TLS(filepath.Join(dir, "ca.crt"), filepath.Join(dir, "intruder.crt"), filepath.Join(dir, "intruder.key"))
 	if err != nil {

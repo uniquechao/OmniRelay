@@ -5,3 +5,7 @@
 !whoami.cjs
 !group.patch.yml
 !project-pm.md
+!query.md
+!clock.cjs
+!clock.patch.yml
+!notice_clock.py

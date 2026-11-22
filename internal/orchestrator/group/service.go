@@ -27,10 +27,10 @@ type Service struct {
 	Execute            func(context.Context, dsh.Binding) (dsh.Result, error)
 }
 type Who struct {
-	UserID      string `json:"user_id"`
-	UserName    string `json:"user_name"`
-	ProjectID   string `json:"project_id"`
-	ProjectName string `json:"project_name"`
+	UserID      string `json:"user_id,omitempty"`
+	UserName    string `json:"user_name,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
 }
 type work struct {
 	dsh.Binding
@@ -44,16 +44,16 @@ type work struct {
 func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, error) {
 	var w work
 	var p identity.Principal
-	var scope, member string
+	var scope, member, plan string
 	var pv, av int64
-	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,p.name,w.chat_id,w.thread_id,w.message_id,
-            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text
+	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,'')
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
-        JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
+        LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
         WHERE w.id=$1 AND w.tenant_key=$2 AND w.app_id=$3 AND a.active AND a.permission_version=w.permission_version
-        AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
-		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery)
+        AND (w.mode='private_reply' OR p.project_id IS NOT NULL) AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
+		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return w, access.ErrForbidden
 	}
@@ -62,6 +62,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	}
 	p.TenantKey, p.AppID = s.Tenant, s.App
 	w.Address.Account, w.Address.Tenant, w.Address.App = p.AccountID, s.Tenant, s.App
+	w.Address.Project = w.Scope.ProjectID
 	ch, ok := s.Channels[w.Address.Channel]
 	if !ok {
 		return w, access.ErrForbidden
@@ -74,23 +75,43 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		return w, access.ErrForbidden
 	}
 	w.Bot = assignment.Bot
+	w.Address.Recipient = assignment.Recipient
+	if w.Address.Mode.notice() {
+		if err = s.checkNotice(ctx, tx, plan, w.Address, assignment); err != nil {
+			return w, err
+		}
+	}
 	gateway := routing.Gateway{Check: func(ctx context.Context, p identity.Principal, action, id string) (bool, error) {
 		return s.Roles.CheckInOrganizationMutation(ctx, tx, p, action, id)
 	}}
-	target, err := gateway.Resolve(ctx, p, "project", w.Scope.ProjectID)
+	intent := "project"
+	if w.Address.Mode == PrivateReply {
+		intent = "knowledge"
+	}
+	target, err := gateway.Resolve(ctx, p, intent, w.Scope.ProjectID)
 	if err != nil {
 		return w, err
 	}
-	grant, err := s.Roles.ProjectGrant(ctx, tx, p, w.Scope.ProjectID)
-	if err != nil {
-		return w, err
-	}
-	if !grant.Member || grant.MembershipGeneration != member {
-		return w, access.ErrForbidden
+	if w.Address.Mode != PrivateReply {
+		grant, err := s.Roles.ProjectGrant(ctx, tx, p, w.Scope.ProjectID)
+		if err != nil {
+			return w, err
+		}
+		if !grant.Member || grant.MembershipGeneration != member {
+			return w, access.ErrForbidden
+		}
 	}
 	w.Work, w.Agent, w.Scope.UserID, w.Scope.UserName = id, target.AgentID, p.AccountID, p.Name
 	scope = fmt.Sprintf("%s/%d/%d", member, av, pv)
 	fields, _ := json.Marshal([]string{w.Agent, p.AccountID, w.Address.Channel, w.Address.Chat, w.Address.Thread, scope})
+	if w.Address.Mode != GroupReply {
+		fields, _ = json.Marshal([]string{string(w.Address.Mode), plan, w.Agent, p.AccountID, w.Address.Channel, w.Address.Chat, w.Address.Thread, scope})
+		w.Kind = string(w.Address.Mode)
+	}
+	if w.Address.Mode == GroupNotice {
+		w.Scope.UserID = ""
+		w.Scope.UserName = ""
+	}
 	digest := sha256.Sum256(fields)
 	w.Session = hex.EncodeToString(digest[:])
 	return w, nil
@@ -149,7 +170,7 @@ func (s *Service) Step(ctx context.Context) error {
 	}
 	if w.State == "sending" {
 		// A changed display name also invalidates a previously frozen receipt.
-		expected := render(w.Scope)
+		expected := render(w.Address.Mode, w.Scope)
 		if w.Text != expected {
 			_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed' WHERE id=$1 AND generation=$2", w.Work, w.Generation)
 			return err
@@ -185,11 +206,19 @@ func (s *Service) Step(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(receipt))
+		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(w.Address.Mode, receipt))
 		return err
 	})
 }
-func render(w Who) string {
+func render(mode Mode, w Who) string {
+	switch mode {
+	case PrivateReply:
+		return fmt.Sprintf("全局查询助手 · 全局服务空间\n你的账号是%s（%s）。", w.UserName, w.UserID)
+	case GroupNotice:
+		return fmt.Sprintf("项目 PM · %s\n项目提醒：请关注%s的项目进展。", w.ProjectName, w.ProjectName)
+	case PersonNotice:
+		return fmt.Sprintf("项目 PM · %s\n%s，这是发给你本人的项目提醒，请查看%s的进展。", w.ProjectName, w.UserName, w.ProjectName)
+	}
 	return fmt.Sprintf("项目 PM · %s\n%s（%s），你当前所在的项目是%s（%s）。", w.ProjectName, w.UserName, w.UserID, w.ProjectName, w.ProjectID)
 }
 func (s *Service) Run(ctx context.Context) {
