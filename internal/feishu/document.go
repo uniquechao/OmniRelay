@@ -84,10 +84,10 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 	cursor := ""
 	seen := map[string]bool{}
 	for page := 0; page < 100; page++ {
-		q := url.Values{"page_size": {"500"}, "document_revision_id": {fmt.Sprint(meta.Document.Revision)}}
-		if meta.Document.Revision == 0 {
-			q.Set("document_revision_id", "-1")
-		}
+		// Feishu can reject explicitly numbered revisions even when the bot can
+		// read the latest document. Read latest blocks and fence publication
+		// with the metadata revision check below instead of querying history.
+		q := url.Values{"page_size": {"500"}, "document_revision_id": {"-1"}}
 		if cursor != "" {
 			q.Set("page_token", cursor)
 		}
@@ -253,7 +253,7 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 				node.Rows[last] = append(node.Rows[last], children)
 			}
 			return []drive.DocumentBlock{node}, nil
-		case b.Kind == 32:
+		case b.Kind == 24 || b.Kind == 25 || b.Kind == 32 || b.Kind == 34:
 			node.Type = "container"
 		case b.Kind != 2:
 			node.Type = "container"
