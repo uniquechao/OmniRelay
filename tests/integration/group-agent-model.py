@@ -12,7 +12,10 @@ class Model(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         tools = {tool["name"] for tool in req.get("tools", [])}
-        if tools not in ({"context_whoami"}, {"activate_notice"}):
+        smoke = not tools and "Reply with exactly DSH_OK." in str(req["messages"][-1])
+        if smoke:
+            print("DSH model probe path", self.path, flush=True)
+        elif tools not in ({"context_whoami"}, {"activate_notice"}):
             print("model-visible tools", sorted(tools), flush=True)
             self.send_error(400, "Unexpected tool roster")
             return
@@ -24,9 +27,9 @@ class Model(BaseHTTPRequestHandler):
             return
         if tools == {"activate_notice"} and "OMNI_NOTICE_DUE" in json.dumps(last):
             finished = True
-        if finished:
+        if finished or smoke:
             if isinstance(last, list) and any(x.get("is_error") for x in last): print("synthetic tool error", last, flush=True)
-            block, delta, reason = {"type":"text","text":""}, {"type":"text_delta","text":"已核对"}, "end_turn"
+            block, delta, reason = {"type":"text","text":""}, {"type":"text_delta","text":"DSH_OK" if smoke else "已核对"}, "end_turn"
         else:
             block = {"type":"tool_use","id":"call_"+uuid.uuid4().hex,"name":next(iter(tools)),"input":{}}
             delta, reason = {"type":"input_json_delta","partial_json":"{}"}, "tool_use"

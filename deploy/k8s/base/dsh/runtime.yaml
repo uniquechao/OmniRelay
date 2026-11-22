@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: omnirelay-dsh-runtime
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: omnirelay-dsh-runtime
+  ports:
+    - name: mtls
+      port: 8443
+      targetPort: mtls
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: omnirelay-dsh-runtime
+spec:
+  serviceName: omnirelay-dsh-runtime
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: omnirelay-dsh-runtime
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: omnirelay-dsh-runtime
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runtime
+          image: omnirelay/dsh-runtime:release
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: mtls
+              containerPort: 8443
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+            - name: AGENT_OWNER
+              value: "$(POD_NAME).omnirelay-dsh-runtime.$(POD_NAMESPACE).svc"
+            - name: AGENT_GATEWAY_NAME
+              value: "omnirelay-agent-gateway.$(POD_NAMESPACE).svc"
+            - name: AGENT_GATEWAY_URL
+              value: "https://$(AGENT_GATEWAY_NAME):8444"
+            - {name: AGENT_CA, value: /certs/ca.crt}
+            - {name: AGENT_CERT, value: /certs/tls.crt}
+            - {name: AGENT_KEY, value: /certs/tls.key}
+            - {name: DEEPSEEK_API_KEY_FILE, value: /model/DEEPSEEK_API_KEY}
+            - {name: DEEPSEEK_BASE_URL, value: "https://api.deepseek.com/anthropic"}
+            - {name: DSH_MODEL, value: deepseek-v4-flash}
+          startupProbe:
+            exec: {command: ["python", "probe.py", "livez"]}
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 24
+          livenessProbe:
+            exec: {command: ["python", "probe.py", "livez"]}
+            periodSeconds: 30
+            timeoutSeconds: 4
+          readinessProbe:
+            exec: {command: ["python", "probe.py", "readyz"]}
+            periodSeconds: 10
+            timeoutSeconds: 4
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/omnirelay-agent}
+            - {name: tmp, mountPath: /tmp}
+            - {name: tls, mountPath: /certs, readOnly: true}
+            - {name: model, mountPath: /model, readOnly: true}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 1Gi}
+        - name: tls
+          secret: {secretName: omnirelay-dsh-tls, defaultMode: 0440}
+        - name: model
+          secret:
+            secretName: omnirelay-dsh-model
+            optional: true
+            defaultMode: 0440
+            items:
+              - {key: DEEPSEEK_API_KEY, path: DEEPSEEK_API_KEY}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: omni-local-retain
+        resources:
+          requests: {storage: 4Gi}

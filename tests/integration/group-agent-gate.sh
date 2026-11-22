@@ -41,17 +41,29 @@ chmod 444 "$suite/localhost.key" "$suite/localhost.crt" "$suite/ca.crt"
 python3 tests/integration/group-agent-model.py "$model_port" > "$suite/model.log" 2>&1 &
 model_pid=$!
 docker volume create "$volume" >/dev/null
+mkdir -m 755 "$suite/model"
 docker run -d --name "$OMNI_GATE_CONTAINER" --network host --read-only --tmpfs /tmp:rw,exec,nosuid,nodev \
     -v "$volume:/var/lib/omnirelay-agent" -v "$suite/ca.crt:/certs/ca.crt:ro" \
+    -v "$suite/model:/model:ro" \
     -v "$suite/localhost.crt:/certs/tls.crt:ro" -v "$suite/localhost.key:/certs/tls.key:ro" \
     -e AGENT_CA=/certs/ca.crt -e AGENT_CERT=/certs/tls.crt -e AGENT_KEY=/certs/tls.key \
     -e AGENT_OWNER=localhost -e AGENT_GATEWAY_NAME=gateway -e AGENT_GATEWAY_URL="https://127.0.0.1:$OMNI_GATE_GO_PORT" \
     -e AGENT_LISTEN_HOST=127.0.0.1 -e AGENT_PORT="$OMNI_GATE_RUNTIME_PORT" -e DSH_MODEL=deepseek-v4-flash \
-    -e DEEPSEEK_BASE_URL="http://127.0.0.1:$model_port/v1" -e DEEPSEEK_API_KEY=internal-fixture "$image" >/dev/null
+    -e DEEPSEEK_BASE_URL="http://127.0.0.1:$model_port/anthropic" -e DEEPSEEK_API_KEY_FILE=/model/DEEPSEEK_API_KEY "$image" >/dev/null
 # A client signed by the same CA with the wrong service identity must be denied.
 code=$(curl --retry 15 --retry-connrefused --retry-delay 1 --max-time 4 -so /dev/null -w '%{http_code}' --cacert "$suite/ca.crt" \
     --cert "$suite/intruder.crt" --key "$suite/intruder.key" "https://localhost:$OMNI_GATE_RUNTIME_PORT/works/00000000-0000-4000-8000-000000000000")
 test "$code" = 403
+docker exec "$OMNI_GATE_CONTAINER" python probe.py livez
+if docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz; then
+    echo "Unexpected readiness without model Secret" >&2
+    exit 1
+fi
+printf '%s' internal-fixture > "$suite/model/DEEPSEEK_API_KEY"
+chmod 444 "$suite/model/DEEPSEEK_API_KEY"
+docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz
+docker exec "$OMNI_GATE_CONTAINER" python probe.py model
+grep -q '^DSH model probe path /anthropic/v1/messages$' "$suite/model.log"
 go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
 for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate; do
     grep -q "^--- PASS: $gate " "$suite/gates.log"

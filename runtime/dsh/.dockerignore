@@ -9,3 +9,5 @@
 !clock.cjs
 !clock.patch.yml
 !notice_clock.py
+!probe.py
+!probe.patch.yml

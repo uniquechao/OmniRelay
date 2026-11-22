@@ -41,6 +41,12 @@ Runtime 通过双向 TLS 发现归属自己的计划，为每个计划保留独�
 
 ## 运行配置
 
+独立部署使用 [StatefulSet 与内部 Service](../../deploy/k8s/base/dsh/runtime.yaml)。在目标工程构建带提交号的镜像，将清单中的 `omnirelay/dsh-runtime:release` 替换为该不可变版本。先用 `bash deploy/k8s/scripts/bootstrap-dsh-tls.sh CONTEXT NAMESPACE PRIVATE_DIRECTORY` 签发单实例服务证书，签发目录须由部署者保管。将清单在指定命名空间执行服务端 dry-run 后应用。Pod 将在专属卷中建立工作日志，私有端口 8443 使用双向 TLS。Go 后续接入时须使用同一 CA 签发、带 Gateway DNS 身份的独立客户端证书。
+
+运行 `bash deploy/k8s/scripts/configure-dsh-model.sh CONTEXT NAMESPACE` 可在终端隐藏输入 Key。脚本写入 `omnirelay-dsh-model` Secret，等待新内容投影到 Pod，再发一次真实 Harness 合成请求，成功输出 `model ok`。其他供应商可在清单中配置兼容 Messages 的 `DEEPSEEK_BASE_URL` 与 `DSH_MODEL`。挂载文件优先于环境变量，每个新轮次读取当前 Key。
+
+Pod 的 `livez` 探针检查私有 TLS 服务。`readyz` 检查本地工作日志可读和模型凭据已提供；真实模型认证由显式 `python probe.py model` 检查。等待首次配置 Key 时 Pod 可持续运行并保持未就绪。模型冒烟使用临时会话、固定提示和无业务工具的 profile。接通 Go 私有回调后，业务轮次才可调用项目工具。
+
 | 组件 | 配置 |
 | --- | --- |
 | Go 私有服务 | `OMNIRELAY_AGENT_RUNTIME_URL` 指向 owner 的稳定 HTTPS 地址。主机名对应 Runtime 的证书 SAN。配置 `OMNIRELAY_AGENT_CA`、`OMNIRELAY_AGENT_CERT`、`OMNIRELAY_AGENT_KEY`，以及私有监听地址 `OMNIRELAY_AGENT_LISTEN`（默认 :8444）。未配置 Runtime 地址时保留原服务行为 |

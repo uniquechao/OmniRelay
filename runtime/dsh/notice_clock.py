@@ -13,7 +13,7 @@ import uuid
 
 from deepseek_harness import DeepSeekHarness
 from deepseek_harness.errors import JsonRpcError
-from runtime import HERE, NoRedirect
+from runtime import HERE, NoRedirect, model_config
 
 
 def run(plan, gateway, tls, root, model):
@@ -93,4 +93,4 @@ if __name__ == "__main__":
     tls.load_cert_chain(env["AGENT_CERT"], env["AGENT_KEY"])
     tls.minimum_version = ssl.TLSVersion.TLSv1_3
     run(sys.argv[1], env["AGENT_GATEWAY_URL"], tls, Path(env.get("AGENT_VOLUME", "/var/lib/omnirelay-agent")),
-        dict(model=env["DSH_MODEL"], api_key=env["DEEPSEEK_API_KEY"], base_url=env["DEEPSEEK_BASE_URL"]))
+        model_config())

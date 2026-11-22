@@ -49,9 +49,24 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class ModelUnavailable(RuntimeError):
+    pass
+
+
+def model_config():
+    path = os.environ.get("DEEPSEEK_API_KEY_FILE")
+    try:
+        key = Path(path).read_text(encoding="utf-8").strip() if path else os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    except FileNotFoundError:
+        key = ""
+    if not key:
+        raise ModelUnavailable("model key pending")
+    return dict(base_url=os.environ["DEEPSEEK_BASE_URL"], api_key=key, model=os.environ["DSH_MODEL"])
+
+
 class Runtime:
-    def __init__(self, root, owner, callback, tls, model):
-        self.root, self.owner, self.model = root, owner, model
+    def __init__(self, root, owner, callback, tls):
+        self.root, self.owner = root, owner
         if not callback.startswith("https://"):
             raise ValueError("private HTTPS callback required")
         self.gateway = callback.rstrip("/")
@@ -191,7 +206,7 @@ class Runtime:
                 with open_instance(self.root / "agents", b["agent"], HERE / ("query.md" if b.get("kind") == "private_reply" else "project-pm.md"),
                                    patches=(str(HERE / "group.patch.yml"),),
                                    tool_env={"OMNI_TOOL_URL": f"http://127.0.0.1:{bridge.server_port}",
-                                             "OMNI_TOOL_NONCE": nonce}, **self.model) as host:
+                                             "OMNI_TOOL_NONCE": nonce}, **model_config()) as host:
                     try:
                         session = host.resume_session(b["session"])
                     except JsonRpcError as exc:
@@ -243,6 +258,18 @@ class API(Handler):
             return self.reply(503)
 
     def do_GET(self):
+        if self.path in ("/livez", "/readyz"):
+            names = self.connection.getpeercert().get("subjectAltName", ())
+            if not any(("DNS", n) in names for n in (self.server.runtime.owner, self.server.gateway_name)):
+                return self.reply(403)
+            if self.path == "/readyz":
+                try:
+                    model_config()
+                    with self.server.runtime.db() as db:
+                        db.execute("SELECT 1 FROM work LIMIT 1").fetchone()
+                except (ModelUnavailable, KeyError, OSError, sqlite3.Error):
+                    return self.reply(503, {"ready": False})
+            return self.reply(200)
         self.handle_work(False)
 
     def do_POST(self):
@@ -258,9 +285,8 @@ def main():
         tls.minimum_version = ssl.TLSVersion.TLSv1_3
         tls.load_cert_chain(env["AGENT_CERT"], env["AGENT_KEY"])
     server.verify_mode = ssl.CERT_REQUIRED
-    model = dict(base_url=env["DEEPSEEK_BASE_URL"], api_key=env["DEEPSEEK_API_KEY"], model=env["DSH_MODEL"])
     runtime = Runtime(Path(env.get("AGENT_VOLUME", "/var/lib/omnirelay-agent")), env["AGENT_OWNER"],
-                      env["AGENT_GATEWAY_URL"], client, model)
+                      env["AGENT_GATEWAY_URL"], client)
     with ThreadingHTTPServer((env.get("AGENT_LISTEN_HOST", "0.0.0.0"), int(env.get("AGENT_PORT", "8443"))), API) as app:
         app.runtime = runtime
         app.gateway_name = env["AGENT_GATEWAY_NAME"]
