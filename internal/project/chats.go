@@ -24,6 +24,51 @@ type projectGroups struct {
 	Total          int             `json:"total"`
 }
 
+type chatListCandidate struct {
+	Assignment chat.ProjectAssignment `json:"assignment"`
+	ID         string                 `json:"id"`
+}
+
+// RefreshPrimaryChatRead refreshes the local assignment metadata changed by
+// this work. It preserves which groups and names the verified read disclosed.
+func (s *Service) RefreshPrimaryChatRead(ctx context.Context, tx pgx.Tx, actor identity.Principal, id string, read any) (any, error) {
+	switch previous := read.(type) {
+	case chatListCandidate:
+		link, err := assignment(ctx, tx, actor, previous.ID)
+		if err != nil {
+			return nil, err
+		}
+		if link.ProjectID != previous.Assignment.ProjectID {
+			return nil, errConflict
+		}
+		previous.Assignment = link
+		return previous, nil
+	case projectGroups:
+		bound := *s
+		bound.mutation = tx
+		current, err := bound.projectGroups(ctx, actor, id)
+		if err != nil {
+			return nil, err
+		}
+		byID := make(map[string]chat.ProjectAssignment, len(current.Items))
+		for _, group := range current.Items {
+			byID[group.ID] = group.ProjectAssignment
+		}
+		previous.Items = slices.Clone(previous.Items)
+		for i := range previous.Items {
+			link, ok := byID[previous.Items[i].ID]
+			if !ok {
+				return nil, errConflict
+			}
+			previous.Items[i].ProjectAssignment = link
+		}
+		previous.PrimaryVersion = current.PrimaryVersion
+		return previous, nil
+	default:
+		return nil, errInput
+	}
+}
+
 func (s *Service) projectGroups(ctx context.Context, actor identity.Principal, id string) (projectGroups, error) {
 	result := projectGroups{ProjectID: id, Items: []assignedGroup{}}
 	rows, err := s.reader().Query(ctx, `SELECT coalesce(p.version,0),coalesce(a.chat_id,''),

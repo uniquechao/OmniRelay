@@ -94,6 +94,10 @@ func (s *Service) Tools() http.Handler {
 			http.Error(w, "forbidden", 403)
 			return
 		}
+		if errors.Is(err, errToolReadStale) {
+			http.Error(w, "source changed", http.StatusConflict)
+			return
+		}
 		if err != nil {
 			http.Error(w, "unavailable", 503)
 			return

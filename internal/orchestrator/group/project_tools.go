@@ -23,7 +23,12 @@ type projectCall struct {
 	Slot int          `json:"slot"`
 }
 
-var errSlot = errors.New("tool command changed")
+var (
+	errSlot          = errors.New("tool command changed")
+	errToolReadStale = errors.New("project tool result changed")
+)
+
+const setPrimaryTool = "chat_set_primary"
 
 func toolDigest(v any) (string, error) {
 	data, err := json.Marshal(v)
@@ -51,7 +56,8 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 		if !bound {
 			return access.ErrForbidden
 		}
-		if err = s.checkToolReads(ctx, tx, w.Work, w.Actor, w.Scope.ProjectID); err != nil {
+		chatReads, err := s.verifyToolReads(ctx, tx, w.Work, w.Actor, w.Scope.ProjectID)
+		if err != nil {
 			return err
 		}
 		t, ok := pmtools.Lookup(c.Name)
@@ -107,7 +113,25 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			return err
 		}
 		if t.Write {
-			_, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_calls(work_id,slot,tool,fingerprint,receipt) VALUES($1,$2,$3,$4,$5)", w.Work, c.Slot, t.Name, fp, result)
+			if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_calls(work_id,slot,tool,fingerprint,receipt) VALUES($1,$2,$3,$4,$5)", w.Work, c.Slot, t.Name, fp, result); err != nil {
+				return err
+			}
+		}
+		if t.Name == setPrimaryTool {
+			for _, read := range chatReads {
+				current, err := s.Projects.RefreshPrimaryChatRead(ctx, tx, w.Actor, w.Scope.ProjectID, read.Value)
+				if err != nil {
+					return err
+				}
+				digest, err := toolDigest(current)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `UPDATE agent_project_tool_reads SET digest=$3
+					WHERE work_id=$1 AND tool='chat_list' AND fingerprint=$2`, w.Work, read.Fingerprint, digest); err != nil {
+					return err
+				}
+			}
 		}
 		if t.PrivateSource {
 			digest, err := toolDigest(val)
@@ -122,39 +146,85 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 	return result, err
 }
 func (s *Service) checkToolReads(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string) error {
-	rows, err := tx.Query(ctx, "SELECT tool,args,digest FROM agent_project_tool_reads WHERE work_id=$1 ORDER BY tool,fingerprint", workID)
+	_, err := s.verifyToolReads(ctx, tx, workID, actor, projectID)
+	return err
+}
+
+// A committed primary change can be acknowledged without returning an old
+// model answer or executing the write again.
+func (s *Service) savedPrimaryReceipt(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string) (bool, error) {
+	if s.Projects == nil {
+		return false, nil
+	}
+	var chatID json.RawMessage
+	err := tx.QueryRow(ctx, `SELECT receipt->'chat_id' FROM agent_project_tool_calls
+		WHERE work_id=$1 AND tool=$2 AND jsonb_typeof(receipt->'chat_id')='string' ORDER BY slot DESC LIMIT 1`,
+		workID, setPrimaryTool).Scan(&chatID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return err
+		return false, err
+	}
+	allowed, err := s.Roles.CheckInOrganizationMutation(ctx, tx, actor, "project.settings", projectID)
+	if err != nil || !allowed {
+		return false, err
+	}
+	err = s.Projects.AuthorizeToolReceipt(ctx, tx, actor, projectID, setPrimaryTool, pmtools.Args{"chat_id": chatID})
+	if project.ToolStatus(err) == http.StatusForbidden {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+type checkedChatList struct {
+	Fingerprint string
+	Value       any
+}
+
+func (s *Service) verifyToolReads(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string) ([]checkedChatList, error) {
+	rows, err := tx.Query(ctx, "SELECT tool,args,digest,fingerprint FROM agent_project_tool_reads WHERE work_id=$1 ORDER BY tool,fingerprint", workID)
+	if err != nil {
+		return nil, err
 	}
 	type source struct {
-		Name   string
-		Args   pmtools.Args
-		Digest string
+		Name        string
+		Args        pmtools.Args
+		Digest      string
+		Fingerprint string
 	}
 	refs, err := pgx.CollectRows(rows, pgx.RowToStructByPos[source])
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var chatReads []checkedChatList
 	for _, r := range refs {
 		if s.Projects == nil {
-			return access.ErrForbidden
+			return nil, access.ErrForbidden
 		}
 		val, err := s.Projects.RunTool(ctx, tx, actor, projectID, r.Name, r.Args)
 		if err != nil {
-			if project.ToolStatus(err) == 403 {
-				return access.ErrForbidden
+			switch project.ToolStatus(err) {
+			case http.StatusForbidden:
+				return nil, access.ErrForbidden
+			case http.StatusConflict:
+				return nil, errToolReadStale
+			default:
+				return nil, err
 			}
-			return err
 		}
 		digest, err := toolDigest(val)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if digest != r.Digest {
-			return access.ErrForbidden
+			return nil, errToolReadStale
+		}
+		if r.Name == "chat_list" {
+			chatReads = append(chatReads, checkedChatList{Fingerprint: r.Fingerprint, Value: val})
 		}
 	}
-	return nil
+	return chatReads, nil
 }
 func (s *Service) registerProjectTools(mux *http.ServeMux) {
 	mux.HandleFunc("GET /internal/tools/project/catalog", func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +253,7 @@ func (s *Service) registerProjectTools(mux *http.ServeMux) {
 			if errors.Is(err, access.ErrForbidden) {
 				status = 403
 			}
-			if errors.Is(err, errSlot) {
+			if errors.Is(err, errSlot) || errors.Is(err, errToolReadStale) {
 				status = 409
 			}
 			http.Error(w, http.StatusText(status), status)

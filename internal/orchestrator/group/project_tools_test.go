@@ -1,10 +1,10 @@
 package group
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -15,8 +15,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
+	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/identity"
+	"github.com/uniquechao/OmniRelay/internal/project"
 )
 
 func (g *gate) projectMention(key, text string) string {
@@ -169,6 +172,141 @@ func TestProjectToolHistoryGate(t *testing.T) {
 	history := request("GET", "", "")
 	if strings.Contains(history, "PRIVATE_ONLY_GATE") || strings.Count(history, `"state":"suppressed"`) != 2 || len(sessions) != 2 || sessions[0] == sessions[1] {
 		t.Fatal("private history or model transcript survived source revocation", history)
+	}
+}
+
+type primaryReceiptChats struct {
+	project.Chat
+	visible map[string]bool
+}
+
+func (c primaryReceiptChats) ProjectGroup(_ context.Context, _ identity.Principal, id string) (chat.Group, error) {
+	if !c.visible[id] {
+		return chat.Group{}, chat.ErrAccessLost
+	}
+	return chat.Group{ID: id, Name: id}, nil
+}
+
+func (c primaryReceiptChats) ProjectGroupForMutation(ctx context.Context, _ pgx.Tx, actor identity.Principal, id string) (chat.Group, error) {
+	return c.ProjectGroup(ctx, actor, id)
+}
+
+func TestProjectPrimaryReceiptAndStaleHistory(t *testing.T) {
+	g := newGate(t)
+	chats := primaryReceiptChats{visible: map[string]bool{"oc_a": true, "oc_b": true}}
+	g.Projects = project.New(g.DB, g.Roles, nil, nil, chats, false)
+	g.sql(`UPDATE project_members SET role='manager' WHERE account_id='alice';
+		INSERT INTO feishu_bot_configs (tenant_key,app_id,credentials_generation) VALUES ('tenant','app',1);
+		INSERT INTO feishu_chat_conversations (tenant_key,app_id,chat_id,kind)
+		VALUES ('tenant','app','oc_a','group'), ('tenant','app','oc_b','group');
+		INSERT INTO project_chat_links (tenant_key,app_id,chat_id,project_id)
+		VALUES ('tenant','app','oc_a','north'), ('tenant','app','oc_b','north')`)
+	mux := http.NewServeMux()
+	g.RegisterWorkbench(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
+		return identity.Principal{TenantKey: g.Tenant, AppID: g.App, AccountID: "alice", OpenID: "login-a"}, true
+	})
+	request := func(method, key string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1/projects/north/bot/messages", strings.NewReader(`{"text":"项目主群"}`))
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+	var target string
+	g.Execute = func(ctx context.Context, b dsh.Binding) (dsh.Result, error) {
+		c := ToolCall{Binding: b, Turn: 1}
+		for _, bind := range []bool{true, false} {
+			if _, err := g.useTurn(ctx, c, bind); err != nil {
+				t.Fatal(err)
+			}
+		}
+		call := func(name string, slot int, args pmtools.Args) json.RawMessage {
+			t.Helper()
+			data, err := g.projectTool(ctx, projectCall{ToolCall: c, Name: name, Slot: slot, Args: args})
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			return data
+		}
+		var groups struct {
+			PrimaryVersion json.RawMessage `json:"primary_version"`
+			Items          []struct {
+				ID      string          `json:"id"`
+				Version json.RawMessage `json:"version"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(call("chat_list", 0, pmtools.Args{}), &groups); err != nil {
+			t.Fatal(err)
+		}
+		if target != "" {
+			groupID, _ := json.Marshal(target)
+			candidate := pmtools.Args{"candidate_chat_id": groupID}
+			call("chat_list", 0, candidate)
+			for _, group := range groups.Items {
+				if group.ID != target {
+					continue
+				}
+				args := pmtools.Args{"chat_id": groupID, "expected_version": group.Version, "primary_version": groups.PrimaryVersion}
+				first := call(setPrimaryTool, 1, args)
+				retry := call(setPrimaryTool, 1, args)
+				var compact bytes.Buffer
+				if err := json.Compact(&compact, retry); err != nil || compact.String() != string(first) {
+					t.Fatalf("receipt replay changed: %s and %s", first, retry)
+				}
+			}
+			call("chat_list", 0, candidate)
+			call("chat_list", 0, pmtools.Args{})
+		}
+		return dsh.Result{Session: b.Session, Turn: 1, Answer: "项目群状态已确认"}, nil
+	}
+	submit := func(key, groupID string) string {
+		t.Helper()
+		target = groupID
+		w := request("POST", key)
+		var accepted struct{ ID string }
+		if w.Code != http.StatusAccepted || json.Unmarshal(w.Body.Bytes(), &accepted) != nil || accepted.ID == "" {
+			t.Fatalf("submit: %d %s", w.Code, w.Body)
+		}
+		g.step()
+		g.state(accepted.ID, "sent")
+		return accepted.ID
+	}
+	lookup := func() map[string]chatMessage {
+		t.Helper()
+		w := request("GET", "")
+		var history struct{ Items []chatMessage }
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &history) != nil {
+			t.Fatalf("history: %d %s", w.Code, w.Body)
+		}
+		items := map[string]chatMessage{}
+		for _, item := range history.Items {
+			items[item.ID] = item
+		}
+		return items
+	}
+	query := submit("query-001", "")
+	first := submit("primary-001", "oc_a")
+	if history := lookup(); history[query].State != "stale" || history[query].Answer != "" ||
+		history[query].PrimarySaved || history[first].State != "sent" || history[first].Answer == "" {
+		t.Fatalf("successful write and stale query: %+v", history)
+	}
+	second := submit("primary-002", "oc_b")
+	// Production recorded old writes as suppressed even though their state committed.
+	g.sql("UPDATE agent_group_work SET state='suppressed',reason='',response_text=NULL WHERE id=$1", first)
+	if history := lookup(); !history[first].PrimarySaved || history[first].Answer != "" ||
+		history[second].State != "sent" || history[second].Answer == "" {
+		t.Fatalf("historical write receipt: %+v", history)
+	}
+	chats.visible["oc_a"] = false
+	if history := lookup(); history[first].PrimarySaved || history[second].Answer != "" || !history[second].PrimarySaved {
+		t.Fatalf("revoked group visible through answer or receipt: %+v", history)
+	}
+	var groupID string
+	var version int
+	if err := g.DB.QueryRow(g.ctx, "SELECT chat_id,version FROM project_chat_primary WHERE project_id='north'").Scan(&groupID, &version); err != nil ||
+		groupID != "oc_b" || version != 2 {
+		t.Fatalf("unexpected final primary: %s version %d (%v)", groupID, version, err)
 	}
 }
 func TestProjectToolAudienceImageGate(t *testing.T) {
