@@ -231,7 +231,13 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .member-search-control > .icon { position: absolute; inset-inline-start: 11px; top: 50%; transform: translateY(-50%); width: 16px; color: var(--or-text-muted); pointer-events: none; }
 .member-picker .member-search-control input { padding-inline-start: 35px; }
 .member-search-picked { position: absolute; inset-inline-end: 11px; top: 50%; transform: translateY(-50%); font-size: .75rem; color: var(--or-success-text); pointer-events: none; }
-.member-search-control:has(.member-search-picked:not(:empty)) input { padding-inline-end: 44px; }
+.member-search-control:has(.member-search-picked:not(:empty)) input { padding-inline-end: 84px; }
+.member-selected { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.member-selected[hidden] { display: none; }
+.member-selected button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow-wrap: anywhere; padding: 3px 7px; border: 1px solid var(--or-border); border-radius: 5px; background: var(--or-selected-bg); color: var(--or-text); cursor: pointer; }
+.member-selected .icon { width: 12px; height: 12px; flex: none; }
+.member-option-check { margin-inline-start: auto; visibility: hidden; color: var(--or-link); }
+.member-option[aria-selected="true"] .member-option-check { visibility: visible; }
 .member-picker .combo-box { max-height: none; padding: 4px; }
 .member-picker [role=listbox] { max-height: min(15rem,35dvh); overflow-y: auto; overscroll-behavior: contain; }
 .member-picker .member-option { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px 8px; border-radius: 4px; }

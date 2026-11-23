@@ -111,6 +111,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	})
 	handle("GET "+project+"/task-attachments/{attachmentID}", "project.read", s.taskAttachment)
 	handle("GET "+project+"/member-candidates", "project.settings", s.memberCandidates)
+	handle("POST "+project+"/members", "project.settings", s.addMembers)
 	handle("PUT "+project+"/members/{accountID}", "project.settings", s.saveMemberProfile)
 	handle("DELETE "+project+"/tasks/{taskID}", "project.assign", s.deleteTask)
 	handle("GET "+project+"/task-tags", "project.read", s.tags)

@@ -10,10 +10,10 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
   });
 
   function open(member, trigger) {
-    let target = member, changed = false, busy = false, prompt;
+    let selected = [], changed = false, busy = false, prompt;
     const baseline = {project_role: member?.project_role || 'project_member', responsibility: member?.responsibility || ''};
     const values = form => ({project_role: form.elements.project_role.value, responsibility: form.elements.responsibility.value});
-    const dirty = form => JSON.stringify(values(form)) !== JSON.stringify(baseline) || (!member && Boolean(target || form.elements.user_query.value));
+    const dirty = form => JSON.stringify(values(form)) !== JSON.stringify(baseline) || (!member && Boolean(selected.length || form.elements.user_query.value));
     const dialog = openDialog({
       title: member ? '编辑项目成员' : '添加项目成员', description: member?.display_name,
       drawer: 'standard', variant: 'form', confirm: member ? '保存修改' : '添加成员',
@@ -22,15 +22,18 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
         <label class="field pr-form"><span>项目角色</span><select class="select" name="project_role" aria-label="项目角色" ${!projectRoles.length || member?.project_role === 'project_admin' && !data.can_delegate ? 'disabled' : ''}>
           ${projectRoles.map(role => `<option value="${esc(role.id)}" ${role.id === baseline.project_role ? 'selected' : ''} ${role.id === 'project_admin' && !data.can_delegate && baseline.project_role !== role.id ? 'disabled' : ''}>${esc(role.name)}</option>`).join('')}
         </select></label>
-        <label class="field pr-form"><span>项目职责</span><textarea name="responsibility" rows="4" maxlength="4000" placeholder="填写此人在本项目中的职责…">${esc(baseline.responsibility)}</textarea></label>
+        <label class="field pr-form"><span>项目职责</span><textarea name="responsibility" rows="4" maxlength="4000" placeholder="${member ? '填写此人在本项目中的职责…' : '填写所选成员在本项目中的共同职责…'}">${esc(baseline.responsibility)}</textarea></label>
       </fieldset><p data-error role="status"></p>
       ${member ? '<button type="button" class="button" data-remove>移除成员</button>' : ''}`,
       isDirty: dirty,
       async onSubmit(form) {
         if (busy) return {keepOpen: true};
-        if (!target) return {field: form.elements.user_query, message: '请从候选列表选择人员。'};
+        if (!member && !selected.length) return {field: form.elements.user_query, message: '请从候选列表选择人员。'};
         if (!projectRoles.length) {message.textContent = '项目角色暂不可用，请关闭后重新加载。'; return {keepOpen: true};}
-        return await mutate({...values(form), expected_version: target.version, expected_project_role: baseline.project_role}) ? undefined : {keepOpen: true};
+        const body = member
+          ? {...values(form), expected_version: member.version, expected_project_role: baseline.project_role}
+          : {...values(form), members: selected.map(user => ({account_id: user.account_id, expected_version: user.version}))};
+        return await mutate(body) ? undefined : {keepOpen: true};
       },
       onClose() {
         signal.removeEventListener('abort', abort); window.removeEventListener('beforeunload', warn);
@@ -55,16 +58,19 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
       mountMemberPicker(dialog, async (query, page) => {
         const params = new URLSearchParams({q: query, page: String(page)});
         return (await request(root + '/member-candidates?' + params, {signal})).items;
-      }, user => {target = user;});
+      }, users => {selected = users;});
     }
     async function mutate(body) {
       if (busy) return false;
       busy = true; fieldset.disabled = true; submit.disabled = true; message.textContent = '正在保存…';
       try {
-        await request(root + '/members/' + encodeURIComponent(target.account_id), {method: 'PUT', body, signal});
-        changed = true; toast('success', body.role === 'revoked' ? '成员已移除。' : '项目成员已保存。'); return true;
+        const url = member ? root + '/members/' + encodeURIComponent(member.account_id) : root + '/members';
+        await request(url, {method: member ? 'PUT' : 'POST', body, signal});
+        changed = true;
+        toast('success', !member ? `已添加 ${selected.length} 名项目成员。` : body.role === 'revoked' ? '成员已移除。' : '项目成员已保存。');
+        return true;
       } catch (error) {
-        if (!signal.aborted) message.textContent = error.status === 409 ? '人员或角色已更新，或仍有未完成任务。请先交接任务，关闭后重新加载成员再操作。' : [403, 404].includes(error.status) ? '当前账号无权修改该成员。' : '保存失败，已保留输入，请重试。';
+        if (!signal.aborted) message.textContent = error.status === 409 ? (member ? '人员或角色已更新，或仍有未完成任务。请先交接任务，关闭后重新加载成员再操作。' : '所选人员的成员状态已变更，本次未添加。请重新核对名单。') : [403, 404].includes(error.status) ? '当前账号无权修改该成员。' : '保存失败，已保留输入，请重试。';
         return false;
       } finally {busy = false; fieldset.disabled = false; submit.disabled = false;}
     }
