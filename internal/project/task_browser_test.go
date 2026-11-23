@@ -71,7 +71,27 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 	if schema == "member_task_crud_browser" {
 		_, err := pool.Exec(t.Context(), `INSERT INTO accounts(id,tenant_key,app_id,open_id,name)
 			SELECT 'sample-'||n,'tenant','app','ou_sample_'||n,name FROM
-			unnest(ARRAY['方宁','周言','林一帆','陈冬','顾清禾']) WITH ORDINALITY person(name,n)`)
+			unnest(ARRAY['方宁','周言','林一帆','陈冬','顾清禾']) WITH ORDINALITY person(name,n);
+			INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES('tenant','app',1,true);
+			INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind)
+				SELECT 'tenant','app',id,'group' FROM unnest(ARRAY['alpha','beta','hidden','elsewhere']) id;
+			INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind,peer_open_id)
+				VALUES ('tenant','app','private','p2p','manager');
+			INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id,members_initialized_at)
+				SELECT 'tenant','app',chat_id,CASE WHEN chat_id='elsewhere' THEN 'other' ELSE 'h3' END,now()
+				FROM feishu_chat_conversations WHERE kind='group';
+			INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation,verified_at,members)
+				SELECT 'tenant','app',chat_id,1,now(),CASE WHEN chat_id='hidden' THEN ARRAY['second'] ELSE ARRAY['manager'] END
+				FROM feishu_chat_conversations WHERE kind='group';
+			INSERT INTO feishu_chat_sync(tenant_key,app_id,chat_id,thread_id,source_blocked)
+				VALUES ('tenant','app','alpha','hidden-thread',true);
+			INSERT INTO feishu_chat_messages(tenant_key,app_id,message_id,chat_id,sender_id,sender_kind,sent_at,updated_at,deleted,thread_id)
+				SELECT 'tenant','app',id,chat,sender,kind,'2026-01-01 12:00Z'::timestamptz + n * interval '1 hour',now(),deleted,thread_id
+				FROM (VALUES ('older','alpha','ou_sample_1','user',0,false,''),('second-msg','alpha','second','user',1,false,''),
+					('latest','beta','ou_sample_1','user',2,false,''),('gone','alpha','manager','user',3,true,''),
+					('app-msg','alpha','manager','app',3,false,''),('thread-msg','alpha','manager','user',3,false,'hidden-thread'),
+					('hidden-msg','hidden','manager','user',3,false,''),('other','elsewhere','manager','user',3,false,''),
+					('private-msg','private','manager','user',3,false,'')) AS sample(id,chat,sender,kind,n,deleted,thread_id)`)
 		if err != nil {
 			t.Fatal(err)
 		}

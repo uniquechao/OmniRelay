@@ -12,9 +12,35 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
+// Use the same verified group roster and source visibility as personal message counts.
+const memberSpeechJoin = ` LEFT JOIN (
+ SELECT msg.sender_id,max(msg.sent_at) AS last_spoke_at
+ FROM project_chat_assignments c
+ JOIN feishu_bot_configs b USING (tenant_key,app_id)
+ JOIN feishu_drive_group_memberships g USING (tenant_key,app_id,chat_id)
+ JOIN feishu_chat_messages msg USING (tenant_key,app_id,chat_id)
+ WHERE c.tenant_key=$1 AND c.app_id=$2 AND c.project_id=$3 AND b.enabled
+   AND g.generation=b.credentials_generation AND g.verified_at>now()-interval '26 hours' AND $4=ANY(g.members)
+   AND msg.sender_kind='user' AND NOT msg.deleted
+   AND NOT EXISTS (SELECT FROM feishu_chat_sync t WHERE (t.tenant_key,t.app_id,t.chat_id)=(c.tenant_key,c.app_id,c.chat_id)
+     AND t.source_blocked AND (t.thread_id='' OR (t.thread_id=msg.thread_id AND NOT msg.visible_in_chat)))
+ GROUP BY msg.sender_id
+) speech ON speech.sender_id=a.open_id`
+
 func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.Principal, assignment bool) (any, error) {
-	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,`+userChoiceJSON+`,'project_role',`+access.EffectiveProjectRoleSQL+`,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility,'project_id',m.project_id,'role',m.role,'active',true,'roster_status','formal') FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)`+userChoiceJoins+`
- WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role!='revoked' AND a.active ORDER BY m.member_id`, k.args()...)
+	join, extraFields, order := "", "", "m.member_id"
+	args := k.args()
+	if !assignment {
+		join, extraFields = memberSpeechJoin, ",'last_spoke_at',speech.last_spoke_at"
+		order = "(pr.project_role='project_admin') DESC,speech.last_spoke_at DESC NULLS LAST,m.member_id"
+		args = append(args, actor.OpenID)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,`+userChoiceJSON+`,'project_role',pr.project_role,
+ 'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility,'project_id',m.project_id,
+ 'role',m.role,'active',true,'roster_status','formal'`+extraFields+`)
+ FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
+ CROSS JOIN LATERAL (SELECT `+access.EffectiveProjectRoleSQL+` AS project_role) pr`+userChoiceJoins+join+`
+ WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role!='revoked' AND a.active ORDER BY `+order, args...)
 	if err != nil {
 		return nil, err
 	}

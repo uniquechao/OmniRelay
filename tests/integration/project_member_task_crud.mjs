@@ -75,7 +75,43 @@ try{
  await page.getByRole('button',{name:'编辑 项目成员',exact:true}).waitFor();
  let members=(await api('GET','/members')).data.members;let second=members.find(m=>m.account_id==='second');assert.equal(second.responsibility,'负责联调验收');assert.equal(second.project_role,'project_admin');assert.equal(second.role,'member');
  const extra=members.find(m=>m.account_id==='sample-1');assert.equal(extra.project_role,'project_admin');assert.equal(extra.responsibility,'负责联调验收');
- await api('PUT','/members/sample-1',{role:'revoked',expected_version:extra.version});
+ assert.deepEqual(members.map(m=>m.account_id),['sample-1','second','manager']);
+ assert.equal(new Date(extra.last_spoke_at).toISOString(),'2026-01-01T14:00:00.000Z');
+ assert.equal(members.at(-1).last_spoke_at,null);
+ const memberNames=()=>page.locator('.table-box tbody tr td:first-child').allTextContents();
+ async function setInlineRole(name, role) {
+   const label='修改 '+name+' 的项目角色';
+   const edit=page.getByRole('button',{name:label,exact:true});
+   await edit.click();
+   const select=page.getByRole('combobox',{name:label,exact:true});
+   await select.selectOption(role);
+   await edit.waitFor();
+   await page.waitForFunction(selector=>document.activeElement?.getAttribute('aria-label')===selector && document.activeElement?.tagName==='BUTTON',label);
+ }
+ await setInlineRole('方宁','project_member');
+ assert.deepEqual(await memberNames(),['项目成员','项目负责人','方宁']);
+ await setInlineRole('项目成员','project_member');
+ assert.deepEqual(await memberNames(),['项目负责人','方宁','项目成员']);
+ await page.reload();
+ await page.getByRole('button',{name:'修改 方宁 的项目角色'}).waitFor();
+ assert.deepEqual(await memberNames(),['项目负责人','方宁','项目成员']);
+ await page.screenshot({path:'.runtime/evidence/project-members-role-order.png'});
+ await setInlineRole('项目负责人','project_member');
+ assert.deepEqual(await memberNames(),['项目负责人','方宁','项目成员']);
+ assert.equal((await api('GET','/members')).data.members[0].project_role,'project_admin');
+ await page.setViewportSize({width:390,height:900});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ await setInlineRole('项目成员','project_admin');
+ await page.setViewportSize({width:1440,height:1000});
+ assert.deepEqual(await memberNames(),['项目成员','项目负责人','方宁']);
+ second=(await api('GET','/members')).data.members[0];
+ assert.equal(second.responsibility,'负责联调验收');
+ const removeExtra=page.getByRole('button',{name:'移除 方宁',exact:true});
+ await removeExtra.click();
+ await page.getByRole('dialog',{name:'移除项目成员？'}).getByRole('button',{name:'取消',exact:true}).click();
+ await removeExtra.click();
+ await page.getByRole('dialog',{name:'移除项目成员？'}).getByRole('button',{name:'移除成员',exact:true}).click();
+ await removeExtra.waitFor({state:'detached'});
  await page.getByRole('button',{name:'编辑 项目成员',exact:true}).click();
  dialog=page.getByRole('dialog');await dialog.getByLabel('项目职责').fill('更新后的验收职责');
  // A concurrent plugin/API update must prevent the stale browser draft from overwriting it.
@@ -123,6 +159,7 @@ try{
  await api('PUT','/members/second',{role:'reader',expected_version:second.version+1});
  const reader=await browser.newContext({ignoreHTTPSErrors:true});const rp=await reader.newPage();await reader.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username:'second',password:process.env.H3_PASSWORD}});const rme=await(await reader.request.get(origin+'/api/v1/me')).json();
  await rp.goto(origin+'/#/projects/h3/members');await rp.getByRole('heading',{name:'项目成员',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'添加成员',exact:true}).count(),0);
+ assert.equal(await rp.locator('[data-role-edit],[data-member-remove]').count(),0);
  const readerFollow=rp.getByRole('button',{name:'关注项目 h3',exact:true});
  assert.equal(await readerFollow.getAttribute('aria-pressed'),'false');
  await readerFollow.click();

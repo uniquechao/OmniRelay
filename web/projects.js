@@ -1,6 +1,6 @@
 import { mountDrive } from './drive.js';
 import { chatAPI, mountChatReader } from './chat-reader.js';
-import { wireProjectMembers } from './project-members.js';
+import { canRemoveMember, wireProjectMembers } from './project-members.js';
 import { openProjectProfile } from './project-profile.js';
 
 const tabs = {
@@ -76,6 +76,20 @@ const heading = (title) => `<h1 id="page-heading" tabindex="-1">${esc(title)}</h
 const withQuery = (path, params) => path + (params.size ? '?' + params : '');
 const directoryStatus = (params) => params.get('status') ?? 'active';
 const projectUpdatedTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' });
+function projectMemberCells(member, data) {
+  const name = esc(member.display_name), id = esc(member.account_id);
+  const role = esc(data.project_roles?.find(role => role.id === member.project_role)?.name || '—');
+  const editRole = data.can_manage && data.can_delegate && data.project_roles?.length > 1;
+  const roleCell = editRole ? `<span class="project-member-role"><span>${role}</span><button type="button" data-role-edit="${id}" aria-label="修改 ${name} 的项目角色" title="修改项目角色" aria-haspopup="listbox"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button></span>` : role;
+  const cells = [name, roleCell, member.last_spoke_at
+    ? `<time class="date" datetime="${esc(member.last_spoke_at)}">${esc(projectUpdatedTime.format(new Date(member.last_spoke_at)))}</time>`
+    : '—', `<span class="project-member-responsibility">${esc(member.responsibility || '—')}</span>`];
+  if (data.can_manage) {
+    const remove = canRemoveMember(data, member) ? `<button type="button" data-member-remove="${id}" aria-haspopup="dialog">移除<span class="sr-only"> ${name}</span></button>` : '';
+    cells.push(`<span class="project-member-actions"><button type="button" data-member-edit="${id}" aria-haspopup="dialog">编辑<span class="sr-only"> ${name}</span></button>${remove}</span>`);
+  }
+  return cells;
+}
 export function projectRoute(hash) {
   if (!hash || !/^#\/projects(?:[/?]|$)/.test(hash)) return;
   const [path, query = ''] = hash.split('?');
@@ -308,14 +322,14 @@ function contents(route, data, people = new Map()) {
       '项目成员',
       filters(route, false) +
         table(
-          ['成员', '项目角色', '职责', ...(data.can_manage ? ['操作'] : [])],
+          ['成员', '项目角色', '最后发言', '职责', ...(data.can_manage ? ['操作'] : [])],
           data.members
             .filter((row) =>
               [row.display_name, (data.project_roles || []).find(role => role.id === row.project_role)?.name, row.responsibility].some((value) =>
                 String(value ?? '').includes(route.params.get('q') || ''),
               ),
             )
-            .map((row) => [esc(row.display_name), esc((data.project_roles || []).find(role => role.id === row.project_role)?.name || '—'), `<span class="project-member-responsibility">${esc(row.responsibility || '—')}</span>`, ...(data.can_manage ? [`<button class="button" type="button" data-member-edit="${esc(row.account_id)}">编辑<span class="sr-only"> ${esc(row.display_name)}</span></button>`] : [])]),
+            .map(row => projectMemberCells(row, data)),
           '暂无项目成员。',
         ),
       data.can_manage ? '<button class="button primary" type="button" data-member-add aria-haspopup="dialog">添加成员</button>' : '',
@@ -463,9 +477,9 @@ export async function mountProjects(host, route, request, { signal, memory, scop
   const { id, base, tab, parts } = route;
   const loading = (element) => window.OmniRelayLoading.mount(element, { size: 'page', label: '正在加载…' });
   const current = () => !signal.aborted && location.hash === route.hash;
-  const refresh = async () => {
+  const refresh = async (focusSelector) => {
     await mountProjects(host, route, request, { signal, memory, scope, navigation });
-    if (current()) (host.querySelector('[data-project-settings]') || host.querySelector('#page-heading'))?.focus();
+    if (current()) ((focusSelector && host.querySelector(focusSelector)) || host.querySelector('[data-project-settings]') || host.querySelector('#page-heading'))?.focus();
   };
   const openProfile = (trigger, projectTypes, project) => openProjectProfile({
     project, projectTypes, trigger, statuses: projectStatuses, statusLabel: label, request, signal, navigation, refresh,
