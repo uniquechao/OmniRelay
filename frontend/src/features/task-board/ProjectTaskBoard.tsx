@@ -56,6 +56,7 @@ export function ProjectTaskBoard({
   const searchInput = useRef<HTMLInputElement>(null)
   const sortTrigger = useRef<HTMLButtonElement>(null)
   const [q, setQ] = useHashState<string>('task_q', '')
+  const [milestone, setMilestone] = useHashState<string>('task_milestone', '')
   const [owner, setOwner] = useHashState<string>('task_owner', '')
   const [status, setStatus] = useHashState<string>('task_status', '')
   const [legacyTag] = useHashState<string>('task_tag', '')
@@ -117,7 +118,7 @@ export function ProjectTaskBoard({
       active.current = false
     }
   }, [])
-  const query = boardQuery({ q, sort, owner, status: '', column: '', tags: tagIds, overdue, dueFrom, dueBefore, due, timezone: project?.business_timezone, priority })
+  const query = boardQuery({ q, sort, owner, milestone, status: '', column: '', tags: tagIds, overdue, dueFrom, dueBefore, due, timezone: project?.business_timezone, priority })
   const queryString = query.toString()
   function failure(cause: unknown) {
     if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
@@ -374,9 +375,9 @@ export function ProjectTaskBoard({
   function selectTab(id:string) {
     updateHashParams({task_column:id && id!==cancelledId ? id : null,task_status:id===cancelledId ? 'cancelled' : null})
   }
-  const filtered = Boolean(q || owner || status || column || tagIds.length || due || overdue || dueFrom || dueBefore || priority)
+  const filtered = Boolean(q || owner || milestone || status || column || tagIds.length || due || overdue || dueFrom || dueBefore || priority)
   const clear = () => {
-    updateHashParams(Object.fromEntries(['task_q','task_owner','task_status','task_column','task_tag','task_tags','task_due','task_due_from','task_due_before','task_overdue','task_priority'].map(key => [key, null])))
+    updateHashParams(Object.fromEntries(['task_q','task_owner','task_milestone','task_status','task_column','task_tag','task_tags','task_due','task_due_from','task_due_before','task_overdue','task_priority'].map(key => [key, null])))
     requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
   }
   const people = [{ id: '', name: '全部负责人', organization: '' }, { id: 'unassigned', name: '未分配', organization: '' }, ...(project?.members ?? []).map(member => ({ id: member.id, name: member.display_name, organization: member.organization_path }))]
@@ -390,11 +391,15 @@ export function ProjectTaskBoard({
           <label className="task-page-search"><Search size={15} aria-hidden /><Input aria-label="搜索任务" ref={searchInput} type="search" placeholder="搜索编号、任务名、项目名或负责人" value={q} onChange={event=>setQ(event.target.value)} /></label>
           <Popover><PopoverTrigger asChild><Button variant="outline"><Funnel size={15} aria-hidden />筛选</Button></PopoverTrigger><PopoverContent className="board-advanced-filters task-page-filter-panel" align="start" aria-label="筛选任务">
         <div className="board-owner-filter"><SearchCombobox items={people} getKey={item => item.id} getLabel={item => item.name} getDescription={item => item.organization} getSearchText={item => peopleSearchText({name:item.name,organizationPath:item.organization})} label="按负责人筛选" placeholder="全部负责人" value={owner} onChange={value => setOwner(value ?? '')} /></div>
+        <NativeSelect aria-label="筛选里程碑" value={milestone} onChange={event => setMilestone(event.target.value)}>
+          <option value="">全部里程碑</option><option value="@none">未关联里程碑</option>
+          {project?.milestones?.map(node => <option key={node.id} value={node.id}>{node.title}</option>)}
+          {milestone && milestone !== '@none' && !project?.milestones?.some(node => node.id === milestone) && <option value={milestone}>{milestone}</option>}
+        </NativeSelect>
         <NativeSelect aria-label="按截止日期筛选" value={due || (overdue ? 'overdue' : '')} onChange={event => { updateHashParams({ task_due: event.target.value || null, task_overdue: null, task_due_from: null, task_due_before: null }) }}><option value="">全部期限</option><option value="overdue">已逾期</option><option value="today">今天截止</option><option value="week">未来 7 天</option><option value="none">无截止日期</option></NativeSelect>
         <TaskTagPicker tags={board?.tags ?? []} value={tagIds} onChange={values => updateHashParams({ task_tags: values.length ? JSON.stringify(values) : null, task_tag: null })} label="按标签筛选" />
 <label>优先级<NativeSelect value={priority} onChange={event => setPriority(event.target.value)}><option value="">全部优先级</option><option value="unset">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</NativeSelect></label><label>截止开始（UTC）<Input type="date" value={dueFrom} onChange={event => { setDueFrom(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label><label>截止结束（UTC，不含）<Input type="date" value={dueBefore} onChange={event => { setDueBefore(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label>
             {filtered && <Button variant="outline" onClick={clear}>清空筛选</Button>}
-            <a href={`#/projects/${encodeURIComponent(projectId)}/tasks/list`}>任务管理列表</a>
             <details><summary>移动操作说明</summary>拖动卡片或按 Alt + 方向键移动任务。</details>
           </PopoverContent></Popover>
           {canManage && <Button variant="ghost" disabled={!board || !visibleColumns.some(c=>c.items.length)} onClick={()=>setBulk(true)}><ListChecks size={15} aria-hidden />批量操作</Button>}

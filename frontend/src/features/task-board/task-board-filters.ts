@@ -4,10 +4,12 @@ export function taskTagIds(raw: string, legacy: string) {
   if (!raw) return legacy ? [legacy] : []
   try { const value: unknown = JSON.parse(raw); return Array.isArray(value) && value.every(item => typeof item === 'string') ? [...new Set(value as string[])] : [] } catch { return [] }
 }
-export function boardQuery(filters: { q: string; sort: TaskSort; owner: string; status: string; column: string; tags: string[]; overdue: boolean; dueFrom: string; dueBefore: string; due: string; timezone?: string | null; priority?: string }, now = new Date()) {
+export function boardQuery(filters: { q: string; sort: TaskSort; owner: string; milestone?: string; status: string; column: string; tags: string[]; overdue: boolean; dueFrom: string; dueBefore: string; due: string; timezone?: string | null; priority?: string }, now = new Date()) {
   const query = new URLSearchParams({ q: filters.q, sort: filters.sort, limit: '50' })
   if (filters.owner === 'unassigned') query.set('owner_unassigned', 'true')
   else if (filters.owner) query.set('owner_member_id', filters.owner)
+  if (filters.milestone === '@none') query.set('milestone_unassigned', 'true')
+  else if (filters.milestone) query.set('milestone_id', filters.milestone)
   if (filters.status) query.set('status', filters.status)
   if (filters.column) query.set('filter_column_id', filters.column)
   if (filters.priority === 'unset') query.set('priority_unset', 'true')

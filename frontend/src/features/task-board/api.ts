@@ -4,7 +4,7 @@ const json = <T,>(path: string, options: {method?: string; body?: unknown; signa
 const body = (body: unknown) => ({method:'POST',body})
 const put = (body: unknown) => ({method:'PUT',body})
 export interface ProjectMember {id:string; display_name:string; organization_path?:string; active?:boolean}
-export interface ProjectDetail {owner_member_id?:string;id:string; name:string; business_timezone:string; current_member_id:string; members:ProjectMember[]; actions:string[]}
+export interface ProjectDetail {owner_member_id?:string;id:string; name:string; business_timezone:string; current_member_id:string; members:ProjectMember[]; milestones?:{id:string;title:string}[]; actions:string[]}
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
 export interface TaskFields { start_at?: string | null; tag_ids?: string[]; title: string; description: string; owner_member_id: string | null; participant_ids: string[]; priority: 'P0' | 'P1' | 'P2' | 'P3' | null; due_at: string | null; acceptance: string }
 export interface ProjectTask extends TaskFields { interaction_participants?: ProjectMember[]; created_by_name?:string; updated_by_name?:string; milestone_id?:string | null; display_number?: number; column_id?: string; rank?: number; id: string; project_id: string; status: TaskStatus; blocked_from: TaskStatus | null; blocked_reason: string; completion_note: string; version: number; created_by: string; updated_by: string; created_at: string; updated_at: string; overdue: boolean }

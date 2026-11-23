@@ -39,7 +39,7 @@ try{
  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
  await dialog.getByRole('button',{name:'保存修改',exact:true}).click();await page.getByRole('cell',{name:'最终验收职责',exact:true}).waitFor();
  await mkdir('.runtime/evidence',{recursive:true});await page.screenshot({path:'.runtime/evidence/members-1440-light.png'});
- await page.goto(origin+'/#/projects/h3/tasks/list');await page.getByRole('link',{name:'新建任务',exact:true}).click();
+ await page.goto(origin+'/#/projects/h3/tasks/new');
  await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
  // Owner and participants select the same system identities, within project membership.
  await page.getByLabel('主负责人',{exact:true}).fill('second');
@@ -60,7 +60,7 @@ try{
    assert.ok(pathBox.x+pathBox.width<=deleteBox.x || pathBox.y+pathBox.height<=deleteBox.y,'任务路径不得与操作按钮重叠');
  }
  await page.getByRole('button',{name:'删除任务',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('删除原因').fill('验收样本清理');await dialog.getByRole('button',{name:'删除任务',exact:true}).click();
- await page.getByRole('link',{name:'新建任务',exact:true}).waitFor();await api('GET','/tasks/'+taskId,undefined,404);
+ await page.getByRole('button',{name:'新建任务',exact:true}).waitFor();await api('GET','/tasks/'+taskId,undefined,404);
  let board=(await api('GET','/tasks')).data;assert.equal(board.total,0);
  // Membership removal must not orphan unfinished tasks.
  const assigned=await api('POST','/tasks',{title:'需交接任务',owner_member_id:'second'});second=(await api('GET','/members')).data.members.find(m=>m.account_id==='second');await api('PUT','/members/second',{role:'revoked',expected_version:second.version},409);

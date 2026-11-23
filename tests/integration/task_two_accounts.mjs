@@ -102,15 +102,15 @@ try {
   for (const route of ['tasks','tasks/list','overview']) {
     await b.goto(origin + '/#/projects/h3/' + route);
     await b.reload();
-    const link = route==='tasks'?b.locator('#board-task-'+task.id):b.locator('a[href="#/projects/h3' + path + '"]').first();
+    const link = route !== 'overview'?b.locator('#board-task-'+task.id):b.locator('a[href="#/projects/h3' + path + '"]').first();
     await link.waitFor();
-    const row = route === 'tasks' ? link : link.locator('xpath=ancestor::tr');
+    const row = route !== 'overview' ? link : link.locator('xpath=ancestor::tr');
     assert.match(await row.innerText(), /项目负责人/);
-    if (route === 'tasks') assert.match(await row.innerText(), /联验/);
+    if (route !== 'overview') assert.match(await row.innerText(), /联验/);
     if (route !== 'overview') assert.match(await link.innerText(), /两账号核验/);
     await b.locator('time[datetime="2026-11-23"]').first().waitFor();
     await link.click();
-    if(route==='tasks'){assert.equal(await b.getByLabel('任务标题',{exact:true}).inputValue(),record.title);assert.equal(await b.getByLabel('任务正文',{exact:true}).inputValue(),record.description)}else{assert.equal(await field(b, 'title').inputValue(), record.title);assert.equal(await field(b, 'description').inputValue(), record.description)}
+    if(route !== 'overview'){assert.equal(await b.getByLabel('任务标题',{exact:true}).inputValue(),record.title);assert.equal(await b.getByLabel('任务正文',{exact:true}).inputValue(),record.description)}else{assert.equal(await field(b, 'title').inputValue(), record.title);assert.equal(await field(b, 'description').inputValue(), record.description)}
   }
 
   const changes = () => second.api('GET', path + '/activity?kind=change');

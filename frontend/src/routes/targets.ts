@@ -24,6 +24,9 @@ function project(path:string):Parsed|undefined {
   if (/%(?![A-Fa-f0-9]{2})/.test(path)) return;
   const result=projectRoute(path.slice(1));
   if(!result) return;
+  if (path.split('?')[0].endsWith('/tasks/list') && result.tab === 'tasks') {
+    return {path:'/'+result.hash,title:result.title,section:'项目列表'};
+  }
   const base='/'+result.hash.split('?')[0];
   const legacyBrief=path.split('?')[0].split('/')[4]==='brief';
   const query=path.includes('?') && !legacyBrief ? path.slice(path.indexOf('?')) : '';

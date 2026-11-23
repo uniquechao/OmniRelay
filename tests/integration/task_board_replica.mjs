@@ -24,6 +24,18 @@ try{
  await api('PUT','/task-tags/accept',{name:'验收'});
  const samples=[['接口联调准备','todo','P2'],['对齐成员目录','in_progress','P1'],['核对来源授权','blocked','P0'],['确认任务规格','done',null]];
  for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'核对项目成员、状态和验收条件。'});
+ await page.goto(origin+'/#/projects/board-test/tasks/list?q=T-001&owner_member_id=manager&milestone_unassigned=true');
+ await page.locator('.task-list-layout').waitFor();
+ assert.equal(await page.getByRole('button',{name:'列表',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(await page.getByRole('searchbox',{name:'搜索任务'}).inputValue(),'T-001');
+ await page.getByText('1 项任务',{exact:true}).waitFor();
+ assert.equal(new URL(page.url()).hash.split('?')[0],'#/projects/board-test/tasks');
+ await page.reload();
+ await page.getByRole('button',{name:'T-001 接口联调准备'}).click();
+ await page.getByLabel('任务标题',{exact:true}).waitFor();
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'看板',exact:true}).click();
+ await page.locator('.task-list-layout').waitFor({state:'hidden'});
  await page.goto(origin+'/#/projects/board-test/tasks');
  await page.getByRole('button',{name:'T-001 接口联调准备'}).waitFor();
  await mkdir('.runtime/board-evidence',{recursive:true});
