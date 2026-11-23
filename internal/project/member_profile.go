@@ -11,16 +11,16 @@ import (
 
 // The manager sees only enabled candidate identities, never account credentials or system roles.
 func (s *Service) findMemberCandidates(ctx context.Context, k taskScope, actor identity.Principal, q string, page int) (any, error) {
-	if strings.TrimSpace(q) == "" || !textLimit(q, 200) || page < 1 || page > 100000 {
+	if !textLimit(q, 200) || page < 1 || page > 100000 {
 		return nil, errInput
 	}
 	if err := s.require(ctx, actor, "project.settings", k.project); err != nil {
 		return nil, err
 	}
-	rows, err := s.reader().Query(ctx, `SELECT jsonb_build_object('account_id',a.id,'display_name',coalesce(nullif(a.name,''),a.id),'version',coalesce(m.version,0))
- FROM accounts a LEFT JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id) AND m.project_id=$3
+	rows, err := s.reader().Query(ctx, `SELECT jsonb_build_object(`+userChoiceJSON+`,'version',coalesce(m.version,0))
+ FROM accounts a `+userChoiceJoins+` LEFT JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id) AND m.project_id=$3
  WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.active AND (m.role IS NULL OR m.role='revoked')
- AND strpos(lower(a.name||' '||a.id),lower($4))>0 ORDER BY a.name,a.id LIMIT 25 OFFSET $5`, k.args(strings.TrimSpace(q), (page-1)*25)...)
+ AND strpos(`+userChoiceSearch+`,lower($4))>0 ORDER BY a.name,a.id LIMIT 25 OFFSET $5`, k.args(strings.TrimSpace(q), (page-1)*25)...)
 	if err != nil {
 		return nil, err
 	}

@@ -29,6 +29,7 @@ export function renderDocumentBlocks(blocks) {
   function runs(items = []) {
     return items.map(run => {
       let text = esc(run.text ?? '');
+      if (run.kind === 'person') text = '<span class="document-person"' + (run.unresolved ? ' title="当前未能解析此用户姓名，请检查用户同步或文档读取权限"' : '') + '>' + text + '</span>';
       if (run.code) text = '<code>' + text + '</code>';
       if (run.bold) text = '<strong>' + text + '</strong>';
       if (run.italic) text = '<em>' + text + '</em>';

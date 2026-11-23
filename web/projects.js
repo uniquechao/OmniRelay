@@ -16,7 +16,7 @@ const tabs = {
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
 const sourceKinds = ['minutes', 'document', 'sheets', 'bitable', 'file', 'message'];
 const projectStatuses = ['planned', 'active', 'paused', 'blocked', 'completed', 'archived'];
-const memberRoles = { manager: '项目负责人', editor: '编辑者', member: '成员', reader: '只读成员' };
+
 const states = {
   planned: '规划中',
   active: '进行中',
@@ -440,14 +440,14 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
       '项目成员',
       filters(route, false) +
         table(
-          ['成员', '访问角色', '项目角色', '职责', ...(data.can_manage ? ['操作'] : [])],
+          ['成员', '项目角色', '职责', ...(data.can_manage ? ['操作'] : [])],
           data.members
             .filter((row) =>
-              [row.display_name, memberRoles[row.role], row.role_title, row.responsibility].some((value) =>
+              [row.display_name, (data.project_roles || []).find(role => role.id === row.project_role)?.name, row.responsibility].some((value) =>
                 String(value ?? '').includes(route.params.get('q') || ''),
               ),
             )
-            .map((row) => [esc(row.display_name), esc(memberRoles[row.role]), esc(row.role_title || '—'), `<span class="project-member-responsibility">${esc(row.responsibility || '—')}</span>`, ...(data.can_manage ? [`<button class="button" type="button" data-member-edit="${esc(row.account_id)}">编辑<span class="sr-only"> ${esc(row.display_name)}</span></button>`] : [])]),
+            .map((row) => [esc(row.display_name), esc((data.project_roles || []).find(role => role.id === row.project_role)?.name || '—'), `<span class="project-member-responsibility">${esc(row.responsibility || '—')}</span>`, ...(data.can_manage ? [`<button class="button" type="button" data-member-edit="${esc(row.account_id)}">编辑<span class="sr-only"> ${esc(row.display_name)}</span></button>`] : [])]),
           '暂无项目成员。',
         ),
       data.can_manage ? '<button class="button primary" type="button" data-member-add aria-haspopup="dialog">添加成员</button>' : '',

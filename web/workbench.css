@@ -215,3 +215,16 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .drive-document .doc-color-6 { color: var(--or-primary, #6553f4); }
 .drive-document .doc-color-7 { color: var(--or-text-secondary); }
 .drive-document [class*="doc-background-"] { background: var(--or-surface-hover, rgba(101,83,244,.12)); }
+
+.user-choice-list { max-height:16rem; overflow:auto; margin-block:8px; border:1px solid var(--or-border); border-radius:8px; background:var(--or-surface); }
+.user-choice-list:empty { display:none; }
+.button.user-choice { display:flex; align-items:center; gap:10px; width:100%; justify-content:flex-start; text-align:start; border:0; border-radius:0; padding:10px 12px; min-height:48px; white-space:normal; }
+.user-choice .person-avatar { flex:none; }
+.user-choice-copy { min-width:0; display:grid; gap:2px; }
+.user-choice-copy strong { font-weight:500; overflow-wrap:anywhere; }
+.user-choice-copy small { color:var(--or-text-secondary); overflow-wrap:anywhere; }
+.user-choice-pages { display:flex; justify-content:space-between; gap:8px; }
+
+.task-detail [data-results] .user-choice { display:flex; }
+
+.document-person { color:var(--or-link); white-space:pre-wrap; }

@@ -103,6 +103,15 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	check("member_update", "manager", `{"account_id":"new","expected_version":2,"role_title":"测试负责人","responsibility":"接口验收"}`, "reader")
 	call(t, "manager", "member_update", `{"account_id":"new","expected_version":2,"responsibility":"过期"}`, 409)
 	check("member_remove", "manager", fmt.Sprintf(`{"account_id":"new","generation":%q}`, generation("new")), "revoked")
+	call(t, "manager", "member_add", `{"account_id":"new","role":"project_admin"}`, 200)
+	if got := call(t, "manager", "member_list", `{"role":"project_admin"}`, 200); !strings.Contains(got, `"project_role":"project_admin"`) || !strings.Contains(got, `"project_roles"`) {
+		t.Fatal(got)
+	}
+	call(t, "new", "member_update", `{"account_id":"member","expected_version":1,"project_role":"project_admin","expected_project_role":"project_member"}`, 403)
+	call(t, "manager", "member_set_role", fmt.Sprintf(`{"account_id":"new","generation":%q,"role":"project_member","expected_project_role":"project_admin"}`, generation("new")), 200)
+	if ok, err := roles.Check(ctx, identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "new"}, "project.settings", "north"); err != nil || ok {
+		t.Fatal("plugin demotion did not revoke administration", ok, err)
+	}
 	call(t, "manager", "member_remove", fmt.Sprintf(`{"account_id":"manager","generation":%q}`, generation("manager")), 409)
 	call(t, "reader", "chat_list", `{"candidate_chat_id":"oc"}`, 403)
 	if got := call(t, "manager", "chat_list", `{"candidate_chat_id":"oc"}`, 200); !strings.Contains(got, `"version":0`) {

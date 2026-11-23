@@ -12,9 +12,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/uniquechao/OmniRelay/internal/drive"
+
+	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
 const documentLimit = 12 << 20
@@ -34,31 +39,57 @@ func (b *docBlock) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &b.Fields)
 }
 
+type docStyle struct {
+	Bold      bool `json:"bold"`
+	Italic    bool `json:"italic"`
+	Underline bool `json:"underline"`
+	Strike    bool `json:"strikethrough"`
+	Code      bool `json:"inline_code"`
+	Link      *struct {
+		URL string `json:"url"`
+	} `json:"link"`
+	Color      int `json:"text_color"`
+	Background int `json:"background_color"`
+}
+type docElement struct {
+	Text *struct {
+		Content string   `json:"content"`
+		Style   docStyle `json:"text_element_style"`
+	} `json:"text_run"`
+	Equation *struct {
+		Content string `json:"content"`
+	} `json:"equation"`
+	MentionUser *struct {
+		ID    string   `json:"user_id"`
+		Style docStyle `json:"text_element_style"`
+	} `json:"mention_user"`
+	MentionDoc *struct {
+		Title string   `json:"title"`
+		URL   string   `json:"url"`
+		Style docStyle `json:"text_element_style"`
+	} `json:"mention_doc"`
+	Reminder *struct {
+		Expire string   `json:"expire_time"`
+		Style  docStyle `json:"text_element_style"`
+	} `json:"reminder"`
+	Inline *struct {
+		ID string `json:"block_id"`
+	} `json:"inline_block"`
+}
 type docText struct {
-	Elements []struct {
-		Text *struct {
-			Content string `json:"content"`
-			Style   struct {
-				Bold      bool `json:"bold"`
-				Italic    bool `json:"italic"`
-				Underline bool `json:"underline"`
-				Strike    bool `json:"strikethrough"`
-				Code      bool `json:"inline_code"`
-				Link      *struct {
-					URL string `json:"url"`
-				} `json:"link"`
-				Color      int `json:"text_color"`
-				Background int `json:"background_color"`
-			} `json:"text_element_style"`
-		} `json:"text_run"`
-		Equation *struct {
-			Content string `json:"content"`
-		} `json:"equation"`
-	} `json:"elements"`
-	Style struct {
+	Elements []docElement `json:"elements"`
+	Style    struct {
 		Align int  `json:"align"`
 		Done  bool `json:"done"`
 	} `json:"style"`
+}
+
+func documentRun(text string, style docStyle) drive.DocumentRun {
+	run := drive.DocumentRun{Text: text, Bold: style.Bold, Italic: style.Italic, Underline: style.Underline, Strike: style.Strike, Code: style.Code, Color: style.Color, Background: style.Background}
+	if style.Link != nil {
+		run.Link = style.Link.URL
+	}
+	return run
 }
 
 func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (drive.Snapshot, error) {
@@ -87,7 +118,7 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 		// Feishu can reject explicitly numbered revisions even when the bot can
 		// read the latest document. Read latest blocks and fence publication
 		// with the metadata revision check below instead of querying history.
-		q := url.Values{"page_size": {"500"}, "document_revision_id": {"-1"}}
+		q := url.Values{"page_size": {"500"}, "document_revision_id": {"-1"}, "user_id_type": {"open_id"}}
 		if cursor != "" {
 			q.Set("page_token", cursor)
 		}
@@ -121,6 +152,10 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 		}
 		seen[reply.Next] = true
 		cursor = reply.Next
+	}
+	users, err := s.documentUsers(ctx, blocks)
+	if err != nil {
+		return result, err
 	}
 	referenced := map[string]bool{}
 	for _, b := range blocks {
@@ -267,16 +302,53 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 			node.Checked = text.Style.Done
 			node.Align = map[int]string{1: "left", 2: "center", 3: "right"}[text.Style.Align]
 			for _, element := range text.Elements {
-				if t := element.Text; t != nil {
-					run := drive.DocumentRun{Text: t.Content, Bold: t.Style.Bold, Italic: t.Style.Italic, Underline: t.Style.Underline, Strike: t.Style.Strike, Code: t.Style.Code, Color: t.Style.Color, Background: t.Style.Background}
-					if t.Style.Link != nil {
-						run.Link = t.Style.Link.URL
+				switch {
+				case element.Text != nil:
+					node.Runs = append(node.Runs, documentRun(element.Text.Content, element.Text.Style))
+				case element.Equation != nil:
+					node.Runs = append(node.Runs, drive.DocumentRun{Text: element.Equation.Content, Code: true})
+				case element.MentionUser != nil:
+					id := element.MentionUser.ID
+					name := users[id]
+					run := documentRun("@"+name+" ", element.MentionUser.Style)
+					run.Kind = "person"
+					if name == "" {
+						run.Text = "[未解析用户] "
+						run.Unresolved = true
+					}
+					if strings.HasPrefix(id, "ou_") {
+						run.PersonKey = identity.FeishuPersonKey(id)
 					}
 					node.Runs = append(node.Runs, run)
-				} else if element.Equation != nil {
-					node.Runs = append(node.Runs, drive.DocumentRun{Text: element.Equation.Content, Code: true})
-				} else {
-					node.Runs = append(node.Runs, drive.DocumentRun{Text: "[引用]"})
+				case element.MentionDoc != nil:
+					title := strings.TrimSpace(element.MentionDoc.Title)
+					if title == "" {
+						title = "关联文档"
+					}
+					run := documentRun(title, element.MentionDoc.Style)
+					run.Kind = "document"
+					link := element.MentionDoc.URL
+					if decoded, err := url.QueryUnescape(link); err == nil {
+						link = decoded
+					}
+					if u, err := url.Parse(link); err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
+						run.Link = u.String()
+					} else {
+						run.Link = ""
+					}
+					node.Runs = append(node.Runs, run)
+				case element.Reminder != nil:
+					label := "[日期未解析]"
+					if ms, err := strconv.ParseInt(element.Reminder.Expire, 10, 64); err == nil {
+						label = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+					}
+					run := documentRun(label, element.Reminder.Style)
+					run.Kind = "date"
+					node.Runs = append(node.Runs, run)
+				case element.Inline != nil:
+					node.Runs = append(node.Runs, drive.DocumentRun{Text: "[内嵌内容]"})
+				default:
+					node.Runs = append(node.Runs, drive.DocumentRun{Text: "[暂不支持的行内内容]"})
 				}
 			}
 		}
@@ -320,4 +392,67 @@ func (s fileGetter) readDocument(ctx context.Context, id string, probe bool) (dr
 	}
 	result.Content = data
 	return result, nil
+}
+
+// Contact lookup supplements the system directory only for IDs referenced by this
+// authorized document. A contact permission failure never invents a user's name.
+func (s fileGetter) documentUsers(ctx context.Context, blocks map[string]docBlock) (map[string]string, error) {
+	seen := map[string]bool{}
+	for _, block := range blocks {
+		for _, raw := range block.Fields {
+			var text docText
+			if json.Unmarshal(raw, &text) != nil {
+				continue
+			}
+			for _, element := range text.Elements {
+				if u := element.MentionUser; u != nil && strings.HasPrefix(u.ID, "ou_") && len(u.ID) <= 256 {
+					seen[u.ID] = true
+				}
+			}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	if len(ids) > 200 {
+		return nil, drive.ErrPartial
+	}
+	names := map[string]string{}
+	if len(ids) > 0 && s.resolveUsers != nil {
+		found, err := s.resolveUsers(ctx, ids)
+		if err != nil {
+			return nil, drive.ErrUnavailable
+		}
+		for id, name := range found {
+			if seen[id] {
+				names[id] = strings.TrimSpace(name)
+			}
+		}
+	}
+	lookups := 0
+	for _, id := range ids {
+		if names[id] != "" {
+			continue
+		}
+		if lookups >= 64 {
+			continue
+		}
+		lookups++
+		var reply struct {
+			User *struct {
+				Name string `json:"name"`
+				ID   string `json:"open_id"`
+			} `json:"user"`
+		}
+		err := s.fileJSON(ctx, "contact/v3/users/"+url.PathEscape(id)+"?user_id_type=open_id", &reply)
+		if ctx.Err() != nil {
+			return nil, drive.ErrUnavailable
+		}
+		if err == nil && reply.User != nil && (reply.User.ID == "" || reply.User.ID == id) {
+			names[id] = strings.TrimSpace(reply.User.Name)
+		}
+	}
+	return names, nil
 }

@@ -54,6 +54,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	}
 	check := feishu.NewBotCheck(cfg.appID, cfg.appSecret, transport)
 	chatSource := feishu.NewChatSource(check, cfg.tenantKey)
+	chatSource.ConfigureDocumentUsers(directoryService.ResolveDocumentUsers)
 	chatService := chat.New(pool, cfg.tenantKey, cfg.appID, cfg.credentialsGeneration, chatSource, directoryService, roles.Check, receipts)
 	identityService, err := identity.New(pool, identity.Config{Candidate: cfg.candidateOAuth,
 		AppID: cfg.appID, AppSecret: cfg.appSecret, TenantKey: cfg.tenantKey, PublicOrigin: cfg.publicOrigin,

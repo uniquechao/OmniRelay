@@ -158,7 +158,8 @@ func fileError(code int) error {
 }
 
 type fileGetter struct {
-	get func(context.Context, string) (*http.Response, error)
+	get          func(context.Context, string) (*http.Response, error)
+	resolveUsers func(context.Context, []string) (map[string]string, error)
 }
 
 func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
@@ -191,7 +192,10 @@ func (f fileGetter) fileJSON(ctx context.Context, path string, out any) error {
 }
 
 func (s *ChatSource) ReadFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
-	return (fileGetter{get: s.fileRequest}).readFile(ctx, r, probe)
+	s.mu.Lock()
+	resolve := s.documentUsers
+	s.mu.Unlock()
+	return (fileGetter{get: s.fileRequest, resolveUsers: resolve}).readFile(ctx, r, probe)
 }
 
 func (s fileGetter) readFile(ctx context.Context, r drive.Ref, probe bool) (drive.Snapshot, error) {
