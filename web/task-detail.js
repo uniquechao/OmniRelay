@@ -1,3 +1,4 @@
+import {userChoice, userSearchText, navigateUserChoices} from './user-picker.js';
 import { memberSearch } from './task-pinyin.js';
 import { mountTaskActivity } from './task-activity.js';
 
@@ -73,10 +74,11 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       .filter((m) => m.member_id || m.id)
       .map((m) => [m.member_id || m.id, m.display_name || m.id]),
   );
+  const users = new Map((directory.value?.data?.members || []).map(user => [user.member_id || user.id, user]));
   const tags = new Map((tagList.value?.items || []).map((t) => [t.id, t.name]));
   const milestones = new Map((nodes.value?.items || []).map((n) => [n.id, n.title]));
   const search = new Map(
-    [...people].map(([id, name]) => [id, memberSearch(name + ' ' + id).concat(memberSearch(name))]),
+    [...people].map(([id, name]) => [id, memberSearch(userSearchText(users.get(id) || {display_name:name,id})).concat(memberSearch(name))]),
   );
   let baseline = fields(task),
     draft = structuredClone(baseline),
@@ -170,7 +172,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       '" aria-label="' +
       labels[k] +
       '" placeholder="' +
-      (k === 'tag_ids' ? '搜索标签' : '搜索姓名或拼音') +
+      (k === 'tag_ids' ? '搜索标签' : '选择项目用户，搜索姓名或账号…') +
       '" autocomplete="off"' +
       (enabled(k) ? '' : ' disabled') +
       '>';
@@ -272,7 +274,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     list.innerHTML =
       matches
         .map(
-          ([id, name]) =>
+          ([id, name]) => k !== 'tag_ids' ? userChoice(users.get(id) || {display_name:name,id}, id, 'data-pick') :
             '<button class="button" type="button" data-pick="' +
             esc(id) +
             '">' +
@@ -283,6 +285,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
         .join('') || '无匹配结果';
     list.hidden = false;
   }
+  el.addEventListener('keydown', e => {const box=e.target.closest('[data-picker]');if(box) navigateUserChoices(e,box);});
   el.addEventListener('focusin', (e) => {
     if (e.target.matches('[data-picker] input')) results(e.target.closest('[data-picker]'));
   });

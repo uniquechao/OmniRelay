@@ -27,6 +27,9 @@ type DocumentBlock struct {
 }
 type DocumentRun struct {
 	Text       string `json:"text"`
+	Kind       string `json:"kind,omitempty"`
+	PersonKey  string `json:"person_key,omitempty"`
+	Unresolved bool   `json:"unresolved,omitempty"`
 	Bold       bool   `json:"bold,omitempty"`
 	Italic     bool   `json:"italic,omitempty"`
 	Underline  bool   `json:"underline,omitempty"`

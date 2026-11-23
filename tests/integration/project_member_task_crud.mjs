@@ -16,12 +16,16 @@ try{
  await page.goto(origin+'/#/projects/h3/members');
  await page.getByRole('button',{name:'添加成员',exact:true}).click();
  let dialog=page.getByRole('dialog');
- await dialog.getByLabel('搜索人员').fill('项目成员');await dialog.getByRole('button',{name:'搜索',exact:true}).click();
- await dialog.getByRole('button',{name:'项目成员 · second',exact:true}).click();
- await dialog.getByLabel('访问角色').selectOption('editor');await dialog.getByLabel('项目角色',{exact:true}).fill('测试负责人');await dialog.getByLabel('项目职责').fill('负责联调验收');
+ await dialog.locator('[data-user-choice]').first().waitFor();
+ await mkdir('.runtime/evidence',{recursive:true});
+ await page.screenshot({path:'.runtime/evidence/system-user-picker.png'});
+ await dialog.getByLabel('选择人员').fill('second');
+ await dialog.locator('[data-user-choice]').filter({hasText:'项目成员'}).click();
+ assert.deepEqual(await dialog.getByLabel('项目角色',{exact:true}).locator('option').allTextContents(),['项目管理员','项目成员']);
+ await dialog.getByLabel('项目角色',{exact:true}).selectOption('project_admin');await dialog.getByLabel('项目职责').fill('负责联调验收');
  await dialog.getByRole('button',{name:'添加成员',exact:true}).click();
- await page.getByRole('cell',{name:'测试负责人',exact:true}).waitFor();
- let members=(await api('GET','/members')).data.members;let second=members.find(m=>m.account_id==='second');assert.equal(second.responsibility,'负责联调验收');assert.equal(second.role,'editor');
+ await page.getByRole('button',{name:'编辑 项目成员',exact:true}).waitFor();
+ let members=(await api('GET','/members')).data.members;let second=members.find(m=>m.account_id==='second');assert.equal(second.responsibility,'负责联调验收');assert.equal(second.project_role,'project_admin');assert.equal(second.role,'member');
  await page.getByRole('button',{name:'编辑 项目成员',exact:true}).click();
  dialog=page.getByRole('dialog');await dialog.getByLabel('项目职责').fill('更新后的验收职责');
  // A concurrent plugin/API update must prevent the stale browser draft from overwriting it.
@@ -37,8 +41,16 @@ try{
  await mkdir('.runtime/evidence',{recursive:true});await page.screenshot({path:'.runtime/evidence/members-1440-light.png'});
  await page.goto(origin+'/#/projects/h3/tasks');await page.getByRole('link',{name:'新建任务',exact:true}).click();
  await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
+ // Owner and participants select the same system identities, within project membership.
+ await page.getByLabel('主负责人',{exact:true}).fill('second');
+ await page.locator('[data-picker=owner_member_id] [data-pick=second]').waitFor();
+ await page.getByLabel('主负责人',{exact:true}).press('ArrowDown');await page.keyboard.press('Enter');
+ await page.getByText('验收与参与人',{exact:true}).click();
+ await page.getByLabel('参与人',{exact:true}).fill('manager');
+ await page.locator('[data-picker=participant_ids] [data-pick=manager]').click();
+
  await page.getByRole('button',{name:'创建任务',exact:true}).click();await page.getByRole('button',{name:'保存任务',exact:true}).waitFor();
- const taskId=page.url().split('/').at(-1);let task=await api('GET','/tasks/'+taskId);assert.equal(task.due_at,'2026-12-01');
+ const taskId=page.url().split('/').at(-1);let task=await api('GET','/tasks/'+taskId);assert.equal(task.due_at,'2026-12-01');assert.equal(task.owner_member_id,'second');assert.deepEqual(task.participant_ids,['manager']);
  await page.getByLabel('标题',{exact:true}).fill('浏览器修改任务');await page.getByRole('button',{name:'保存任务',exact:true}).click();await page.getByText('任务已保存。',{exact:true}).waitFor();
  task=await api('GET','/tasks/'+taskId);assert.equal(task.title,'浏览器修改任务');
  for(const width of [1440,390])for(const theme of ['light','dark']){

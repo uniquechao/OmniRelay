@@ -8,11 +8,12 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
 func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.Principal) (any, error) {
-	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,'account_id',a.id,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility,'project_id',m.project_id,'display_name',coalesce(nullif(a.name,''),m.member_id),'role',m.role,'active',true,'roster_status','formal') FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
+	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,`+userChoiceJSON+`,'project_role',`+access.EffectiveProjectRoleSQL+`,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility,'project_id',m.project_id,'role',m.role,'active',true,'roster_status','formal') FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)`+userChoiceJoins+`
  WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role!='revoked' AND a.active ORDER BY m.member_id`, k.args()...)
 	if err != nil {
 		return nil, err
@@ -26,7 +27,7 @@ func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.
 		return nil, err
 	}
 	canDelegate, err := s.allowed(ctx, actor, "project.delegate", k.project)
-	return map[string]any{"project_id": k.project, "panel": "members", "data": map[string]any{"project_id": k.project, "members": items, "can_manage": canManage, "can_delegate": canDelegate}, "total": len(items)}, err
+	return map[string]any{"project_id": k.project, "panel": "members", "data": map[string]any{"project_id": k.project, "members": items, "can_manage": canManage, "can_delegate": canDelegate, "project_roles": access.ProjectRoleDefinitions()}, "total": len(items)}, err
 }
 
 func (s *Service) setMember(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
@@ -39,14 +40,19 @@ func (s *Service) setMember(w http.ResponseWriter, r *http.Request, a identity.P
 }
 
 type memberChange struct {
-	Role           string  `json:"role"`
-	Member         string  `json:"member_id"`
-	Title          *string `json:"role_title,omitempty"`
-	Responsibility *string `json:"responsibility,omitempty"`
-	Expected       *int64  `json:"expected_version,omitempty"`
+	Role                string  `json:"role"`
+	Member              string  `json:"member_id"`
+	Title               *string `json:"role_title,omitempty"`
+	Responsibility      *string `json:"responsibility,omitempty"`
+	Expected            *int64  `json:"expected_version,omitempty"`
+	ProjectRole         string  `json:"project_role,omitempty"`
+	ExpectedProjectRole *string `json:"expected_project_role,omitempty"`
 }
 
 func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Principal, account string, in memberChange) (any, error) {
+	if in.ProjectRole != "" && (!access.IsProjectRole(in.ProjectRole) || in.Role != "") {
+		return nil, errInput
+	}
 	if !identifier.MatchString(account) || in.Title != nil && !textLimit(*in.Title, 100) || in.Responsibility != nil && !textLimit(*in.Responsibility, 4000) || in.Expected != nil && *in.Expected < 0 {
 		return nil, errInput
 	}
@@ -67,16 +73,35 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		var oldRole, oldID, oldTitle, oldResponsibility string
 		var oldVersion int64
 		var active bool
-		err := tx.QueryRow(ctx, `SELECT m.role,m.member_id,a.active,m.role_title,m.responsibility,m.version FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
+		err := tx.QueryRow(ctx, `SELECT m.role,m.member_id,a.active,m.role_title,m.responsibility,m.version FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)`+userChoiceJoins+`
  WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.account_id=$4`, k.args(account)...).Scan(&oldRole, &oldID, &active, &oldTitle, &oldResponsibility, &oldVersion)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
+		}
+		oldProjectRole := access.RoleProjectMember
+		if oldRole != "" && oldRole != "revoked" {
+			if err := tx.QueryRow(ctx, "SELECT "+access.EffectiveProjectRoleSQL+" FROM project_members m WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.account_id=$4", k.args(account)...).Scan(&oldProjectRole); err != nil {
+				return err
+			}
+		}
+		if in.ProjectRole != "" {
+			if in.ExpectedProjectRole == nil {
+				return errInput
+			}
+			in.Role = oldRole
+			if oldRole == "" || oldRole == "revoked" || in.ProjectRole != oldProjectRole {
+				in.Role = "member"
+			}
+			if oldRole == "manager" && in.ProjectRole == access.RoleProjectAdmin {
+				in.Role = "manager"
+			}
 		}
 		if in.Role == "" {
 			in.Role = oldRole
 		}
 		action, project := "project.settings", k.project
-		if in.Role == "manager" || oldRole == "manager" {
+		projectRoleChange := in.ProjectRole != "" && in.ProjectRole != oldProjectRole
+		if in.Role == "manager" || oldRole == "manager" || projectRoleChange || in.Role != oldRole && oldProjectRole == access.RoleProjectAdmin {
 			action = "project.delegate"
 		}
 		if managers == 0 {
@@ -91,6 +116,9 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		}
 		if !ok {
 			return errDenied
+		}
+		if in.ExpectedProjectRole != nil && *in.ExpectedProjectRole != oldProjectRole {
+			return errConflict
 		}
 		if in.Expected != nil && *in.Expected != oldVersion {
 			return errConflict
@@ -125,6 +153,11 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 				return errConflict
 			}
 		}
+		if projectRoleChange && in.ProjectRole == access.RoleProjectMember {
+			if err := s.roles.SetProjectAdministratorInMutation(ctx, tx, a, k.project, account, false); err != nil {
+				return err
+			}
+		}
 		title, responsibility := oldTitle, oldResponsibility
 		if in.Title != nil {
 			title = strings.TrimSpace(*in.Title)
@@ -141,13 +174,18 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		if tag.RowsAffected() != 1 {
 			return errInput
 		}
+		if projectRoleChange && in.ProjectRole == access.RoleProjectAdmin {
+			if err := s.roles.SetProjectAdministratorInMutation(ctx, tx, a, k.project, account, true); err != nil {
+				return err
+			}
+		}
 		if in.Role == "revoked" {
 			_, err = tx.Exec(ctx, "DELETE FROM project_source_readers WHERE "+projectWhere+" AND account_id=$4", k.args(account)...)
 		}
 		if err != nil {
 			return err
 		}
-		detail := map[string]any{"project_id": k.project, "previous_role": oldRole, "role": in.Role, "previous_role_title": oldTitle, "role_title": title, "previous_responsibility": oldResponsibility, "responsibility": responsibility}
+		detail := map[string]any{"project_id": k.project, "previous_role": oldRole, "role": in.Role, "previous_project_role": oldProjectRole, "project_role": in.ProjectRole, "previous_role_title": oldTitle, "role_title": title, "previous_responsibility": oldResponsibility, "responsibility": responsibility}
 		_, err = tx.Exec(ctx, `INSERT INTO audit_events(tenant_key,app_id,actor_account_id,action,resource_type,resource_id,result,change_version,details) VALUES($1,$2,$3,'project.member.update','project_member',$4,'success',$5,$6)`, a.TenantKey, a.AppID, a.AccountID, k.project+":"+account, oldVersion+1, detail)
 		return err
 	})
