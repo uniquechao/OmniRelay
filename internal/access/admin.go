@@ -218,128 +218,138 @@ func (s *Service) grantRole(ctx context.Context, actor identity.Principal, r gra
 	}
 	var grant RoleGrant
 	err := s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
-		source := "platform_admin"
-		if r.ProjectID == "" {
-			if err := s.require(ctx, tx, actor, "role.manage", ""); err != nil {
-				return err
-			}
-		} else {
-			if err := s.require(ctx, tx, actor, "project.delegate", r.ProjectID); err != nil {
-				return err
-			}
-			source = "project_manager"
-		}
-		target := identity.Principal{TenantKey: s.tenantKey, AppID: s.appID, AccountID: r.AccountID}
-		err := tx.QueryRow(ctx, `SELECT open_id, name, avatar_url FROM accounts
-			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND active`, s.tenantKey, s.appID, r.AccountID).
-			Scan(&target.OpenID, &target.Name, &target.AvatarURL)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errNotFound
-		}
-		if err != nil {
-			return err
-		}
-		var generation, supersededID string
-		if r.ProjectID != "" {
-			access, err := s.ProjectGrant(ctx, tx, target, r.ProjectID)
-			if err != nil {
-				return err
-			}
-			if !access.Member {
-				return errNotFound
-			}
-			generation = access.MembershipGeneration
-			if r.Generation != "" && r.Generation != generation {
-				return errMembershipChanged
-			}
-			if !validIdentifier(generation) {
-				return ErrForbidden
-			}
-			err = tx.QueryRow(ctx, `UPDATE role_grants SET revoked_at=now() WHERE tenant_key=$1 AND app_id=$2
-				AND account_id=$3 AND role='project_admin' AND project_id=$4 AND revoked_at IS NULL
-				AND membership_generation<>$5 RETURNING id`,
-				s.tenantKey, s.appID, target.AccountID, r.ProjectID, generation).Scan(&supersededID)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-		}
-		grant, err = scanGrant(tx.QueryRow(ctx, `INSERT INTO role_grants
-			(tenant_key,app_id,account_id,role,project_id,membership_generation,source,granted_by)
-			VALUES ($1,$2,$3,$4,nullif($5,''),nullif($6,''),$7,$8) ON CONFLICT DO NOTHING
-			RETURNING `+grantColumns, s.tenantKey, s.appID, r.AccountID, r.Role, r.ProjectID, generation, source, actor.AccountID))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errDuplicateGrant
-		}
-		if err != nil {
-			return err
-		}
-		version, err := incrementVersion(ctx, tx, grant.AccountID)
-		if err != nil {
-			return err
-		}
-		if supersededID != "" {
-			if err := revokeSessions(ctx, tx, grant.AccountID); err != nil {
-				return err
-			}
-			if err := s.audit(ctx, tx, actor.AccountID, "role.revoke", "role_grant", supersededID, version); err != nil {
-				return err
-			}
-		}
-		return s.audit(ctx, tx, actor.AccountID, "role.grant", "role_grant", grant.ID, version)
+		var err error
+		grant, err = s.grantRoleInMutation(ctx, tx, actor, r)
+		return err
 	})
 	return grant, err
 }
 
+func (s *Service) grantRoleInMutation(ctx context.Context, tx pgx.Tx, actor identity.Principal, r grantRequest) (RoleGrant, error) {
+	source := "platform_admin"
+	if r.ProjectID == "" {
+		if err := s.require(ctx, tx, actor, "role.manage", ""); err != nil {
+			return RoleGrant{}, err
+		}
+	} else {
+		if err := s.require(ctx, tx, actor, "project.delegate", r.ProjectID); err != nil {
+			return RoleGrant{}, err
+		}
+		source = "project_manager"
+	}
+	target := identity.Principal{TenantKey: s.tenantKey, AppID: s.appID, AccountID: r.AccountID}
+	err := tx.QueryRow(ctx, `SELECT open_id, name, avatar_url FROM accounts
+			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND active`, s.tenantKey, s.appID, r.AccountID).
+		Scan(&target.OpenID, &target.Name, &target.AvatarURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RoleGrant{}, errNotFound
+	}
+	if err != nil {
+		return RoleGrant{}, err
+	}
+	var generation, supersededID string
+	if r.ProjectID != "" {
+		access, err := s.ProjectGrant(ctx, tx, target, r.ProjectID)
+		if err != nil {
+			return RoleGrant{}, err
+		}
+		if !access.Member {
+			return RoleGrant{}, errNotFound
+		}
+		generation = access.MembershipGeneration
+		if r.Generation != "" && r.Generation != generation {
+			return RoleGrant{}, errMembershipChanged
+		}
+		if !validIdentifier(generation) {
+			return RoleGrant{}, ErrForbidden
+		}
+		err = tx.QueryRow(ctx, `UPDATE role_grants SET revoked_at=now() WHERE tenant_key=$1 AND app_id=$2
+				AND account_id=$3 AND role='project_admin' AND project_id=$4 AND revoked_at IS NULL
+				AND membership_generation<>$5 RETURNING id`,
+			s.tenantKey, s.appID, target.AccountID, r.ProjectID, generation).Scan(&supersededID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return RoleGrant{}, err
+		}
+	}
+	grant, err := scanGrant(tx.QueryRow(ctx, `INSERT INTO role_grants
+			(tenant_key,app_id,account_id,role,project_id,membership_generation,source,granted_by)
+			VALUES ($1,$2,$3,$4,nullif($5,''),nullif($6,''),$7,$8) ON CONFLICT DO NOTHING
+			RETURNING `+grantColumns, s.tenantKey, s.appID, r.AccountID, r.Role, r.ProjectID, generation, source, actor.AccountID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RoleGrant{}, errDuplicateGrant
+	}
+	if err != nil {
+		return RoleGrant{}, err
+	}
+	version, err := incrementVersion(ctx, tx, grant.AccountID)
+	if err != nil {
+		return RoleGrant{}, err
+	}
+	if supersededID != "" {
+		if err := revokeSessions(ctx, tx, grant.AccountID); err != nil {
+			return RoleGrant{}, err
+		}
+		if err := s.audit(ctx, tx, actor.AccountID, "role.revoke", "role_grant", supersededID, version); err != nil {
+			return RoleGrant{}, err
+		}
+	}
+	return grant, s.audit(ctx, tx, actor.AccountID, "role.grant", "role_grant", grant.ID, version)
+}
+
 func (s *Service) revokeRole(ctx context.Context, actor identity.Principal, grantID string) error {
 	return s.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
-		if !s.inScope(actor) {
-			return errNotFound
-		}
-		grant, err := scanGrant(tx.QueryRow(ctx, `SELECT `+grantColumns+` FROM role_grants
-			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND revoked_at IS NULL`, s.tenantKey, s.appID, grantID))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errNotFound
-		}
-		if err != nil {
-			return err
-		}
-		action := "role.manage"
-		if grant.ProjectID != "" {
-			action = "project.delegate"
-		}
-		if err := s.require(ctx, tx, actor, action, grant.ProjectID); err != nil {
-			if !errors.Is(err, ErrForbidden) {
-				return err
-			}
-			if grant.ProjectID != "" {
-				return errNotFound
-			}
-			canRead, err := s.check(ctx, tx, actor, "role.read", "")
-			if err != nil {
-				return err
-			}
-			if !canRead {
-				return errNotFound
-			}
-			return ErrForbidden
-		}
-		if grant.Role == RoleSystemAdmin {
-			if err := s.protectLastAdmin(ctx, tx, grant.AccountID); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, "UPDATE role_grants SET revoked_at=now() WHERE id=$1", grant.ID); err != nil {
-			return err
-		}
-		version, err := incrementVersion(ctx, tx, grant.AccountID)
-		if err != nil {
-			return err
-		}
-		if err := revokeSessions(ctx, tx, grant.AccountID); err != nil {
-			return err
-		}
-		return s.audit(ctx, tx, actor.AccountID, "role.revoke", "role_grant", grant.ID, version)
+		return s.revokeRoleInMutation(ctx, tx, actor, grantID)
 	})
+}
+
+func (s *Service) revokeRoleInMutation(ctx context.Context, tx pgx.Tx, actor identity.Principal, grantID string) error {
+	if !s.inScope(actor) {
+		return errNotFound
+	}
+	grant, err := scanGrant(tx.QueryRow(ctx, `SELECT `+grantColumns+` FROM role_grants
+			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND revoked_at IS NULL`, s.tenantKey, s.appID, grantID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return err
+	}
+	action := "role.manage"
+	if grant.ProjectID != "" {
+		action = "project.delegate"
+	}
+	if err := s.require(ctx, tx, actor, action, grant.ProjectID); err != nil {
+		if !errors.Is(err, ErrForbidden) {
+			return err
+		}
+		if grant.ProjectID != "" {
+			return errNotFound
+		}
+		canRead, err := s.check(ctx, tx, actor, "role.read", "")
+		if err != nil {
+			return err
+		}
+		if !canRead {
+			return errNotFound
+		}
+		return ErrForbidden
+	}
+	if grant.Role == RoleSystemAdmin {
+		if err := s.protectLastAdmin(ctx, tx, grant.AccountID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, "UPDATE role_grants SET revoked_at=now() WHERE id=$1", grant.ID); err != nil {
+		return err
+	}
+	version, err := incrementVersion(ctx, tx, grant.AccountID)
+	if err != nil {
+		return err
+	}
+	if err := revokeSessions(ctx, tx, grant.AccountID); err != nil {
+		return err
+	}
+	return s.audit(ctx, tx, actor.AccountID, "role.revoke", "role_grant", grant.ID, version)
 }
 
 type AuditEvent struct {

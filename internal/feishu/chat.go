@@ -19,15 +19,22 @@ import (
 const imURL = "https://open.feishu.cn/open-apis/im/v1"
 
 type ChatSource struct {
-	check      *BotCheck
-	tenant     string
-	mu         sync.Mutex
-	token      string
-	tokenUntil time.Time
+	documentUsers func(context.Context, []string) (map[string]string, error)
+	check         *BotCheck
+	tenant        string
+	mu            sync.Mutex
+	token         string
+	tokenUntil    time.Time
 }
 
 func NewChatSource(check *BotCheck, tenant string) *ChatSource {
 	return &ChatSource{check: check, tenant: tenant}
+}
+
+func (s *ChatSource) ConfigureDocumentUsers(resolve func(context.Context, []string) (map[string]string, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.documentUsers = resolve
 }
 
 func (s *ChatSource) credential(ctx context.Context) (string, error) {

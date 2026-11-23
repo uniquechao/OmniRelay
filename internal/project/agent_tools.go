@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/identity"
@@ -76,7 +77,13 @@ func (s *Service) AuthorizeToolReceipt(ctx context.Context, tx pgx.Tx, actor ide
 		if err != nil {
 			return err
 		}
-		if manager || a.String("role") == "manager" {
+		requested := a.String("project_role")
+		if access.IsProjectRole(a.String("role")) {
+			requested = a.String("role")
+		}
+		previous := a.String("expected_project_role")
+		roleChange := requested != "" && requested != previous && (requested == access.RoleProjectAdmin || previous == access.RoleProjectAdmin)
+		if manager || a.String("role") == "manager" || roleChange {
 			ok, err := s.roles.CheckInOrganizationMutation(ctx, tx, actor, "project.delegate", projectID)
 			if err != nil {
 				return err
@@ -134,14 +141,18 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 	case "member_candidates":
 		return s.findMemberCandidates(ctx, k, actor, a.String("q"), int(page))
 	case "member_list":
-		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('member_id',m.member_id,'account_id',a.id,'name',a.name,'role',m.role,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility)
+		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('member_id',m.member_id,'account_id',a.id,'name',a.name,'role',m.role,'project_role',`+access.EffectiveProjectRoleSQL+`,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility)
    FROM project_members m JOIN accounts a ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id)
    WHERE (m.tenant_key,m.app_id,m.project_id)=($1,$2,$3) AND a.active AND m.role!='revoked'
-   AND ($4='' OR m.role=$4) AND strpos(lower(a.name||' '||m.member_id||' '||m.role_title||' '||m.responsibility),lower($5))>0 ORDER BY m.member_id LIMIT 25 OFFSET $6`, k.args(a.String("role"), a.String("q"), (page-1)*25)...)
+   AND ($4='' OR m.role=$4 OR (`+access.EffectiveProjectRoleSQL+`)=$4) AND strpos(lower(a.name||' '||m.member_id||' '||m.role_title||' '||m.responsibility),lower($5))>0 ORDER BY m.member_id LIMIT 25 OFFSET $6`, k.args(a.String("role"), a.String("q"), (page-1)*25)...)
 		if err != nil {
 			return nil, err
 		}
-		return collectToolItems(rows)
+		items, err := collectToolItems(rows)
+		if err == nil {
+			items.(map[string]any)["project_roles"] = access.ProjectRoleDefinitions()
+		}
+		return items, err
 	case "member_add", "member_set_role", "member_update", "member_remove":
 		target := a.String("account_id")
 		role := a.String("role")
@@ -178,6 +189,14 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			}
 		}
 		in := memberChange{Role: role}
+		if access.IsProjectRole(role) {
+			in.ProjectRole = role
+			in.Role = ""
+		}
+		if a.String("project_role") != "" {
+			in.ProjectRole = a.String("project_role")
+			in.Role = ""
+		}
 		if name == "member_add" {
 			in.Expected = new(int64)
 		}
@@ -188,8 +207,17 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return nil, errInput
 		}
+		if access.IsProjectRole(in.Role) {
+			in.ProjectRole = in.Role
+			in.Role = ""
+		}
 		if name == "member_remove" {
 			in.Role = "revoked"
+			in.ProjectRole = ""
+		}
+		if name == "member_add" && in.ProjectRole != "" {
+			x := access.RoleProjectMember
+			in.ExpectedProjectRole = &x
 		}
 		if name == "member_add" && current == "revoked" {
 			in.Expected = nil
