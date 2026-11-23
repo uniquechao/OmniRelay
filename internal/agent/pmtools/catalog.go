@@ -17,7 +17,7 @@ type Tool struct {
 var catalog = []Tool{
 	{"project_get", "读取当前项目的档案、状态和版本", "project.read", false, false, ""},
 	{"project_update", "修改项目档案中指定的字段", "project.settings", true, false, "!expected_version name status project_type background planned_start planned_end"},
-	{"member_list", "按姓名或角色查当前项目的有效成员及会籍版本", "project.read", false, false, "q role page"},
+	{"member_list", "查询项目成员；分派任务时传 purpose=assignment 可检索关联群成员", "project.read", false, false, "q role page purpose"},
 	{"member_add", "向本项目添加系统账号；role 优先用 member_list 的 project_roles，已有成员请用 member_update", "project.settings", true, false, "!account_id !role role_title responsibility project_role expected_project_role"},
 	{"member_set_role", "按会籍版本变更项目成员角色；使用项目级角色时必须传 expected_project_role", "project.settings", true, false, "!account_id !generation !role expected_project_role"},
 	{"member_update", "按版本修改项目角色名称、职责及访问角色", "project.settings", true, false, "!account_id !expected_version role role_title responsibility project_role expected_project_role"},

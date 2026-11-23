@@ -288,6 +288,17 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	call(t, "admin", "member_add", `{"account_id":"new","role":"manager"}`, 403)
 	sql("UPDATE project_members SET generation=gen_random_uuid()::text WHERE account_id='admin'")
 	call(t, "admin", "project_update", `{"expected_version":4,"background":"撤权"}`, 403)
+	sql(`INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES('tenant','app','oc_roster','group');
+ INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id) VALUES('tenant','app','oc_roster','north');
+ INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation,verified_at,members,member_names)
+ VALUES('tenant','app','oc_roster',1,now(),ARRAY['ou_group'], '{"ou_group":"王甲"}');`)
+	if got := call(t, "manager", "member_list", `{"purpose":"assignment","q":"王"}`, 200); !strings.Contains(got, "feishu:ou_group") {
+		t.Fatal(got)
+	}
+	call(t, "manager", "task_create", `{"title":"群内分派","owner_member_id":"feishu:ou_group"}`, 200)
+	call(t, "manager", "task_create", `{"title":"无效分派","owner_member_id":"feishu:ou_someone"}`, 400)
+	call(t, "manager", "member_add", `{"account_id":"feishu:ou_group","role":"member"}`, 200)
+	call(t, "manager", "member_add", `{"account_id":"feishu:ou_group","role":"member"}`, 409)
 	slices.Sort(covered)
 	if !slices.Equal(covered, pmtools.Names()) {
 		t.Fatalf("catalog and tested tools differ: %v", covered)

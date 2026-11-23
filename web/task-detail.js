@@ -63,7 +63,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
   const get = (path) => request(path, { signal });
   const [permissions, directory, tagList, nodes] = await Promise.allSettled([
     creating ? Promise.resolve({edit_fields:capabilities.can_create,update_progress:capabilities.can_create,assign:capabilities.can_assign}) : get(url + '/actions'),
-    get(root + '/members'),
+    get(root + '/members?purpose=assignment'),
     get(root + '/task-tags'),
     get(root + '/milestones'),
   ]);

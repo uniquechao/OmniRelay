@@ -91,6 +91,9 @@ func TestChatSourceHistoryAndGroupScope(t *testing.T) {
 					body = `{"code":0,"data":{"has_more":false,"items":[]}}`
 				}
 			case "/open-apis/im/v1/messages":
+				if r.URL.Query().Get("card_msg_content_type") != "user_card_content" {
+					t.Fatal("history must request original cards")
+				}
 				historyCalls++
 				if q.Get("sort_type") != "ByCreateTimeAsc" || q.Get("page_size") != "50" {
 					t.Fatalf("unexpected history query %v", q)

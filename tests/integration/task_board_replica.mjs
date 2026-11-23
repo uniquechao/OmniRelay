@@ -21,6 +21,9 @@ try{
  }
  await api('PUT','/members/manager/access',{role:'manager'});
  await api('PUT','/members/second/access',{role:'editor'});
+ assert.equal((await api('GET','/members?purpose=assignment')).data.members.length,4);
+ const membersFound = await api('GET','/member-candidates?q=' + encodeURIComponent('王'));
+ assert.deepEqual(membersFound.items.map(p=>p.display_name).sort(), ['王乙','王甲'].sort());
  await api('PUT','/task-tags/accept',{name:'验收'});
  const samples=[['接口联调准备','todo','P2'],['对齐成员目录','in_progress','P1'],['核对来源授权','blocked','P0'],['确认任务规格','done',null]];
  for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'核对项目成员、状态和验收条件。'});
@@ -41,6 +44,13 @@ try{
  await mkdir('.runtime/board-evidence',{recursive:true});
  for(const width of [1440,1100,820,390,320]){
    await page.setViewportSize({width,height:900});
+   if (width===390 || width===1440) {
+     await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+     const card=page.locator('.board-card').first();
+     assert.equal(await card.evaluate(el=>getComputedStyle(el).backgroundColor), await page.locator('.task-page-header').evaluate(el=>getComputedStyle(el).backgroundColor));
+     await page.screenshot({path:'.runtime/board-evidence/group-dark-'+width+'.png'});
+     await page.evaluate(()=>document.documentElement.dataset.theme='light');
+   }
    await page.screenshot({path:'.runtime/board-evidence/board-'+width+'.png'});
    if (width===1440) await page.locator('.task-page-header').screenshot({path:'.runtime/board-evidence/task-header.png'});
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'页面横向溢出 '+width);
@@ -52,6 +62,11 @@ try{
  const panel=page.locator('.task-inspector-panel');
  const bounds=await panel.boundingBox();assert.equal(Math.round(bounds.y),0);assert.equal(Math.round(bounds.height),900);
  await page.getByRole('button',{name:/^参与人，/}).click();
+ await page.getByLabel('搜索参与人').fill('王');
+ assert.equal(await page.getByRole('checkbox').count(),2);
+ await page.getByRole('checkbox',{name:/王甲/}).check();
+ await page.getByRole('checkbox',{name:/王乙/}).check();
+ await page.getByLabel('搜索参与人').fill('');
  await page.getByRole('checkbox',{name:/项目成员/}).check();
  assert.ok(await page.getByRole('checkbox',{name:/项目负责人/}).isChecked(),'创建者应自动加入');
  await page.keyboard.press('Escape');
@@ -71,6 +86,12 @@ try{
  await page.getByRole('button',{name:'T-001 接口联调已排期'}).waitFor();
  const persistedTask=await api('GET','/tasks/'+(await api('GET','/board?limit=1')).columns[0].items[0].id);
  assert.ok(persistedTask.participant_ids.includes('second'));
+ assert.ok(persistedTask.participant_ids.includes('feishu:ou_wang') && persistedTask.participant_ids.includes('feishu:ou_wang2'));
+ assert.equal(persistedTask.relation_names['feishu:ou_wang'],'王甲');
+ assert.ok(!(await api('GET','/members')).data.members.some(p=>p.id==='feishu:ou_wang'));
+ await api('PUT','/members/feishu:ou_wang',{role:'member',expected_version:0});
+ assert.equal((await api('GET','/members?purpose=assignment')).data.members.filter(p=>p.id==='feishu:ou_wang').length,1);
+ assert.ok(!(await api('GET','/member-candidates?q='+encodeURIComponent('王甲'))).items.length);
  assert.ok(persistedTask.interaction_participants.some(person=>person.id==='manager'));
  const persistedBoard=await api('GET','/board?limit=1');
  assert.ok(persistedTask.tag_ids.includes(persistedBoard.tags.find(tag=>tag.name==='上线联验').id));

@@ -15,7 +15,7 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 	replies := map[string]string{
 		"/open-apis/im/v1/chats/oc_group":    `{"code":0,"data":{"chat_id":"oc_group","tenant_key":"t","chat_mode":"group"}}`,
 		"/open-apis/im/v1/chats/oc_old":      "denied",
-		"/open-apis/im/v1/messages/om_share": `{"code":0,"data":{"items":[{"message_id":"om_share","chat_id":"oc_group","msg_type":"text","body":{"content":"{\"text\":\"https://test.feishu.cn/docx/Doc\"}"}}]}}`,
+		"/open-apis/im/v1/messages/om_share?card_msg_content_type=user_card_content": `{"code":0,"data":{"items":[{"message_id":"om_share","chat_id":"oc_group","msg_type":"text","body":{"content":"{\"text\":\"https://test.feishu.cn/docx/Doc\"}"}}]}}`,
 		"/open-apis/docx/v1/documents/Doc":   `{"code":0,"data":{"document":{"title":"说明"}}}`,
 		"/open-apis/docx/v1/documents/Doc/blocks?document_revision_id=-1&page_size=500&user_id_type=open_id": `{"code":0,"data":{"items":[{"block_id":"text","block_type":2,"text":{"elements":[{"text_run":{"content":"正文"}}]}}],"has_more":false}}`,
 		"/open-apis/minutes/v1/minutes/Minute":                                        `{"code":0,"data":{"minute":{"title":"评审"}}}`,
@@ -71,7 +71,7 @@ func TestFileSourceFormatsAndScope(t *testing.T) {
 			t.Fatal(tc, f, err)
 		}
 	}
-	wikiMessage := "/open-apis/im/v1/messages/om_share"
+	wikiMessage := "/open-apis/im/v1/messages/om_share?card_msg_content_type=user_card_content"
 	replies[wikiMessage] = strings.ReplaceAll(replies[wikiMessage], "/docx/Doc", "/wiki/Node")
 	if err := src.CheckShare(ctx, doc, "oc_group"); err != nil {
 		t.Fatal(err)

@@ -224,7 +224,7 @@ func (s *ChatSource) History(ctx context.Context, query chat.HistoryQuery) (chat
 		containerType, containerID = "thread", query.ThreadID
 	}
 	params := url.Values{"container_id_type": {containerType}, "container_id": {containerID},
-		"sort_type": {"ByCreateTimeAsc"}, "page_size": {strconv.Itoa(query.Limit)}, "with_sender_name": {"true"}}
+		"sort_type": {"ByCreateTimeAsc"}, "page_size": {strconv.Itoa(query.Limit)}, "with_sender_name": {"true"}, "card_msg_content_type": {"user_card_content"}}
 	if query.Cursor != "" {
 		params.Set("page_token", query.Cursor)
 	}

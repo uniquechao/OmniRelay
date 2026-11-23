@@ -20,7 +20,7 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
       drawer: 'standard', variant: 'form', confirm: member ? '保存修改' : '添加成员',
       body: `<fieldset class="project-profile-fields">
         ${member ? '' : `<div data-user-picker>
-          <label class="field pr-form"><span>选择人员</span><input type="search" name="user_query" aria-label="选择人员" autocomplete="off" maxlength="200" placeholder="搜索系统用户姓名或账号…" aria-controls="project-user-options"></label>
+          <label class="field pr-form"><span>选择人员</span><input type="search" name="user_query" aria-label="选择人员" autocomplete="off" maxlength="200" placeholder="搜索群成员姓名或账号…" aria-controls="project-user-options"></label>
           <div class="user-choice-list" id="project-user-options" data-user-results></div>
           <div class="user-choice-pages"><button class="button" type="button" data-previous hidden>上一页</button><button class="button" type="button" data-more hidden>下一页</button></div>
           <p data-selected role="status"></p></div>`}
@@ -33,7 +33,7 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
       isDirty: dirty,
       async onSubmit(form) {
         if (busy) return {keepOpen: true};
-        if (!target) return {field: form.elements.user_query, message: '请从系统用户列表选择人员。'};
+        if (!target) return {field: form.elements.user_query, message: '请从候选列表选择人员。'};
         if (!projectRoles.length) {message.textContent = '项目角色暂不可用，请关闭后重新加载。'; return {keepOpen: true};}
         return await mutate({...values(form), expected_version: target.version, expected_project_role: baseline.project_role}) ? undefined : {keepOpen: true};
       },
@@ -60,7 +60,7 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
       const run = ++searchRun;
       query = form.elements.user_query.value.trim();
       const list = dialog.querySelector('[data-user-results]');
-      list.hidden = false; list.setAttribute('aria-busy', 'true'); message.textContent = '正在加载系统用户…';
+      list.hidden = false; list.setAttribute('aria-busy', 'true'); message.textContent = '正在加载候选人员…';
       try {
         const result = await request(root + '/member-candidates?q=' + encodeURIComponent(query) + '&page=' + nextPage, {signal});
         if (signal.aborted || !dialog.open || run !== searchRun) return;
@@ -70,10 +70,10 @@ export function wireProjectMembers(host, {data, projectId, request, signal, navi
           searchRun++; clearTimeout(timer); list.removeAttribute('aria-busy');
           target = result.items[Number(button.dataset.userChoice)];
           form.elements.user_query.value = target.display_name;
-          dialog.querySelector('[data-selected]').textContent = '已选择：' + target.display_name + ' · ' + (target.username || target.account_id);
+          dialog.querySelector('[data-selected]').textContent = '已选择：' + target.display_name + ' · ' + (target.username || (target.account_id.startsWith('feishu:') ? '群成员' : target.account_id));
           message.textContent = ''; list.hidden = true; form.elements.project_role.focus();
         });
-        message.textContent = result.items.length ? '' : '没有可添加的启用用户，已入项人员不会重复显示。';
+        message.textContent = result.items.length ? '' : '没有匹配的候选人员，已入项人员不会重复显示。';
         dialog.querySelector('[data-previous]').hidden = page <= 1;
         dialog.querySelector('[data-more]').hidden = result.items.length < 25;
       } catch {

@@ -22,7 +22,7 @@ function webURL(value) {
   }
 }
 
-export function renderChatCard(body, { text, escape }) {
+export function renderChatCard(body, { text, escape, image, openChat }) {
   let card;
   try {
     card = JSON.parse(body);
@@ -31,6 +31,8 @@ export function renderChatCard(body, { text, escape }) {
   }
   if (!card || typeof card !== 'object') return '';
 
+  // Original cards may carry localized body content.
+  const localized = value => value?.zh_cn ?? value?.en_us ?? (value && Object.values(value)[0]);
   function markdown(value) {
     return value.split(/(\*\*[^*\n]+\*\*)/u).map((part, index) =>
       index % 2 ? `<strong>${text(part.slice(2, -2))}</strong>` : text(part)).join('');
@@ -50,8 +52,11 @@ export function renderChatCard(body, { text, escape }) {
   function element(part, depth) {
     if (typeof part === 'string') return text(part);
     if (!part || typeof part !== 'object') return '';
-    const label = cardText(part.text) || cardText(part.content) || cardText(part.alt);
+    const label = cardText(part.text) || cardText(part.content) || cardText(localized(part.i18n_content)) || cardText(part.alt);
     switch (part.tag) {
+      case 'img':
+      case 'image': return image?.(part.img_key || part.image_key) || text(label);
+      case 'collapsible_panel': return rows([part.header, ...(part.elements || [])], depth + 1);
       case 'button': {
         if (!label.trim()) return '';
         const link = Array.isArray(part.behaviors) && part.behaviors.find(item => item?.type === 'open_url');
@@ -91,7 +96,13 @@ export function renderChatCard(body, { text, escape }) {
 
   const title = cardText(card.header?.title) || cardText(card.title);
   const subtitle = cardText(card.header?.subtitle);
-  const content = rows(card.body?.elements ?? card.elements);
+  let content = rows(card.body?.elements ?? localized(card.i18n_elements) ?? card.elements);
+  // Older IM history can consist entirely of the platform's upgrade illustration and caption.
+  const legacyParts = Array.isArray(card.elements) ? card.elements.flat() : [];
+  const upgrade = part => /^请升级至最新版本客户端[，,]\s*以查看内容[。.]?$/.test(cardText(part?.text) || cardText(part?.content));
+  if (legacyParts.some(upgrade) && legacyParts.every(part => upgrade(part) || ['img','image'].includes(part?.tag) || (part?.tag === 'text' && !cardText(part.text).trim()))) {
+    content = '<p>飞书仅返回了这张卡片的摘要。</p>' + (openChat ? `<a class="chat-card-link" href="${escape(openChat)}" target="_blank" rel="noopener noreferrer">在飞书中打开会话</a>` : '');
+  }
   if (!title.trim() && !subtitle.trim() && !content) return '';
   const tone = headerTones.get(card.header?.template) ?? 'info';
   const header = title || subtitle ? `<header class="chat-card-header" data-tone="${tone}">

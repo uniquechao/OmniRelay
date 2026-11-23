@@ -12,7 +12,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
-func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.Principal) (any, error) {
+func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.Principal, assignment bool) (any, error) {
 	rows, err := s.pool.Query(ctx, `SELECT jsonb_build_object('id',m.member_id,`+userChoiceJSON+`,'project_role',`+access.EffectiveProjectRoleSQL+`,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility,'project_id',m.project_id,'role',m.role,'active',true,'roster_status','formal') FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)`+userChoiceJoins+`
  WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role!='revoked' AND a.active ORDER BY m.member_id`, k.args()...)
 	if err != nil {
@@ -21,6 +21,13 @@ func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.
 	items, err := pgx.CollectRows(rows, pgx.RowTo[json.RawMessage])
 	if err != nil {
 		return nil, err
+	}
+	if assignment {
+		extra, err := s.groupTaskPeople(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, extra...)
 	}
 	canManage, err := s.allowed(ctx, actor, "project.settings", k.project)
 	if err != nil {
@@ -69,6 +76,21 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		var managers int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.role='manager' AND a.active`, k.args()...).Scan(&managers); err != nil {
 			return err
+		}
+		candidate := account
+		if strings.HasPrefix(candidate, "feishu:") {
+			var openID, name, avatar string
+			if err := tx.QueryRow(ctx, groupPeople+` SELECT open_id,display_name,avatar FROM people WHERE id=$4`, k.args(candidate)...).Scan(&openID, &name, &avatar); err == pgx.ErrNoRows {
+				return errInput
+			} else if err != nil {
+				return err
+			}
+			if err := tx.QueryRow(ctx, `INSERT INTO accounts(tenant_key,app_id,open_id,name,avatar_url) VALUES($1,$2,$3,$4,$5)
+             ON CONFLICT(tenant_key,app_id,open_id) DO UPDATE SET open_id=EXCLUDED.open_id WHERE accounts.active RETURNING id`, k.tenant, k.app, openID, name, avatar).Scan(&account); err == pgx.ErrNoRows {
+				return errInput
+			} else if err != nil {
+				return err
+			}
 		}
 		var oldRole, oldID, oldTitle, oldResponsibility string
 		var oldVersion int64
@@ -132,7 +154,16 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		if in.Member == "" {
 			in.Member = oldID
 			if in.Member == "" {
-				in.Member = account
+				in.Member = candidate
+			}
+		}
+		if strings.HasPrefix(in.Member, "feishu:") {
+			var matches bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT FROM accounts WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND 'feishu:'||open_id=$4)`, k.tenant, k.app, account, in.Member).Scan(&matches); err != nil {
+				return err
+			}
+			if !matches {
+				return errInput
 			}
 		}
 		if oldID != "" && in.Member != oldID {

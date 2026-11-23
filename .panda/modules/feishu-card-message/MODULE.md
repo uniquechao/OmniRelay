@@ -14,7 +14,7 @@
 
 ## 长期设计约束
 
-- 消息接口的 `body` 保留飞书结构。支持历史接口的 `title` 与分行 `elements`，以及卡片中的 `header`、`elements` 或 `body.elements`。
+- 读取历史和复核资源时使用 `card_msg_content_type=user_card_content`。消息接口的 `body` 保留飞书结构。支持历史接口的 `title` 与分行 `elements`，以及卡片中的 `header`、`elements` 或 `body.elements`。
 - 群聊正文的提及编号只在单条消息内有效。归档保留原文和该版本的提及姓名，工作台气泡、搜索与结果摘要共用解析出的文字。历史消息经原有全量同步补齐。[群聊提及修复记录](issues/chat-message-mentions.md)
 - 卡片按数据中的顺序显示正文、操作与说明。标题色优先使用已识别的模板主题，缺省采用工作台信息色。
 - 工作台历史按钮需要有效的 HTTP 或 HTTPS 地址。支持的飞书资源链接打开预览抽屉，其他链接沿用原导航。仅有标签、回调或无效地址的按钮以禁用态显示。撤回消息沿用阅读器的撤回提示。

@@ -410,11 +410,20 @@ export function mountChatReader(host, api, {
       const name = person.name || (fromBot ? '飞书 Bot' : '未知人员');
       const receipt = item.state !== 'deleted' && receiptLink(item.business_receipt);
       const org = orgOf(person);
+      const resources = api.preview ? messageResources(item) : [];
+      const embedded = new Set();
+      const renderResource = (resource, index) => renderMessageResource(resource, index, api.resourceURL(item.chat_id, item.id, resource), name => highlight(name, query));
       const card = item.type === 'interactive' && item.state !== 'deleted' && renderChatCard(item.body, {
-        escape: esc, text: value => highlight(value, query)
+        escape: esc, text: value => highlight(value, query),
+        openChat: identifier.test(item.chat_id) ? 'https://applink.feishu.cn/client/chat/open?openChatId=' + encodeURIComponent(item.chat_id) : '',
+        image: key => {
+          const index = resources.findIndex(resource => resource.kind === 'image' && resource.key === key);
+          if (index < 0) return '';
+          embedded.add(index);
+          return renderResource(resources[index], index);
+        }
       });
       const content = messageBody(item);
-      const resources = api.preview ? messageResources(item) : [];
       const copy = documentCopy(content, resources);
       const standalone = resources.some(resource => (item.type === 'image' && resource.kind === 'image') ||
         (item.type === 'file' && resource.kind === 'attachment'));
@@ -422,7 +431,7 @@ export function mountChatReader(host, api, {
       const bubble = !standalone && ((!card && copy) || icons) ? `<p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}${
         card ? '' : `<span>${highlight(copy, query)}</span>`}</p>` : '';
       const attachments = resources.map((resource, index) =>
-        renderMessageResource(resource, index, api.resourceURL(item.chat_id, item.id, resource), name => highlight(name, query))).join('');
+        embedded.has(index) ? '' : renderResource(resource,index)).join('');
       return separator + `<li class="chat-message" data-message="${esc(item.id)}" tabindex="-1"
         data-author="${fromBot ? 'bot' : 'person'}" ${item.id === anchor ? 'data-source-message' : ''}>
         ${fromBot ? botAvatar : personButton(person, personAvatar(name, person.person_key || name), 'chat-person-button')}

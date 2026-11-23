@@ -36,7 +36,7 @@ func (s *ChatSource) checkShare(ctx context.Context, r drive.Ref, chatID string,
 		}
 	}
 	var data im.GetMessageRespData
-	err := s.get(ctx, "/messages/"+url.PathEscape(r.MessageID), nil, &data)
+	err := s.get(ctx, "/messages/"+url.PathEscape(r.MessageID), url.Values{"card_msg_content_type": {"user_card_content"}}, &data)
 	if errors.Is(err, chat.ErrAccessLost) {
 		return drive.ErrRevoked
 	}

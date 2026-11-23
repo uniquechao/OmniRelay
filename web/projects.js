@@ -534,7 +534,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         : tab === 'chats' || tab === 'docs' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
           : creatingTask ? request('/api/v1/projects/' + id + '/tasks', {signal}) : boardView ? request('/api/v1/projects/'+id+'/board?limit=1',{signal}) : request(endpoint(contentRoute), { signal });
-    const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
+    const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members' + (boardView ? '?purpose=assignment' : ''), { signal }) : undefined;
     const [header, result, directory] = await Promise.allSettled([overview, content, members]);
     if (!current()) return;
     if (header.status === 'rejected' && [403, 404].includes(header.reason.status)) throw header.reason;

@@ -96,39 +96,41 @@ func (s *Service) refreshFileGroup(ctx context.Context) (bool, error) {
 	}
 
 	upstream, cancel := context.WithTimeout(ctx, 20*time.Second)
-	members, listErr := s.fileGroupMembers(upstream, id)
+	members, names, listErr := s.fileGroupMembers(upstream, id)
 	cancel()
 	fresh := listErr == nil || errors.Is(listErr, ErrAccessLost)
 	_, err = s.pool.Exec(ctx, `UPDATE feishu_drive_group_memberships
-	SET members=CASE WHEN $6 THEN $7 ELSE members END,
+	SET member_names=CASE WHEN $6 THEN $9::jsonb ELSE member_names END, members=CASE WHEN $6 THEN $7 ELSE members END,
 	    verified_at=CASE WHEN $6 THEN clock_timestamp() ELSE verified_at END,
 	    next_at=CASE WHEN $6 THEN $8 ELSE clock_timestamp()+interval '10 seconds' END
 	WHERE (tenant_key,app_id,chat_id,generation,next_at)=($1,$2,$3,$4,$5)
 	AND EXISTS (SELECT FROM feishu_bot_configs
 	    WHERE tenant_key=$1 AND app_id=$2 AND enabled AND credentials_generation=$4)`,
-		s.tenant, s.app, id, s.generation, lease, fresh, members, nextFileGroupNightlySync(time.Now()))
+		s.tenant, s.app, id, s.generation, lease, fresh, members, nextFileGroupNightlySync(time.Now()), names)
 	return true, err
 }
 
-func (s *Service) fileGroupMembers(ctx context.Context, id string) ([]string, error) {
+func (s *Service) fileGroupMembers(ctx context.Context, id string) ([]string, map[string]string, error) {
 	members := []string{}
+	names := map[string]string{}
 	seen, cursors := map[string]bool{}, map[string]bool{}
 	for cursor := ""; ; {
 		page, err := s.source.Members(ctx, id, cursor)
 		if err != nil {
-			return []string{}, err
+			return []string{}, map[string]string{}, err
 		}
 		for _, member := range page.Items {
 			if strings.HasPrefix(member.OpenID, "ou_") && validIdentifier(member.OpenID) && !seen[member.OpenID] {
+				names[member.OpenID] = strings.TrimSpace(member.Name)
 				seen[member.OpenID] = true
 				members = append(members, member.OpenID)
 			}
 		}
 		if page.Next == "" {
-			return members, nil
+			return members, names, nil
 		}
 		if cursors[page.Next] {
-			return []string{}, ErrUnavailable
+			return []string{}, map[string]string{}, ErrUnavailable
 		}
 		cursors[page.Next], cursor = true, page.Next
 	}

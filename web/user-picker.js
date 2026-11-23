@@ -4,10 +4,10 @@ export function userSearchText(user) {
   return [user.display_name, user.name, user.username, user.account_id, user.id].filter(Boolean).join(' ');
 }
 
-// Both member management and task assignment render identities from system accounts.
+// Group candidates can be selected before their first workbench login.
 export function userChoice(user, value, attribute = 'data-user-choice') {
   const name = user.display_name || user.name || user.account_id || user.id;
-  const account = user.username || user.account_id || user.id;
+  const account = user.username || (user.account_id?.startsWith('feishu:') ? '群成员' : user.account_id || user.id);
   return `<button class="button user-choice" type="button" ${attribute}="${escape(value)}">
     ${window.OmniRelayUI.personAvatar(name, user.account_id || user.id || name)}
     <span class="user-choice-copy"><strong>${escape(name)}</strong><small>${escape(account)}</small></span>

@@ -94,7 +94,7 @@
   }
   .board-lane > header > span:not(.board-dot) {
     font-size: 0.6875rem;
-    background: white;
+    background: light-dark(white,var(--or-surface));
     border-radius: 10px;
     padding: 0 5px;
   }
@@ -116,7 +116,7 @@
     padding: 10px;
     border: 1px solid light-dark(#e8eaef,var(--or-border));
     border-radius: 7px;
-    background: white;
+    background: light-dark(white,var(--or-surface));
     box-shadow: 0 1px 2px #001a3d06;
     transition:
       border-color 110ms,
@@ -400,7 +400,7 @@
     height: var(--task-inspector-height, min(740px, calc(100dvh - 24px)));
     max-height: 100%;
     min-width: 0;
-    background: white;
+    background: light-dark(white,var(--or-surface));
     border: 1px solid light-dark(#e8eaef,var(--or-border));
     border-radius: 9px;
     box-shadow: -12px 4px 30px #001a3d24;

@@ -516,6 +516,12 @@ test('飞书卡片保留标题、正文、操作和说明，并适配主题和�
       { tag: 'button', text: '无效链接', url: 'javascript:alert(1)' }
     ] }
   }) };
+  const summary = { ...task, id:'om_legacy', business_receipt:undefined,
+    body:JSON.stringify({title:'旧卡片',elements:[[{tag:'img',image_key:'cover'},{tag:'text',text:'请升级至最新版本客户端，以查看内容'}]]}),
+    resources:[{kind:'image',key:'cover'}] };
+  const illustrated = { ...task, id:'om_picture', business_receipt:undefined,
+    body:JSON.stringify({schema:'2.0',header:{title:{content:'原始卡片'}},body:{elements:[{tag:'img',img_key:'picture'}]}}),
+    resources:[{kind:'image',key:'picture'}] };
   const malformed = { ...task, id: 'om_bad_card', body: '{', business_receipt: undefined };
   const deleted = { ...card, id: 'om_deleted_card', state: 'deleted' };
   const headers = [];
@@ -525,7 +531,7 @@ test('飞书卡片保留标题、正文、操作和说明，并适配主题和�
     await mountFixture(page);
     await page.route(origin + base + '/oc_group/{messages,search}*', route => {
       const url = new URL(route.request().url());
-      return route.fulfill({ json: { items: url.searchParams.has('q') ? [card] : [deleted, malformed, originalCard, card] } });
+      return route.fulfill({ json: { items: url.searchParams.has('q') ? [card] : [deleted, malformed, summary, illustrated, originalCard, card] } });
     });
     for (const theme of ['light', 'dark']) {
       await page.goto(origin + '/?theme=' + theme + '#/feishu/bot-chats/' + group.id);
@@ -555,6 +561,12 @@ test('飞书卡片保留标题、正文、操作和说明，并适配主题和�
       assert.ok(geometry.actionHeight >= (mobile ? 44 : 34));
       headers.push(geometry.header);
     }
+    const oldCard = page.locator('[data-message="om_legacy"]');
+    assert.equal(await oldCard.locator('.chat-resource-image').count(),0);
+    assert.ok(await oldCard.getByRole('link',{name:'在飞书中打开会话'}).getAttribute('href'));
+    const illustratedMessage=page.locator('[data-message="om_picture"]');
+    assert.equal(await illustratedMessage.locator('.chat-resource-image').count(),1);
+    assert.equal(await illustratedMessage.locator('.chat-card .chat-resource-image').count(),1);
     const raw = page.locator('[data-message="om_brief"] .chat-card');
     const link = raw.getByRole('link', { name: '打开详情' });
     const target = 'https://example.test/task';

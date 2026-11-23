@@ -53,7 +53,7 @@ func canUpdateProgress(t storedTask, g access.ProjectAccess) bool {
 }
 
 // 成员、标签由当前项目目录确认；里程碑由本地复合外键约束。
-func (k taskScope) relationNames(ctx context.Context, tx pgx.Tx, f taskFields) (map[string]string, error) {
+func (k taskScope) relationNames(ctx context.Context, tx pgx.Tx, f taskFields, previous ...storedTask) (map[string]string, error) {
 	names := map[string]string{}
 	if f.Milestone != nil {
 		var name string
@@ -71,6 +71,12 @@ func (k taskScope) relationNames(ctx context.Context, tx pgx.Tx, f taskFields) (
 	for _, id := range members {
 		var name string
 		err := tx.QueryRow(ctx, `SELECT coalesce(nullif(a.name,''),m.member_id) FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.project_id=$3 AND m.member_id=$4 AND a.active AND m.role!='revoked'`, k.args(id)...).Scan(&name)
+		if err == pgx.ErrNoRows && strings.HasPrefix(id, "feishu:") {
+			err = tx.QueryRow(ctx, groupPeople+` SELECT display_name FROM people WHERE id=$4 AND role IS NULL`, k.args(id)...).Scan(&name)
+			if err == pgx.ErrNoRows && len(previous) > 0 && (f.Owner == nil || *f.Owner != id || previous[0].Owner != nil && *previous[0].Owner == id) && (!slices.Contains(f.Participants, id) || slices.Contains(previous[0].Participants, id)) && previous[0].RelationNames[id] != "" {
+				name, err = previous[0].RelationNames[id], nil
+			}
+		}
 		if err == pgx.ErrNoRows {
 			return nil, errInput
 		}
@@ -264,7 +270,7 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 			if status != "blocked" {
 				blocked = ""
 			}
-			names, err := k.relationNames(ctx, tx, in.taskFields)
+			names, err := k.relationNames(ctx, tx, in.taskFields, old)
 			if err != nil {
 				return nil, err
 			}

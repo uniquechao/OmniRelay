@@ -45,6 +45,7 @@ type interactionMember struct {
 }
 
 type storedTask struct {
+	RelationNames           map[string]string   `json:"relation_names,omitempty"`
 	InteractionParticipants []interactionMember `json:"interaction_participants,omitempty"`
 	DisplayNumber           int64               `json:"display_number"`
 	Overdue                 bool                `json:"overdue"`

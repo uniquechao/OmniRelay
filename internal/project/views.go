@@ -17,6 +17,11 @@ type ProjectPage struct {
 func viewQuery(panel string, input url.Values) (url.Values, error) {
 	var keys []string
 	switch panel {
+	case "members":
+		keys = []string{"purpose"}
+		if input.Has("purpose") && input.Get("purpose") != "assignment" {
+			return nil, errInput
+		}
 	case "meetings":
 		keys = []string{"q", "page", "page_size", "created_from", "created_before", "resource_type"}
 	case "docs":

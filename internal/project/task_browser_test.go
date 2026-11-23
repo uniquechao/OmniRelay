@@ -68,6 +68,18 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 		t.Skip("双账号浏览器验收需要 Playwright")
 	}
 	pool := testProjectPool(t, schema)
+	if schema == "task_board_replica_browser" {
+		_, err := pool.Exec(t.Context(), `INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES('tenant','app',1,true);
+          INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) SELECT 'tenant','app',x,'group' FROM unnest(ARRAY['oc_a','oc_b','oc_other']) x;
+          INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id) VALUES ('tenant','app','oc_a','board-test'),('tenant','app','oc_b','board-test'),('tenant','app','oc_other','elsewhere');
+          INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation,verified_at,members,member_names) VALUES
+          ('tenant','app','oc_a',1,now(),ARRAY['ou_wang'],'{"ou_wang":"王甲"}'),
+          ('tenant','app','oc_b',1,now(),ARRAY['ou_wang','ou_wang2'],'{"ou_wang":"王甲","ou_wang2":"王乙"}'),
+          ('tenant','app','oc_other',1,now(),ARRAY['ou_out'],'{"ou_out":"王外"}');`)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	roles := access.New(pool, "tenant", "app")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	var secret [24]byte

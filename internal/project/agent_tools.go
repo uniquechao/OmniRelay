@@ -156,6 +156,20 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 	case "member_candidates":
 		return s.findMemberCandidates(ctx, k, actor, a.String("q"), int(page))
 	case "member_list":
+		if purpose := a.String("purpose"); purpose != "" {
+			if purpose != "assignment" || a.String("role") != "" {
+				return nil, errInput
+			}
+			rows, err := tx.Query(ctx, groupPeople+`, choices AS (
+              SELECT m.member_id AS id,coalesce(nullif(a.name,''),m.member_id) AS name FROM project_members m JOIN accounts a ON
+              (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE (m.tenant_key,m.app_id,m.project_id)=($1,$2,$3) AND a.active AND m.role!='revoked'
+              UNION ALL SELECT id,display_name FROM people WHERE role IS NULL)
+              SELECT jsonb_build_object('member_id',id,'name',name) FROM choices WHERE strpos(lower(name||' '||id),lower($4))>0 ORDER BY name,id LIMIT 25 OFFSET $5`, k.args(a.String("q"), (page-1)*25)...)
+			if err != nil {
+				return nil, err
+			}
+			return collectToolItems(rows)
+		}
 		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('member_id',m.member_id,'account_id',a.id,'name',a.name,'role',m.role,'project_role',`+access.EffectiveProjectRoleSQL+`,'generation',m.generation,'version',m.version,'role_title',m.role_title,'responsibility',m.responsibility)
    FROM project_members m JOIN accounts a ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id)
    WHERE (m.tenant_key,m.app_id,m.project_id)=($1,$2,$3) AND a.active AND m.role!='revoked'
