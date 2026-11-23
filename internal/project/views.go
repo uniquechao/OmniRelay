@@ -5,8 +5,13 @@ import (
 	"slices"
 )
 
+type directoryProject struct {
+	Project
+	Followed bool `json:"followed"`
+}
+
 type ProjectPage struct {
-	Items     []Project           `json:"items"`
+	Items     []directoryProject  `json:"items"`
 	Total     int                 `json:"total"`
 	Page      int                 `json:"page"`
 	PageSize  int                 `json:"page_size"`

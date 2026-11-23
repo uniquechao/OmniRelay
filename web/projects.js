@@ -177,14 +177,43 @@ function briefings(base, items) {
     '暂无项目简报。',
   );
 }
+export const projectFollowsChanged = 'omnirelay:project-follows-changed';
+
+function followButton(project) {
+  return `<button type="button" class="button project-follow" data-follow="${esc(project.id)}" aria-label="关注项目 ${esc(project.name)}" aria-pressed="${Boolean(project.followed)}" title="${project.followed ? '取消关注' : '关注项目'}">${project.followed ? '已关注' : '关注'}</button>`;
+}
+
+function wireFollowButtons(host, request, signal) {
+  for (const button of host.querySelectorAll('button[data-follow]')) {
+    button.onclick = async () => {
+      if (button.getAttribute('aria-disabled') === 'true') return;
+      const next = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-disabled', 'true');
+      try {
+        await request('/api/v1/projects/' + encodeURIComponent(button.dataset.follow) + '/follow', {method: next ? 'PUT' : 'DELETE'});
+        button.setAttribute('aria-pressed', String(next));
+        button.textContent = next ? '已关注' : '关注';
+        button.title = next ? '取消关注' : '关注项目';
+        window.dispatchEvent(new Event(projectFollowsChanged));
+      } catch (error) {
+        if (error.status === 403 || error.status === 404) window.dispatchEvent(new Event(projectFollowsChanged));
+        if (!signal.aborted) window.OmniRelayUI.toast('error', '关注状态更新失败，请重试。');
+      } finally {
+        button.removeAttribute('aria-disabled');
+      }
+    };
+  }
+}
+
 function directoryRows(items, projectTypes) {
   return table(
-    ['项目名称', '类型', '阶段', '更新时间'],
+    ['项目名称', '类型', '阶段', '更新时间', '关注'],
     items.map((row) => [
       link('#/projects/' + row.id + '/overview', row.name),
       projectTypeBadge(row.project_type, projectTypes),
       label(row.status),
       row.updated_at ? `<time class="date" datetime="${esc(row.updated_at)}">${esc(projectUpdatedTime.format(new Date(row.updated_at)))}</time>` : '—',
+      followButton(row),
     ]),
     '没有符合条件的项目。',
   );
@@ -193,7 +222,10 @@ export async function mountProjectSummary(host, request, signal) {
   window.OmniRelayLoading.mount(host, { size: 'page', label: '正在加载项目…' });
   try {
     const data = await request('/api/v1/projects?page=1&page_size=10', { signal });
-    if (!signal.aborted) host.innerHTML = panel('项目列表', directoryRows(data.items, data.project_types));
+    if (!signal.aborted) {
+      host.innerHTML = panel('项目列表', directoryRows(data.items, data.project_types));
+      wireFollowButtons(host, request, signal);
+    }
   } catch (error) {
     if (!signal.aborted) host.innerHTML = empty(failure(error));
   } finally {
@@ -506,6 +538,7 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         create.onclick = () => openProfile(create, data.project_types);
       }
       body.innerHTML = directoryRows(data.items, data.project_types) + pager(route, data.total, 25);
+      wireFollowButtons(body, request, signal);
       body.onclick = (e) => {
         const a = e.target.closest('a');
         if (a?.hash.startsWith('#/projects/')) {
@@ -544,6 +577,8 @@ export async function mountProjects(host, route, request, { signal, memory, scop
     if (project) {
       const title = host.querySelector('#page-heading');
       title.textContent = project.name || project.id;
+      host.querySelector('.project-title').insertAdjacentHTML('beforeend', followButton(project));
+      wireFollowButtons(host, request, signal);
       if (project.project_type)
         title.insertAdjacentHTML('beforebegin', projectTypeBadge(project.project_type, workspace.project_types));
       const tone =

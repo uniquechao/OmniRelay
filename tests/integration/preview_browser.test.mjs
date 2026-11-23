@@ -48,6 +48,14 @@ test('预发布构建运行工作台和首次配置两个入口', { skip: !dist 
     await page.goto(workbench + '/#/workbench');
     await page.getByRole('heading', { name: '登录工作台' }).waitFor();
     await page.getByRole('button', {name:'使用飞书登录'}).waitFor();
+    const favicon = () => page.locator('link[rel="icon"]').evaluate(async link => {
+      const icon = new Image();
+      icon.src = link.href;
+      await icon.decode();
+      return {path: new URL(link.href).pathname, width: icon.naturalWidth, height: icon.naturalHeight};
+    });
+    const brand = await favicon();
+    assert.ok(brand.width > 0 && brand.width === brand.height);
     const missing = await page.evaluate(async () => {
       const entry = document.querySelector('script[type=module]').src;
       return (await fetch('/missing/' + new URL(entry).pathname.split('/').at(-1))).status;
@@ -56,6 +64,7 @@ test('预发布构建运行工作台和首次配置两个入口', { skip: !dist 
     await page.goto(setup + (setupOrigin ? '/' : '/setup'));
     assert.equal(page.url(), setup + '/setup');
     await page.getByRole('heading', { name: '首次配置' }).waitFor();
+    assert.deepEqual(await favicon(), brand);
     await page.getByText(setup + '/auth/feishu/callback', { exact: true }).waitFor();
     await page.goto(setup + '/?setup=complete');
     await page.getByText('配置已保存，正在启动登录服务…').waitFor();

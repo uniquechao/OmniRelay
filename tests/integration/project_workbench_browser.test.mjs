@@ -23,6 +23,7 @@ async function fixture(page) {
   const botMessages = [];
   page.on('pageerror', (err) => errors.push(err.message));
   let deny = false;
+  let followed = false;
   let held;
   let release;
   const group = { id: 'oc_21', kind: 'group', name: '联调群' };
@@ -49,11 +50,12 @@ async function fixture(page) {
         csrf_token: 'token',
         access: { navigation: { workbench: true }, default_route: '/#/workbench' },
       });
+    if (path === '/api/v1/me/followed-projects') return respond(list(followed && !deny ? [project] : []));
     if (path === '/api/v1/projects' && url.searchParams.get('page_size') === '100')
       return respond(list([project]));
     if (path === '/api/v1/projects')
       return respond({
-        items: [project],
+        items: [{...project,followed}],
         total: 26,
         page: Number(url.searchParams.get('page')),
         page_size: 25,
@@ -61,11 +63,17 @@ async function fixture(page) {
     if (path.startsWith(root + '/')) {
       const section = path.slice(root.length + 1);
       if (deny) return route.fulfill({ status: 404, json: { error: 'project_access_denied' } });
+      if (section === 'follow') {
+        assert.equal(route.request().headers()['x-csrf-token'], 'token');
+        assert.ok(['PUT','DELETE'].includes(route.request().method()));
+        followed = route.request().method() === 'PUT';
+        return respond({followed});
+      }
       if (section === 'files') return respond(localFiles(project.id, '交付文档'));
       if (section === 'files/documents/d-1') return respond({title:'交付文档', text:'交付记录正文'});
       const data = {
         overview: {
-          workspace: { project },
+          workspace: { project: {...project,followed} },
           milestones: { items: [{ kind: 'milestone', id: 'm1', title: '验收节点', task_id: task.id }] },
         },
         members: { members: [{ display_name: '项目成员甲' }] },
@@ -158,6 +166,52 @@ async function fixture(page) {
     },
   };
 }
+test('关注项目后可以从主导航打开详情，取消关注后入口消失', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const width of [1366,390]) for (const theme of ['light','dark']) {
+    const page = await browser.newPage({viewport:{width,height:844},colorScheme:theme});
+    try {
+      const f = await fixture(page);
+      // A directory action can finish while the first sidebar read is still in flight.
+      let releaseInitial;
+      const held = new Promise(resolve => {releaseInitial=resolve;});
+      await page.route(origin+'/api/v1/me/followed-projects', async route => {
+        await held;
+        await route.fulfill({json:list([])});
+      }, {times:1});
+      await page.goto(origin + '/?theme='+theme+'#/projects');
+      const toggle = page.getByRole('button',{name:'关注项目 '+project.name});
+      const shortcut = page.locator('.rail').getByRole('link',{name:project.name});
+      const mobile = page.locator('#mobile-nav');
+      const option = mobile.locator('optgroup[label="已关注项目"] option');
+      await toggle.click();
+      await option.waitFor({state:'attached'});
+      releaseInitial();
+      await page.reload();
+      await page.getByRole('button',{name:'关注项目 '+project.name,pressed:true}).waitFor();
+      if (await mobile.isVisible()) await mobile.selectOption({label:project.name});
+      else await shortcut.click();
+      await page.getByRole('heading',{name:project.name,exact:true}).waitFor();
+      assert.equal(new URL(page.url()).hash,'#/projects/'+project.id+'/overview');
+      await toggle.click();
+      await option.waitFor({state:'detached'});
+      assert.equal(await shortcut.count(),0);
+      assert.equal(await toggle.getAttribute('aria-pressed'),'false');
+      await toggle.click();
+      await option.waitFor({state:'attached'});
+      f.revoke();
+      await page.reload();
+      await page.getByRole('button',{name:'重新加载'}).waitFor();
+      assert.equal(await option.count(),0);
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      assert.deepEqual(f.errors,[]);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
 test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, async (t) => {
   const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
