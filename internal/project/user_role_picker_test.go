@@ -96,6 +96,45 @@ func TestSystemProjectRolesAndUserChoices(t *testing.T) {
 	if len(byLogin) != 1 {
 		t.Fatal(byLogin)
 	}
+	// A binding does not narrow system-wide search. Directory-only people
+	// resolve through their existing Feishu identity when added to a project.
+	exec(`INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES ('tenant','app',1,true);
+		INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) VALUES ('tenant','app','oc_picker','group');
+		INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id) VALUES ('tenant','app','oc_picker','north');
+		INSERT INTO directory_sources(tenant_key,app_id) VALUES ('tenant','app');
+		INSERT INTO directory_sync_runs(tenant_key,app_id,trigger,state) VALUES ('tenant','app','initial','succeeded');
+		UPDATE directory_sources SET visible=true,active_version=(SELECT id FROM directory_sync_runs);
+		INSERT INTO directory_people(tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status)
+		SELECT 'tenant','app',id,'ou_directory','通讯录用户','','active' FROM directory_sync_runs`)
+	if all := call("GET", root+"member-candidates", "", 200)["items"].([]any); len(all) != 2 {
+		t.Fatalf("system directory for linked project: %v", all)
+	}
+	if outside := call("GET", root+"member-candidates?q=alice.login", "", 200)["items"].([]any); len(outside) != 1 {
+		t.Fatalf("outside-group system account: %v", outside)
+	}
+	directory := call("GET", root+"member-candidates?q=通讯录", "", 200)["items"].([]any)
+	if len(directory) != 1 || directory[0].(map[string]any)["account_id"] != "feishu:ou_directory" {
+		t.Fatalf("directory-only candidate: %v", directory)
+	}
+	call("PUT", root+"members/feishu:ou_directory", `{"role":"member","expected_version":0}`, 200)
+	if repeated := call("GET", root+"member-candidates?q=通讯录", "", 200)["items"].([]any); len(repeated) != 0 {
+		t.Fatal(repeated)
+	}
+	exec(`INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation,verified_at,members,member_names)
+		VALUES ('tenant','app','oc_picker',1,now(),ARRAY['ou_default'],'{"ou_default":"群内人员"}')`)
+	defaultMember := identity.Principal{TenantKey: "tenant", AppID: "app", OpenID: "ou_default"}
+	if err := pool.QueryRow(ctx, "SELECT id FROM accounts WHERE tenant_key='tenant' AND app_id='app' AND open_id=$1", defaultMember.OpenID).Scan(&defaultMember.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := roles.Check(ctx, defaultMember, "project.read", "north"); err != nil || !ok {
+		t.Fatalf("default member access: %v %v", ok, err)
+	}
+	if ok, err := roles.Check(ctx, defaultMember, "project.settings", "north"); err != nil || ok {
+		t.Fatalf("default member settings: %v %v", ok, err)
+	}
+	if repeated := call("GET", root+"member-candidates?q=群内人员", "", 200)["items"].([]any); len(repeated) != 0 {
+		t.Fatal(repeated)
+	}
 	call("PUT", root+"members/candidate", `{"project_role":"system_admin","expected_version":0,"expected_project_role":"project_member"}`, 400)
 	call("PUT", root+"members/candidate", `{"project_role":"project_admin","expected_version":0,"expected_project_role":"project_member","responsibility":"验收管理"}`, 200)
 	target := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "candidate", OpenID: "candidate"}

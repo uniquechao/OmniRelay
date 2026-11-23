@@ -23,7 +23,7 @@ try{
  await api('PUT','/members/second/access',{role:'editor'});
  assert.equal((await api('GET','/members?purpose=assignment')).data.members.length,4);
  const membersFound = await api('GET','/member-candidates?q=' + encodeURIComponent('王'));
- assert.deepEqual(membersFound.items.map(p=>p.display_name).sort(), ['王乙','王甲'].sort());
+ assert.deepEqual(membersFound.items.map(p=>p.display_name), ['王外']);
  await api('PUT','/task-tags/accept',{name:'验收'});
  const samples=[['接口联调准备','todo','P2'],['对齐成员目录','in_progress','P1'],['核对来源授权','blocked','P0'],['确认任务规格','done',null]];
  for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'核对项目成员、状态和验收条件。'});
@@ -88,8 +88,7 @@ try{
  assert.ok(persistedTask.participant_ids.includes('second'));
  assert.ok(persistedTask.participant_ids.includes('feishu:ou_wang') && persistedTask.participant_ids.includes('feishu:ou_wang2'));
  assert.equal(persistedTask.relation_names['feishu:ou_wang'],'王甲');
- assert.ok(!(await api('GET','/members')).data.members.some(p=>p.id==='feishu:ou_wang'));
- await api('PUT','/members/feishu:ou_wang',{role:'member',expected_version:0});
+ assert.ok((await api('GET','/members')).data.members.some(p=>p.id==='feishu:ou_wang' && p.role==='member'));
  assert.equal((await api('GET','/members?purpose=assignment')).data.members.filter(p=>p.id==='feishu:ou_wang').length,1);
  assert.ok(!(await api('GET','/member-candidates?q='+encodeURIComponent('王甲'))).items.length);
  assert.ok(persistedTask.interaction_participants.some(person=>person.id==='manager'));
