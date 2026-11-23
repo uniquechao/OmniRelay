@@ -26,6 +26,14 @@
 .chat-result strong, .chat-message-meta .person-name { font-size: .8125rem; }
 .chat-reading-head .chat-reading-title:focus-visible { outline-offset: 2px; }
 .chat-message-meta .person-org { max-width: min(26ch, 100%); }
+.chat-message-head { display: flex; align-items: start; gap: 6px; margin-block-end: 4px; }
+.chat-message-head .chat-message-meta { flex: 1; min-width: 0; align-self: center; margin: 0; }
+.chat-message-actions { display: flex; align-items: center; flex: none; gap: 2px; margin-inline-start: auto; }
+.chat-message-actions .chat-icon-button { width: 26px; min-height: 26px; padding: 4px; text-decoration: none; cursor: pointer; }
+.chat-message-actions .chat-icon-button:focus-visible { outline: 2px solid var(--or-link); outline-offset: -2px; }
+@media (pointer: coarse) {
+  .chat-message-actions .chat-icon-button { width: 44px; min-height: 44px; }
+}
 .chat-message .chat-bubble { white-space: pre-wrap; }
 .chat-message .chat-message-body { max-width: min(calc(100% - 40px), 780px); }
 .chat-resources { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }

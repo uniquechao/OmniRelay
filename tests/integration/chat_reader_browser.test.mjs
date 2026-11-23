@@ -128,6 +128,10 @@ test('群聊正文和搜索摘要显示消息本身的提及姓名', { skip: !pa
   const bubble = page.locator('[data-message="om_old"] .chat-bubble');
   await bubble.waitFor();
   assert.equal(await bubble.innerText(), message.display_text);
+  await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin});
+  const copyButton=page.locator('[data-message="om_old"]').getByRole('button',{name:'复制消息'});
+  await copyButton.click();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),message.display_text);
   if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
     await mkdir(process.env.OMNIRELAY_CHAT_EVIDENCE, {recursive:true});
     await page.locator('[data-message="om_old"]').screenshot({path: process.env.OMNIRELAY_CHAT_EVIDENCE + '/chat-paragraph-mentions.png'});
@@ -692,6 +696,16 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
     const doc = page.locator('[data-message="om_docx"]');
     await doc.getByRole('button',{name:/操作指南/u}).waitFor();
     assert.ok(!(await doc.innerText()).includes('https://'));
+    const sourceLink = doc.getByRole('link',{name:'查看关联任务',exact:true});
+    if (project) {
+      const copy = doc.getByRole('button',{name:'复制消息',exact:true});
+      assert.equal(await sourceLink.getAttribute('href'),'#/projects/p1/tasks/source/message/om_docx?chat_id=oc_group');
+      assert.equal(await sourceLink.innerText(),'');
+      assert.ok(await sourceLink.locator('svg use').count());
+      const [a,b]=await Promise.all([sourceLink.boundingBox(),copy.boundingBox()]);
+      assert.ok(a && b && a.y===b.y && a.x+a.width<=b.x && b.width>=44 && b.height>=44);
+    } else assert.equal(await sourceLink.count(),0);
+    assert.equal(await page.locator('[data-message="om_deleted"] .chat-message-actions').count(),0);
     const sheetCard = page.locator('[data-message="om_sheets"] .chat-document');
     await sheetCard.getByText('正在同步').waitFor();
     await sheetCard.getByText('费用明细').waitFor();

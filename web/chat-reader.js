@@ -432,15 +432,18 @@ export function mountChatReader(host, api, {
         card ? '' : `<span>${highlight(copy, query)}</span>`}</p>` : '';
       const attachments = resources.map((resource, index) =>
         embedded.has(index) ? '' : renderResource(resource,index)).join('');
+      const taskLink = projectId && item.state !== 'deleted' && identifier.test(item.id)
+        ? `<a class="chat-icon-button" aria-label="查看关联任务" title="查看关联任务" href="#/projects/${esc(projectId)}/tasks/source/message/${esc(item.id)}?chat_id=${esc(item.chat_id)}">${icon('chat-linked-task')}</a>` : '';
+      const imageLink = item.type === 'image' && resources.some(resource => resource.kind === 'image');
+      const actions = item.state === 'deleted' ? '' : `<div class="chat-message-actions">${taskLink}${tool('copy-message', 'chat-copy', imageLink ? '复制图片链接' : '复制消息')}</div>`;
       return separator + `<li class="chat-message" data-message="${esc(item.id)}" tabindex="-1"
         data-author="${fromBot ? 'bot' : 'person'}" ${item.id === anchor ? 'data-source-message' : ''}>
         ${fromBot ? botAvatar : personButton(person, personAvatar(name, person.person_key || name), 'chat-person-button')}
-        <div class="chat-message-body"><div class="chat-message-meta">
+        <div class="chat-message-body"><div class="chat-message-head"><div class="chat-message-meta">
         ${fromBot ? '<strong>' + esc(name) + '</strong><span class="chat-bot-label">Bot</span>' : personButton(person, esc(name), 'person-name')}
-        ${org ? `<span class="person-org" title="${esc(org)}">${esc(org)}</span>` : ''}${time(item.sent_at)}</div>
+        ${org ? `<span class="person-org" title="${esc(org)}">${esc(org)}</span>` : ''}${time(item.sent_at)}</div>${actions}</div>
         ${card || ''}${bubble}${attachments ? `<div class="chat-resources">${attachments}</div>` : ''}
         ${receipt ? `<section class="chat-receipt"><div class="chat-receipt-type">Bot 回执</div><a href="${receipt[0]}">${receipt[1]}</a></section>` : ''}
-        ${projectId && item.state !== 'deleted' && identifier.test(item.id) ? `<a class="button chat-page-action" href="#/projects/${esc(projectId)}/tasks/source/message/${esc(item.id)}?chat_id=${esc(selected.id)}">查看关联任务</a>` : ''}
         ${query ? `<button type="button" class="button chat-page-action" data-action="locate" data-message-id="${esc(item.id)}">定位消息</button>` : ''}
         </div></li>`;
     }).join('');
@@ -921,6 +924,22 @@ export function mountChatReader(host, api, {
   }
 
   const actions = {
+    async 'copy-message'(trigger) {
+      const row = trigger.closest('[data-message]');
+      const item = messages.find(message => message.id === row?.dataset.message);
+      if (!item || item.state === 'deleted') return;
+      const resources = messageResources(item);
+      const image = item.type === 'image' && resources.find(resource => resource.kind === 'image');
+      let text = row.querySelector('.chat-card')?.innerText || messageBody(item);
+      if (image && api.resourceURL) text = new URL(api.resourceURL(item.chat_id, item.id, image), location.origin).href;
+      else if (['file', 'media', 'video', 'audio'].includes(item.type)) text = resources[0]?.name || text;
+      try {
+        await navigator.clipboard.writeText(text);
+        if (!signal.aborted) toast('success', image ? '已复制图片链接' : '已复制消息');
+      } catch {
+        if (!signal.aborted) toast('error', '复制失败，请检查浏览器的剪贴板权限。');
+      }
+    },
     preview(trigger) {
       const id = trigger.closest('[data-message]')?.dataset.message;
       const item = messages.find(row => row.id === id);
