@@ -378,6 +378,48 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
   }
 });
 
+test('工作台与 Bot 共用居中宽度和左上对齐线', { skip: !moduleName }, async (t) => {
+  const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
+  t.after(() => browser.close());
+  for (const width of [2560, 1700, 390]) {
+    const page = await browser.newPage({ viewport: { width, height: width === 390 ? 844 : 1080 }, hasTouch: width === 390 });
+    await fixture(page);
+    await page.goto(origin + '/#/projects/p-21/overview');
+    await page.getByText('验收节点', { exact: true }).first().waitFor();
+    const bounds = (selector) => page.locator(selector).boundingBox();
+    const workspace = await bounds('.workspace');
+    const frame = await bounds('#page');
+    const heading = await bounds('#page > .head');
+    const tabs = await bounds('#page > .tabs');
+    const expectedWidth = Math.min(1753, workspace.width);
+    assert.ok(Math.abs(frame.width - expectedWidth) <= 1);
+    assert.ok(Math.abs(frame.x - workspace.x - (workspace.width - expectedWidth) / 2) <= 1);
+    assert.ok(Math.abs(heading.x - tabs.x) <= 1);
+    assert.ok(Math.abs(heading.x - (await bounds('#breadcrumb')).x) <= 1);
+    assert.ok(heading.y >= frame.y && heading.y - frame.y <= 14);
+    const proof = process.env.OMNIRELAY_PM_EVIDENCE;
+    if (proof) await page.screenshot({path: proof + '/overview-' + width + '.png'});
+
+    await page.getByRole('tab', { name: 'Bot', exact: true }).click();
+    await page.getByRole('button', { name: '查看进行中任务' }).waitFor();
+    assert.deepEqual(await bounds('#page'), frame);
+    assert.deepEqual(await bounds('#page > .head'), heading);
+    assert.deepEqual(await bounds('#page > .tabs'), tabs);
+    const chat = await bounds('.dsh-project-chat');
+    assert.ok(Math.abs(chat.x - tabs.x) <= 1 && Math.abs(chat.width - tabs.width) <= 1);
+    assert.ok(Math.abs(chat.y + chat.height - (frame.y + frame.height)) <= 1);
+    const body = await bounds('.dsh-project-body');
+    const hero = await bounds('.dsh-hero');
+    assert.ok(hero.y >= body.y && hero.y - body.y <= 24);
+    assert.ok(hero.x >= body.x && hero.x - body.x <= 22);
+    const card = await bounds('[data-composer-card]');
+    assert.ok(card.x >= chat.x && card.x + card.width <= chat.x + chat.width + 1);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (proof) await page.screenshot({path: proof + '/bot-' + width + '.png'});
+    await page.close();
+  }
+});
+
 test('项目导航、来源深链、返回恢复与权限状态', { skip: !moduleName }, async (t) => {
   const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -516,8 +558,9 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       assert.ok(tab.x >= 0 && tab.x + tab.width <= width);
       assert.ok(await send.isDisabled());
       const chatBox = await page.locator('.dsh-project-chat').boundingBox();
-      const workBox = await page.locator('.workspace').boundingBox();
-      assert.ok(Math.abs(chatBox.x - workBox.x) < 2 && Math.abs(chatBox.width - workBox.width) < 2);
+      const workBox = await page.locator('#page').boundingBox();
+      const tabsBox = await page.locator('#page > .tabs').boundingBox();
+      assert.ok(Math.abs(chatBox.x - tabsBox.x) < 2 && Math.abs(chatBox.width - tabsBox.width) < 2);
       assert.ok(Math.abs(chatBox.y + chatBox.height - (workBox.y + workBox.height)) < 2);
       const proof = process.env.OMNIRELAY_PM_EVIDENCE;
       if (proof) await page.screenshot({path: proof + '/empty-' + width + '-' + theme + '.png'});
