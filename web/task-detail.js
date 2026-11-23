@@ -1,3 +1,4 @@
+import {bindTaskMarkdown,taskRequestBody} from './task-markdown.js';
 import {userChoice, userSearchText, navigateUserChoices} from './user-picker.js';
 import { memberSearch } from './task-pinyin.js';
 import { mountTaskActivity } from './task-activity.js';
@@ -199,17 +200,29 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       '</div></div>'
     );
   }
+  const files=new Map();
+  let markdownBindings=[];
+  const releaseMarkdown=()=>{for(const dispose of markdownBindings)dispose();markdownBindings=[];};
+  signal.addEventListener('abort',releaseMarkdown,{once:true});
+  function markdownField(name,label) {
+    const attrs=enabled(name)?'':'disabled';
+    return `<fieldset class="task-md" data-field="${name}" data-md-label="${label}"><legend>${label}</legend>
+      <div class="task-md-actions" ${attrs?'hidden':''}><button type="button" data-md-toggle>编辑</button><button type="button" data-md-attach aria-label="添加附件到${label}">添加附件</button><input type="file" multiple hidden></div>
+      <div data-md-preview tabindex="0" aria-label="${label}预览"></div>
+      <textarea name="${name}" aria-label="${labels[name]}" maxlength="${name==='description'?10000:4000}" ${attrs} rows="5" hidden>${esc(draft[name]||'')}</textarea>
+      <small data-md-status role="status"></small></fieldset>`;
+  }
   function render() {
+    releaseMarkdown();
     q('.task-path-title').textContent = task.title;
     q('.task-edit-copy').innerHTML =
       field('title', 'text') +
-      field('description') +
+      markdownField('description','任务详情') +
       field('blocked_reason') +
       field('completion_note') +
       field('change_reason') +
-      '<details class="task-edit-extra"><summary>验收条件</summary>' +
-      field('acceptance') +
-      '</details>';
+      markdownField('acceptance','验收条件');
+    markdownBindings=Array.from(el.querySelectorAll('.task-md'),node=>bindTaskMarkdown(node,route.id,files));
     const states = Object.entries(statuses).filter(
       ([s]) => (actions.assign ?? actions.edit_fields) || s !== 'cancelled' || s === task.status,
     );
@@ -447,7 +460,8 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     sync();
     q('.task-edit-grid').inert = true;
     try {
-      task = await request(creating ? root + '/tasks' : url, { method: creating ? 'POST' : 'PUT', body: { ...body, request_key: pendingKey }, signal });
+      task = await request(creating ? root + '/tasks' : url, { method: creating ? 'POST' : 'PUT', body: taskRequestBody({ ...body, request_key: pendingKey },files), signal });
+      files.clear();
       baseline = fields(task);
       draft = structuredClone(baseline);
       pendingBody = null;

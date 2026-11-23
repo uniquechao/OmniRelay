@@ -225,3 +225,17 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .task-detail [data-results] .user-choice { display:flex; }
 
 .document-person { color:var(--or-link); white-space:pre-wrap; }
+
+.task-md {display:block;min-inline-size:0;margin:10px 0;padding:0 0 10px;border:0;color:var(--or-text)}
+.task-md legend {padding:0;font-weight:650;font-size:.875rem}
+.task-md .task-md-actions {display:flex;justify-content:flex-end;gap:8px}
+.task-md [hidden] {display:none!important}
+.task-md .task-md-actions button {background:transparent;border:0;color:var(--or-primary);font:inherit;font-size:.8125rem;cursor:pointer;padding:4px 6px}
+.task-md [data-md-preview] {min-height:36px;line-height:1.6;overflow-wrap:anywhere}
+.task-md [data-md-preview] > :first-child {margin-top:0}
+.task-md [data-md-preview] > :last-child {margin-bottom:0}
+.task-md [data-md-preview] img {max-width:100%;max-height:28rem;object-fit:contain}
+.task-md [data-md-preview] pre {overflow:auto;background:var(--or-surface-muted);padding:8px}
+.task-md [data-md-preview] a {color:var(--or-primary);text-decoration:underline}
+.task-md textarea {width:100%;box-sizing:border-box;font:inherit;resize:vertical}
+.task-md [data-md-status] {color:var(--or-danger)}

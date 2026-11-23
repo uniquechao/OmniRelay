@@ -1,3 +1,4 @@
+import {loadContentScript as script} from '../../../../web/content-script.js';
 import '../../../../design/prototype/vendor/quill-snow-2.0.3.css';
 import '../../../../design/prototype/omni-relay-content.css';
 import {useId, useState} from 'react';
@@ -17,20 +18,6 @@ declare global {
       mountMarkdown(host:Element,source:string):void;
     };
   }
-}
-const scripts=new Map<string,Promise<void>>();
-function script(url:string) {
-  const existing=scripts.get(url);
-  if(existing) return existing;
-  const loading=new Promise<void>((resolve,reject)=>{
-    const tag=document.createElement('script');
-    tag.src=url;
-    tag.onload=()=>resolve();
-    tag.onerror=()=>{scripts.delete(url);tag.remove();reject(new Error('内容组件加载失败。'));};
-    document.head.append(tag);
-  });
-  scripts.set(url,loading);
-  return loading;
 }
 async function load() {
   await Promise.all([script(quill),script(markdown),script(highlight)]);

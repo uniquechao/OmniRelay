@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -180,4 +181,57 @@ func (s *Service) discardAbandoned(ctx context.Context) error {
 		_, err = tx.Exec(limited, `DELETE FROM feishu_sync_objects WHERE tenant_key=$1 AND object_key=$2`, s.tenant, key)
 		return err
 	})
+}
+
+// SyncedMessageVideo opens only the current original of the live-validated message share.
+func (s *Service) SyncedMessageVideo(ctx context.Context, ref Ref) (io.ReadSeekCloser, error) {
+	if s.objects == nil {
+		return nil, nil
+	}
+	var key string
+	var size int64
+	err := s.pool.QueryRow(ctx, `SELECT v.object_key,v.byte_size FROM feishu_file_shares sh
+        JOIN feishu_files f ON (f.id,f.tenant_key)=(sh.file_id,sh.tenant_key)
+        JOIN feishu_file_versions v ON (v.file_id,v.id)=(sh.file_id,sh.version_id)
+        WHERE sh.tenant_key=$1 AND sh.app_id=$2 AND sh.message_id=$3 AND f.kind=$4 AND f.token=$5
+          AND sh.present AND sh.state='complete' AND v.object_key IS NOT NULL`,
+		s.tenant, s.app, ref.MessageID, ref.Kind, ref.Token).Scan(&key, &size)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.objects.Open(ctx, key, size)
+}
+
+// Unsynced uploads use private, bounded scratch space so seeking does not buffer the movie in Go memory.
+func SeekableMessageVideo(snap Snapshot) (io.ReadSeekCloser, error) {
+	var src io.Reader = bytes.NewReader(snap.Content)
+	if snap.Stream != nil {
+		defer snap.Stream.Close()
+		src = snap.Stream
+	}
+	f, err := os.CreateTemp("", "omnirelay-chat-video-*")
+	if err != nil {
+		return nil, err
+	}
+	if err = os.Remove(f.Name()); err != nil {
+		f.Close()
+		return nil, err
+	}
+	size, err := io.Copy(f, io.LimitReader(src, originalLimit+1))
+	if err != nil {
+		f.Close()
+		return nil, ErrUnavailable
+	}
+	if size > originalLimit {
+		f.Close()
+		return nil, ErrPartial
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }

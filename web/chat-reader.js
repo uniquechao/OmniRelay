@@ -426,7 +426,7 @@ export function mountChatReader(host, api, {
       const content = messageBody(item);
       const copy = documentCopy(content, resources);
       const standalone = resources.some(resource => (item.type === 'image' && resource.kind === 'image') ||
-        (item.type === 'file' && resource.kind === 'attachment'));
+        (['media','video'].includes(item.type) && resource.kind === 'video') || (item.type === 'file' && resource.kind === 'attachment'));
       const icons = resources.length ? '' : (item.file_formats ?? []).map(format => fileIcon(format.key, format.label)).join('');
       const bubble = !standalone && ((!card && copy) || icons) ? `<p class="chat-bubble${icons ? ' chat-file' : ''}">${icons}${
         card ? '' : `<span>${highlight(copy, query)}</span>`}</p>` : '';
@@ -518,7 +518,7 @@ export function mountChatReader(host, api, {
     const resource = messageResources(item)[index];
     if (!resource || !api.preview || (resource.url && resource.state !== 'ready')) return;
     const dialog = openMessagePreview({
-      resource, signal,
+      resource, signal, mediaURL: api.resourceURL(item.chat_id, item.id, resource),
       restoreFocus: () => trigger?.isConnected ? trigger : get('[data-message="' + CSS.escape(item.id) + '"] [data-resource="' + index + '"]') ?? title,
       read: (params, active) => api.preview(item.chat_id, item.id, resource, params, active),
       onClose() {

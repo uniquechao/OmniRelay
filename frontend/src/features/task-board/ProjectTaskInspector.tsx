@@ -9,6 +9,7 @@ import { NativeSelect } from './controls'
 import { Columns3, ChevronRight, PanelRightClose, Send } from 'lucide-react'
 import { TaskParticipantsField } from './TaskParticipantsField'
 import { TaskOwnerField } from './TaskOwnerField'
+import {TaskMarkdownField} from './TaskMarkdownField'
 import { TaskDateField } from './TaskDateField'
 import { readTaskEditValues, taskEditSnapshot, taskEditValues } from './task-edit-values'
 import { TaskLabelField } from './TaskLabelField'
@@ -60,6 +61,7 @@ export function ProjectTaskInspector({
   initialColumnId?: string
   onCreated?: (task: ProjectTask) => void
 }) {
+  const uploads=useRef(new Map<string,File>())
   const isNew = mode === 'create'
   const timezone = project.business_timezone || 'UTC'
   const stateRevision = useProjectRevision('tasks')
@@ -365,9 +367,10 @@ export function ProjectTaskInspector({
       setPending(true)
       setError('')
       const saved = isNew
-        ? await createProjectTask(project.id, { ...fields, column_id: command.column_id, blocked_reason: command.blocked_reason }, key('create', JSON.stringify(['create', fields, command.column_id, command.blocked_reason])))
-        : await updateProjectTask(project.id, task, { ...command, request_key: key('save', JSON.stringify(['save', task.version, command])) })
+        ? await createProjectTask(project.id, { ...fields, column_id: command.column_id, blocked_reason: command.blocked_reason }, key('create', JSON.stringify(['create', fields, command.column_id, command.blocked_reason])),uploads.current)
+        : await updateProjectTask(project.id, task, { ...command, request_key: key('save', JSON.stringify(['save', task.version, command])) },uploads.current)
       if (active.current && !revoked.current) {
+        uploads.current.clear()
         setTask(saved)
         setDraftValues(taskEditValues(saved, project.business_timezone)); setOwnerSearch('')
         setSelectedOwner(saved.owner_member_id); setSelectedTags(saved.tag_ids ?? []); setDraftStatus(saved.status); setSelectedColumn(saved.status === 'cancelled' ? 'cancelled' : saved.column_id ?? saved.status)
@@ -608,11 +611,11 @@ export function ProjectTaskInspector({
                     <section className="task-inspector-copy">
                       <h2 className="sr-only">{isNew ? '新建任务' : task.title}</h2>
                       <label><span className="sr-only">任务标题</span><Input aria-label="任务标题" name="title" defaultValue={task.title} placeholder="输入任务名称" required maxLength={200} readOnly={(!canManage && !own && !isNew) || pending} /></label>
-                      <label><span className="sr-only">任务正文</span><Textarea aria-label="任务正文" name="description" defaultValue={task.description} placeholder="添加任务说明…" rows={2} maxLength={10000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
+                      <TaskMarkdownField projectId={project.id} name="description" label="任务详情" value={task.description} readOnly={!canManage && !own && !isNew} pending={pending} files={uploads.current} onInput={description => setDraftValues(v => ({...v,description}))} />
                       <label hidden={draftStatus !== 'blocked'} className="task-blocker-field">受阻原因<Textarea aria-label="受阻原因" name="blocked_reason" disabled={draftStatus !== 'blocked'} required={draftStatus === 'blocked'} defaultValue={task.blocked_reason} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
                       {!isNew && <label hidden={draftStatus !== 'done' && !task.completion_note}>完成结果<Textarea aria-label="完成结果" name="completion_note" defaultValue={task.completion_note} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>}
                       {requiresChangeReason && canManage && <label>{draftStatus === 'cancelled' ? '取消原因（必填）' : '变更原因（必填）'}<Textarea aria-label={draftStatus === 'cancelled' ? '取消原因' : '变更原因'} aria-required="true" name="change_reason" maxLength={4000} rows={2} readOnly={pending} onChange={() => {if (error === reasonPrompt) setError('')}} /></label>}
-                      <details className="task-inspector-extra"><summary>验收条件</summary><label>验收条件<Textarea aria-label="验收条件" name="acceptance" defaultValue={task.acceptance} maxLength={4000} rows={2} readOnly={!canManage || pending} /></label></details>
+                      <TaskMarkdownField projectId={project.id} name="acceptance" label="验收条件" value={task.acceptance} readOnly={!canManage} pending={pending} files={uploads.current} onInput={acceptance => setDraftValues(v => ({...v,acceptance}))} />
                     </section>
                     <aside className="task-inspector-sidebar" aria-label="任务属性">
                       <section className="task-side-section"><h3>属性</h3>

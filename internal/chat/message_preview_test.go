@@ -51,6 +51,9 @@ func (f *previewFixture) ReadDocument(_ context.Context, ref drive.Ref) (drive.S
 }
 func (f *previewFixture) ReadFile(_ context.Context, ref drive.Ref, probe bool) (drive.Snapshot, error) {
 	f.reads++
+	if ref.Token == "clip" {
+		return drive.Snapshot{Content: []byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")}, nil
+	}
 	if ref.Kind == "image" {
 		if ref.Token == "active_content" {
 			return drive.Snapshot{Content: []byte(`<svg onload="alert(1)"></svg>`)}, nil
@@ -75,6 +78,8 @@ func TestMessagePreviewAuthorization(t *testing.T) {
 		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: chatID, Kind: orchestrator.ChatGroup, Message: &msg})
 	}
 	archive("oc_preview", "om_image", "image", `{"image_key":"img_demo"}`, false)
+	archive("oc_preview", "om_video", "media", `{"file_key":"clip","file_name":"录屏.mp4"}`, false)
+	archive("oc_preview", "om_mp4", "file", `{"file_key":"clip","file_name":"录屏.MP4"}`, false)
 	archive("oc_preview", "om_active", "image", `{"image_key":"active_content"}`, false)
 	archive("oc_preview", "om_file", "file", `{"file_key":"file_demo","file_name":"说明.txt"}`, false)
 	archive("oc_preview", "om_unsupported", "file", `{"file_key":"file_unsupported","file_name":"说明.exe"}`, false)
@@ -111,6 +116,15 @@ func TestMessagePreviewAuthorization(t *testing.T) {
 	const wiki = "/oc_preview/messages/om_wiki/resources/wiki/node_demo?page=2"
 	for _, prefix := range []string{global, project} {
 		get(prefix+"/oc_preview/messages", 200, `"kind":"image","key":"img_demo"`)
+		for _, path := range []string{"/om_video/resources/video/clip", "/om_mp4/resources/attachment/clip"} {
+			r := httptest.NewRequest("GET", prefix+"/oc_preview/messages"+path, nil)
+			r.Header.Set("Range", "bytes=4-7")
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, r)
+			if response.Code != 206 || response.Body.String() != "ftyp" || response.Header().Get("Content-Type") != "video/mp4" {
+				t.Fatal(response.Code, response.Body.String(), response.Header())
+			}
+		}
 		w := get(prefix+image, 200, "PNG")
 		if w.Header().Get("Content-Type") != "image/png" || !strings.Contains(w.Header().Get("Cache-Control"), "no-store") {
 			t.Fatal(w.Header())

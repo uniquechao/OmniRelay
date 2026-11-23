@@ -72,6 +72,14 @@ func MessageReferences(typ, body string) []Ref {
 			}
 		case map[string]any:
 			tag, _ := node["tag"].(string)
+			if (depth == 0 && (typ == "media" || typ == "video")) || tag == "media" || tag == "video" {
+				token, _ := node["file_key"].(string)
+				name, _ := node["file_name"].(string)
+				if name == "" {
+					name = "视频"
+				}
+				add("video", token, name, "")
+			}
 			if (depth == 0 && typ == "file") || tag == "file" {
 				token, _ := node["file_key"].(string)
 				name, _ := node["file_name"].(string)

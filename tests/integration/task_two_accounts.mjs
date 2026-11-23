@@ -65,6 +65,7 @@ try {
   await member('editor');
   await b.reload();
   await field(a, 'title').fill('两账号核验');
+  await b.getByRole('button',{name:'编辑任务详情'}).click();
   await field(b, 'description').fill('第二人保存的正文');
   await button(b, '保存任务').click();
   await saved(b);
@@ -76,7 +77,7 @@ try {
   await field(a, 'milestone_id').selectOption(node.id);
   await field(a, 'start_at').fill('2026-11-19');
   await field(a, 'due_at').fill('2026-11-23');
-  await a.locator('summary').filter({hasText:'验收条件'}).click();
+  await a.getByRole('button',{name:'编辑验收条件'}).click();
   await field(a, 'acceptance').fill('以同一任务为准');
   for (const [key, term, id] of [['owner_member_id','项目负责人','u'], ['participant_ids','项目成员','v'], ['tag_ids','联验','check']]) {
     if (key === 'tag_ids') await a.getByRole('button',{name:'添加标签',exact:true}).click();

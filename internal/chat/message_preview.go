@@ -3,7 +3,9 @@ package chat
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/drive"
@@ -98,6 +100,10 @@ func (s *Service) getMessagePreview(w http.ResponseWriter, r *http.Request, p id
 		messagePreviewError(w, err)
 		return
 	}
+	if kind == "video" || kind == "attachment" && drive.Format(kind, ref.Name).Key == "video" {
+		s.writeMessageVideo(w, r, p, chat, ref)
+		return
+	}
 	if kind == "image" {
 		s.writeMessageImage(w, r, p, chat, ref)
 		return
@@ -171,4 +177,60 @@ func (s *Service) writeMessageImage(w http.ResponseWriter, r *http.Request, p id
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
 	w.Header().Set("Content-Type", mime)
 	_, _ = w.Write(data)
+}
+
+func (s *Service) writeMessageVideo(w http.ResponseWriter, r *http.Request, p identity.Principal, chat conversation, ref drive.Ref) {
+	ctx := r.Context()
+	var media io.ReadSeekCloser
+	var err error
+	if s.files != nil {
+		media, err = s.files.SyncedMessageVideo(ctx, ref)
+	}
+	if err == nil && media == nil {
+		var snap drive.Snapshot
+		snap, err = s.preview.ReadFile(ctx, ref, false)
+		if err == nil {
+			media, err = drive.SeekableMessageVideo(snap)
+		}
+	}
+	if err != nil {
+		messagePreviewError(w, err)
+		return
+	}
+	defer media.Close()
+	var header [512]byte
+	n, err := io.ReadFull(media, header[:])
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		messagePreviewError(w, drive.ErrUnavailable)
+		return
+	}
+	mime := http.DetectContentType(header[:n])
+	if mime != "video/mp4" && mime != "video/webm" {
+		if n < 12 || string(header[4:12]) != "ftypqt  " {
+			messagePreviewError(w, drive.ErrPreviewUnsupported)
+			return
+		}
+		mime = "video/quicktime"
+	}
+	if _, err = media.Seek(0, io.SeekStart); err != nil {
+		messagePreviewError(w, drive.ErrUnavailable)
+		return
+	}
+	if _, err = s.archivedPreviewResource(ctx, p, chat, ref.MessageID, ref.Kind, ref.Token); err != nil {
+		messagePreviewError(w, err)
+		return
+	}
+	if r.PathValue("projectID") == "" {
+		if _, err = s.authorize(ctx, p, chat.ID); err != nil {
+			sourceError(w, err)
+			return
+		}
+	}
+	if !validateProjectRead(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Content-Type", mime)
+	http.ServeContent(w, r, ref.Name, time.Time{}, media)
 }

@@ -76,6 +76,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				failure(w, err)
 				return
 			}
+			if _, sent := value.(streamedResponse); sent {
+				return
+			}
 			if id != "" && policy == identity.ValidateSession {
 				if err := s.require(ctx, actor, action, id); err != nil {
 					failure(w, err)
@@ -106,6 +109,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		})
 		return document, err
 	})
+	handle("GET "+project+"/task-attachments/{attachmentID}", "project.read", s.taskAttachment)
 	handle("GET "+project+"/member-candidates", "project.settings", s.memberCandidates)
 	handle("PUT "+project+"/members/{accountID}", "project.settings", s.saveMemberProfile)
 	handle("DELETE "+project+"/tasks/{taskID}", "project.assign", s.deleteTask)

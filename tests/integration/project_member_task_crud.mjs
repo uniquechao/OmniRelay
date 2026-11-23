@@ -56,12 +56,12 @@ try{
  await dialog.getByRole('button',{name:'保存修改',exact:true}).click();await page.getByRole('cell',{name:'最终验收职责',exact:true}).waitFor();
  await mkdir('.runtime/evidence',{recursive:true});await page.screenshot({path:'.runtime/evidence/members-1440-light.png'});
  await page.goto(origin+'/#/projects/h3/tasks/new');
- await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
+ await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByRole('button',{name:'编辑任务详情'}).click();await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
  // Owner and participants select the same system identities, within project membership.
  await page.getByLabel('主负责人',{exact:true}).fill('second');
  await page.locator('[data-picker=owner_member_id] [data-pick=second]').waitFor();
  await page.getByLabel('主负责人',{exact:true}).press('ArrowDown');await page.keyboard.press('Enter');
- await page.locator('summary').filter({hasText:'验收条件'}).click();
+ await page.getByRole('button',{name:'编辑验收条件'}).click();
  await page.getByLabel('参与人',{exact:true}).fill('manager');
  await page.locator('[data-picker=participant_ids] [data-pick=manager]').click();
 

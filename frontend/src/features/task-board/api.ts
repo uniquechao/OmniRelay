@@ -1,4 +1,5 @@
 import {client, ApiError} from '../../../../web/session-client.js'
+import {taskRequestBody} from '../../../../web/task-markdown.js'
 export {ApiError}
 const json = <T,>(path: string, options: {method?: string; body?: unknown; signal?: AbortSignal} = {}): Promise<T> => client.bind()(path,options) as Promise<T>
 const body = (body: unknown) => ({method:'POST',body})
@@ -9,8 +10,8 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelle
 export interface TaskFields { start_at?: string | null; tag_ids?: string[]; title: string; description: string; owner_member_id: string | null; participant_ids: string[]; priority: 'P0' | 'P1' | 'P2' | 'P3' | null; due_at: string | null; acceptance: string }
 export interface ProjectTask extends TaskFields { relation_names?:Record<string,string>; interaction_participants?: ProjectMember[]; created_by_name?:string; updated_by_name?:string; milestone_id?:string | null; display_number?: number; column_id?: string; rank?: number; id: string; project_id: string; status: TaskStatus; blocked_from: TaskStatus | null; blocked_reason: string; completion_note: string; version: number; created_by: string; updated_by: string; created_at: string; updated_at: string; overdue: boolean }
 export function getProjectTasks(id: string, params: URLSearchParams, signal?: AbortSignal) { return json<{ items: ProjectTask[]; next_cursor: string | null }>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/query?${params}`, { signal }) }
-export function createProjectTask(id: string, fields: TaskFields & { column_id?: string; blocked_reason?: string }, requestKey: string) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks`, body({ ...fields, request_key: requestKey })) }
-export function updateProjectTask(id: string, task: ProjectTask, fields: TaskFields & { status: TaskStatus; blocked_reason: string; completion_note: string; change_reason: string; request_key?: string }) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task.id)}`, put({ ...fields, milestone_id: task.milestone_id, expected_task_version: task.version })) }
+export function createProjectTask(id: string, fields: TaskFields & { column_id?: string; blocked_reason?: string }, requestKey: string, files?:Map<string,File>) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks`, body(taskRequestBody({ ...fields, request_key: requestKey },files))) }
+export function updateProjectTask(id: string, task: ProjectTask, fields: TaskFields & { status: TaskStatus; blocked_reason: string; completion_note: string; change_reason: string; request_key?: string }, files?:Map<string,File>) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task.id)}`, put(taskRequestBody({ ...fields, milestone_id: task.milestone_id, expected_task_version: task.version },files))) }
 export function deleteProjectTask(projectId: string, taskId: string, version: number, reason: string, requestKey: string) {
   return json(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, {
     method: 'DELETE', body: {expected_version: version, change_reason: reason, request_key: requestKey},

@@ -198,6 +198,9 @@ func (s *Service) projectMessages(ctx context.Context, p identity.Principal, sco
 		}
 		for _, ref := range drive.MessageReferences(item.Type, item.Body) {
 			resource := messageResource{Kind: ref.Kind, Key: ref.Token, Name: ref.Name, URL: ref.URL}
+			if ref.Kind == "attachment" && drive.Format(ref.Kind, ref.Name).Key == "video" {
+				resource.ObjectKind = "video"
+			}
 			if ref.URL != "" {
 				resource.Name = ""
 				resource.State = "pending"

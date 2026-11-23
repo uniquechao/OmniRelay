@@ -15,6 +15,7 @@ import (
 )
 
 type saveTask struct {
+	uploads         []taskUpload
 	AddTags         []string `json:"add_tags,omitempty"`
 	RemoveTags      []string `json:"remove_tags,omitempty"`
 	ExpectedVersion *int64   `json:"expected_version,omitempty"`
@@ -101,7 +102,7 @@ func (k taskScope) relationNames(ctx context.Context, tx pgx.Tx, f taskFields, p
 
 func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 	var in saveTask
-	if !decodeLimit(w, r, &in, 96<<10) {
+	if !decodeTask(w, r, &in) {
 		return nil, errInput
 	}
 	return s.saveTaskInput(r.Context(), scope(a, r.PathValue("projectID")), r.PathValue("taskID"), a, in)
@@ -194,7 +195,11 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 				}
 			}
 		}
-		result, err = k.command(ctx, tx, a, in.Key, []any{"save", id, in}, func() (any, error) {
+		payload := []any{"save", id, in}
+		if len(in.uploads) > 0 {
+			payload = append(payload, in.uploads)
+		}
+		result, err = k.command(ctx, tx, a, in.Key, payload, func() (any, error) {
 			if incremental {
 				var e error
 				in.Tags, e = deltaTags(old.Tags, in.AddTags, in.RemoveTags)
@@ -284,6 +289,9 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 				_, err = tx.Exec(ctx, `UPDATE project_tasks SET title=$4,description=$5,owner_member_id=$6,milestone_id=$7,priority=$8,due_at=$9,tag_ids=$10,status=$11,column_id=$12,blocked_reason=$13,completion_note=$14,change_reason=$15,acceptance=$16,participant_ids=$17,start_at=$18,relation_names=relation_names||$19::jsonb,version=version+1,position=CASE WHEN column_id=$12 THEN position ELSE (SELECT COALESCE(max(position),0)+1024 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12) END WHERE "+projectWhere+" AND id=$20", append(args, id)...)
 			}
 			if err != nil {
+				return nil, err
+			}
+			if err = k.storeTaskUploads(ctx, tx, id, in); err != nil {
 				return nil, err
 			}
 			if err = k.bump(ctx, tx); err != nil {

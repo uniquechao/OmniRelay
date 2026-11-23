@@ -26,7 +26,7 @@ try{
  assert.deepEqual(membersFound.items.map(p=>p.display_name).sort(), ['王乙','王甲'].sort());
  await api('PUT','/task-tags/accept',{name:'验收'});
  const samples=[['接口联调准备','todo','P2'],['对齐成员目录','in_progress','P1'],['核对来源授权','blocked','P0'],['确认任务规格','done',null]];
- for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'核对项目成员、状态和验收条件。'});
+ for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'**核对项目成员**',acceptance:'- 核对交付物'});
  await page.goto(origin+'/#/projects/board-test/tasks/list?q=T-001&owner_member_id=manager&milestone_unassigned=true');
  await page.locator('.task-list-layout').waitFor();
  assert.equal(await page.getByRole('button',{name:'列表',exact:true}).getAttribute('aria-pressed'),'true');
@@ -60,6 +60,19 @@ try{
  await page.getByLabel('任务标题',{exact:true}).waitFor();
  await page.screenshot({path:'.runtime/board-evidence/inspector-1440.png'});
  const panel=page.locator('.task-inspector-panel');
+
+ const description=panel.locator('[data-md-label="任务详情"]'), acceptance=panel.locator('[data-md-label="验收条件"]');
+ await description.locator('[data-md-preview] strong').waitFor();
+ await acceptance.locator('[data-md-preview] li').waitFor();
+ async function paste(field,name,type,bytes) {
+   await field.locator('[data-md-preview]').evaluate((el,[name,type,bytes])=>{
+     const data=new DataTransfer();data.items.add(new File([Uint8Array.from(bytes)],name,{type}));
+     el.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));
+   },[name,type,bytes]);
+ }
+ await paste(description,'示意图.png','image/png',[...Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aT+wAAAAASUVORK5CYII=','base64')]);
+ await paste(acceptance,'验收.txt','text/plain',[65,66,67]);
+ await description.locator('img[alt="示意图.png"]').waitFor();
  const bounds=await panel.boundingBox();assert.equal(Math.round(bounds.y),0);assert.equal(Math.round(bounds.height),900);
  await page.getByRole('button',{name:/^参与人，/}).click();
  await page.getByLabel('搜索参与人').fill('王');
@@ -85,6 +98,15 @@ try{
  await page.getByRole('button',{name:'保存任务',exact:true}).click();
  await page.getByRole('button',{name:'T-001 接口联调已排期'}).waitFor();
  const persistedTask=await api('GET','/tasks/'+(await api('GET','/board?limit=1')).columns[0].items[0].id);
+ const attached=source=>source.match(/\]\(([^)]+)\)/)[1];
+ const picture=await context.request.get(origin+attached(persistedTask.description));
+ assert.equal(picture.status(),200);assert.equal(picture.headers()['content-type'],'image/png');
+ const file=await context.request.get(origin+attached(persistedTask.acceptance));
+ assert.equal(file.status(),200);assert.equal(await file.text(),'ABC');
+ assert.match(file.headers()['content-disposition'],/^attachment/);
+ const guest=await browser.newContext({ignoreHTTPSErrors:true});
+ assert.equal((await guest.request.get(origin+attached(persistedTask.description))).status(),401);
+ await guest.close();
  assert.ok(persistedTask.participant_ids.includes('second'));
  assert.ok(persistedTask.participant_ids.includes('feishu:ou_wang') && persistedTask.participant_ids.includes('feishu:ou_wang2'));
  assert.equal(persistedTask.relation_names['feishu:ou_wang'],'王甲');
@@ -257,4 +279,19 @@ try{
 } catch(error){
  console.error(page.url(),await page.locator('body').innerText(),errors);
  throw error;
+ // New task, lost-response replay, stale edit and deletion use the same attachment transaction.
+ const aid=crypto.randomUUID(), aurl=root+'/task-attachments/'+aid;
+ const command={request_key:crypto.randomUUID(),title:'附件事务',description:'[样本]('+aurl+')'};
+ const sendUpload=(url,method,fields,id)=>context.request.fetch(origin+url,{method,headers,multipart:{
+   fields:JSON.stringify(fields),[id]:{name:'样本.txt',mimeType:'text/plain',buffer:Buffer.from('attached')}
+ }});
+ const response=await sendUpload(root+'/tasks','POST',command,aid);
+ assert.equal(response.status(),200);const withFile=await response.json();
+ const replay=await sendUpload(root+'/tasks','POST',command,aid);
+ assert.equal(replay.status(),200);assert.equal((await replay.json()).id,withFile.id);
+ const other=crypto.randomUUID(), otherURL=root+'/task-attachments/'+other;
+ const stale=await sendUpload(root+'/tasks/'+withFile.id,'PUT',{title:command.title,description:'[其他]('+otherURL+')',expected_task_version:withFile.version+1},other);
+ assert.equal(stale.status(),409);assert.ok(!(await context.request.get(origin+otherURL)).ok());
+ await api('DELETE','/tasks/'+withFile.id,{expected_version:withFile.version,change_reason:'完成附件验收',request_key:crypto.randomUUID()});
+ assert.ok(!(await context.request.get(origin+aurl)).ok());
 } finally {await browser.close()}

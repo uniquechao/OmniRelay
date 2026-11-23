@@ -133,6 +133,35 @@ test('群聊正文和搜索摘要显示消息本身的提及姓名', { skip: !pa
   assert.equal(await snippet.locator('mark').textContent(), '林一');
 });
 
+test('聊天视频和文件形式的视频可播放，关闭后停止播放', {skip:!packageName},async t=>{
+  const browser=await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  await mountFixture(page);
+  const movie={...oldMessage,id:'om_movie',type:'media',body:'{"file_key":"clip","file_name":"录屏.mp4"}',resources:[{kind:'video',key:'clip',name:'录屏.mp4'}]};
+  const upload={...movie,id:'om_upload',type:'file',resources:[{kind:'attachment',key:'clip',name:'附件.mp4',object_kind:'video'}]};
+  await page.route(origin+base+'/oc_group/messages',route=>route.fulfill({json:{items:[movie,upload]}}));
+  await page.goto(origin+'/#/feishu/bot-chats/oc_group');
+  const bytes=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;
+    const ctx=canvas.getContext('2d');const stream=canvas.captureStream(10);
+    const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});
+    const parts=[];recorder.ondataavailable=e=>parts.push(e.data);
+    const stopped=new Promise(resolve=>recorder.onstop=resolve);
+    recorder.start();let tick=0;const timer=setInterval(()=>{ctx.fillStyle=tick++%2?'blue':'red';ctx.fillRect(0,0,32,32);},75);
+    await new Promise(resolve=>setTimeout(resolve,750));clearInterval(timer);recorder.stop();await stopped;
+    stream.getTracks().forEach(track=>track.stop());return Array.from(new Uint8Array(await new Blob(parts).arrayBuffer()));
+  });
+  await page.route('**/messages/*/resources/*/clip',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
+  for(const name of ['录屏.mp4','附件.mp4']){
+    await page.getByRole('button',{name:'播放视频：'+name}).click();
+    await page.waitForFunction(()=>document.querySelector('video')?.currentTime>0);
+    assert.ok(await page.locator('video[controls]').isVisible());
+    await page.keyboard.press('Escape');
+    await page.locator('video').waitFor({state:'detached'});
+  }
+});
+
 test('机器人记录切换、搜索、成员、回执及分隔栏', { skip: !packageName }, async t => {
   const { chromium } = require(packageName);
   const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });

@@ -2,7 +2,7 @@ import { fileIcon } from './file-format.js';
 import { previewCanvas, renderResult, renderDocumentImages } from './drive-preview.js';
 
 const labels = {
-  image: '图片', docx: '飞书文档', wiki: '飞书知识库', sheets: '飞书表格', minutes: '飞书妙记', base: '多维表格', file: '飞书文件', attachment: '文件'
+  video: '视频', image: '图片', docx: '飞书文档', wiki: '飞书知识库', sheets: '飞书表格', minutes: '飞书妙记', base: '多维表格', file: '飞书文件', attachment: '文件'
 };
 const documentIcons = {
   docx: new URL('./feishu-icons/docx.png', import.meta.url).href,
@@ -36,6 +36,10 @@ export function messageResources(item) {
 export function renderMessageResource(resource, index, src, highlight) {
   const label = labels[resource.kind] ?? '文件';
   const attrs = `type="button" data-action="preview" data-resource="${index}" aria-haspopup="dialog"`;
+  if (resource.kind === 'video' || resource.object_kind === 'video') {
+    const name = resource.name || '视频';
+    return `<button class="chat-bubble chat-file chat-resource" ${attrs} aria-label="播放视频：${esc(name)}"><span class="relay-file-icon" aria-hidden="true">▶</span><span>${highlight(name)}</span></button>`;
+  }
   if (resource.kind === 'image') {
     return `<button class="chat-resource chat-resource-image" ${attrs} aria-label="放大图片">
       <span class="chat-image-fallback" hidden>图片无法显示，点击查看</span>
@@ -60,7 +64,7 @@ function control(name, label, disabled = false) {
   return `<button type="button" class="button" data-preview-action="${name}"${disabled ? ' disabled' : ''}>${label}</button>`;
 }
 
-export function openMessagePreview({resource, restoreFocus, read, signal, onClose}) {
+export function openMessagePreview({resource, restoreFocus, read, mediaURL, signal, onClose}) {
   const label = labels[resource.kind] ?? '文件';
   const dialog = window.OmniRelayUI.openDialog({
     title: resource.name || label, drawer:'wide', restoreFocus,
@@ -102,6 +106,22 @@ export function openMessagePreview({resource, restoreFocus, read, signal, onClos
     controls.innerHTML = entry ? control('directory', '返回目录') : '';
     status.textContent = '正在加载预览…';
     try {
+      if (resource.kind === 'video' || resource.object_kind === 'video') {
+        const video = document.createElement('video');
+        video.controls = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        video.setAttribute('aria-label',resource.name || '视频');
+        video.addEventListener('loadeddata', () => {status.textContent = '';}, {signal:active});
+        video.addEventListener('error', () => {
+          status.textContent = '无法播放此视频，文件可能已不可用或浏览器不支持其编码。';
+          controls.innerHTML = control('retry','重试');
+        }, {signal:active});
+        active.addEventListener('abort', () => {video.pause();video.removeAttribute('src');video.load();}, {once:true});
+        body.replaceChildren(video);
+        video.src = mediaURL;
+        return;
+      }
       const result = await read(params, active);
       if (active.aborted || !dialog.open) return;
       if (result instanceof Blob) {
