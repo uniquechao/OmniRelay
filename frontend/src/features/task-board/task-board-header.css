@@ -33,13 +33,37 @@
 .task-page-filter-panel {display:grid;gap:8px;max-height:70dvh;max-width:calc(100vw - 16px);overflow:auto}
 .task-bulk-form {display:grid;gap:14px}
 .task-bulk-form fieldset {display:grid;gap:7px;max-height:45dvh;overflow:auto}
-.task-list-layout .board-columns {display:flex;flex-direction:column;overflow:visible}
-.task-list-layout .board-lane {width:100%;min-width:0;min-height:0}
-.task-list-layout .board-cards {display:grid;gap:2px}
-.task-list-layout .board-card .board-card-open {display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-inline-end:36px}
-.task-list-layout .board-card-top {width:auto;gap:10px}
-.task-list-layout .board-card-open time {margin-inline-start:auto}
-.task-list-layout .board-card .board-tags:empty {display:none}
+.project-task-board .board-scroll.task-list-layout {
+  display:flex; flex-direction:column; min-width:0; min-height:0; margin:0;
+  padding:0 0 8px; overflow:hidden;
+}
+.task-list-layout .standard-list {grid-template-rows:minmax(0,1fr) auto; min-height:180px}
+.task-list-layout .react-list-host {display:flex; flex:1; min-height:0; min-width:0}
+.task-list-layout .list-toolbar[hidden] {display:none}
+.task-list-layout .list-scroll table {min-width:100%; width:max-content}
+.task-list-layout th,.task-list-layout td {text-align:start}
+.task-list-layout td {vertical-align:middle}
+.task-list-layout th[data-column=title] {min-width:clamp(10rem,17vw,20rem)}
+.task-list-title,.task-list-property {
+  color:inherit; font:inherit; text-align:start; cursor:pointer;
+  border:0; border-radius:4px; background:transparent; padding:4px;
+}
+.task-list-title {display:grid; gap:2px; max-width:25rem; overflow-wrap:anywhere; white-space:normal}
+.task-list-title small {color:var(--or-text-secondary); font-size:.69rem; font-variant-numeric:tabular-nums}
+.task-list-title strong {font-weight:550}
+.task-list-property {display:inline-flex; align-items:center; gap:6px; min-height:30px}
+.task-list-property svg {color:var(--or-text-secondary); flex:none}
+.task-list-property time {white-space:nowrap; font-variant-numeric:tabular-nums}
+.task-list-property:hover,.task-list-title:hover {background:var(--or-hover-bg); color:var(--or-link)}
+.task-list-tags {display:flex; flex-wrap:wrap; gap:3px; max-width:13rem}
+.task-list-tags > span {padding:2px 6px; border-radius:4px; background:var(--or-surface-muted); color:var(--or-text-secondary); overflow-wrap:anywhere}
+.task-list-status {font:inherit; max-width:11rem}
+.task-list-layout .list-footer {padding-inline:8px}
+.task-list-editor {display:grid; gap:10px; padding:12px; width:min(270px,calc(100vw - 24px)); color:var(--or-text)}
+.task-list-editor form,.task-list-editor form label {display:grid;gap:6px}
+.task-list-editor form {gap:12px}
+.task-list-editor :is(input[type=date],textarea) {width:100%; box-sizing:border-box; font:inherit; padding:6px 8px; border:1px solid var(--or-control-border); border-radius:5px; color:var(--or-text); background:var(--or-surface)}
+.task-list-editor [role=alert] {color:var(--or-danger-text)}
 .task-inspector-layer {position:fixed;inset:0;z-index:1000;border-radius:0;container-type:inline-size}
 .task-inspector-layer .task-inspector-panel {top:0;bottom:0;height:100%;height:100dvh;max-height:100%;width:min(1060px,94vw);border-radius:0;border-block:none;box-sizing:border-box;background:light-dark(#fff,var(--or-surface))}
 .task-inspector-layer .task-inspector-body {flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}

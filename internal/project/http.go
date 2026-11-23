@@ -95,6 +95,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PUT "+project+"/follow", "project.read", s.setFollow)
 	handle("DELETE "+project+"/follow", "project.read", s.setFollow)
 	handle("POST "+base, "", s.createProject)
+	handle("PUT "+project+"/meetings/mark", "project.assign", s.markMeeting)
 	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
 	handle("GET "+project+"/files", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		return s.filePage(r.Context(), actor, r.PathValue("projectID"), r.URL.Query())
@@ -169,13 +170,14 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PATCH "+project+"/tasks/{taskID}/milestone", "project.assign", s.setTaskMilestone)
 	handle("PUT "+project+"/tasks/board/timezone", "project.settings", s.setBoardTimezone)
 	handle("POST "+project+"/tasks/{taskID}/move", "project.read", s.moveTask)
+	handle("POST "+project+"/tasks/{taskID}/claim", "project.read", s.claimTask)
 	handle("GET "+project+"/milestones", "project.read", s.taskMilestones)
 	handle("POST "+project+"/milestones", "project.assign", s.createMilestone)
 	handle("GET "+project+"/tasks/{taskID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		return scope(actor, r.PathValue("projectID")).task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
 	})
 	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", s.sourceTasks)
-	handle("GET "+project+"/reports/briefings/{runID}", "project.read", s.latestBriefing)
+	handle("GET "+project+"/reports/briefings/{runID}", "project.read", s.briefingDetail)
 	handle("GET "+project+"/chats", "project.read", s.getChats)
 	handle("PUT /api/v1/feishu/chats/{chatID}/project", "", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		var input struct {
@@ -213,7 +215,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		}
 		return s.check(r.Context(), actor, r.PathValue("projectID"), input)
 	})
-	handle("GET "+project+"/reports/briefings", "project.read", s.latestBriefing)
+	handle("GET "+project+"/reports/briefings", "project.read", s.listBriefings)
 	handle("POST "+project+"/reports/briefings", "project.settings", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		var input struct {
 			Date string `json:"business_date"`
@@ -294,32 +296,40 @@ func (s *Service) latestBriefing(_ http.ResponseWriter, r *http.Request, actor i
 	}
 	items := []briefing{}
 	if err == nil {
-		run, err := s.run(ctx, actor, id, runID)
+		run, err := s.visibleBriefing(ctx, actor, id, runID)
 		if r.PathValue("runID") == "" && errors.Is(err, errDenied) {
 			return map[string]any{"items": items, "total": 0}, nil
 		}
 		if err != nil {
 			return nil, err
 		}
-		if run.Target != "" {
-			if _, err := s.chat.ProjectGroup(ctx, actor, run.Target); err != nil {
-				if !errors.Is(err, chat.ErrAccessLost) {
-					return nil, err
-				}
-				run.Target, run.Delivery, run.ConfirmedAt = "", "withheld", nil
-			}
-		}
-		if err := s.checkRunSource(ctx, actor, id, run); err != nil {
-			if !errors.Is(err, errConflict) {
-				return nil, err
-			}
-			run.VisibleCount, run.SourceState = 0, "unavailable"
-		}
 		items = append(items, run)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	return map[string]any{"items": items, "total": len(items)}, nil
+}
+
+func (s *Service) visibleBriefing(ctx context.Context, actor identity.Principal, id, runID string) (briefing, error) {
+	run, err := s.run(ctx, actor, id, runID)
+	if err != nil {
+		return run, err
+	}
+	if run.Target != "" {
+		if _, err := s.chat.ProjectGroup(ctx, actor, run.Target); err != nil {
+			if !errors.Is(err, chat.ErrAccessLost) {
+				return run, err
+			}
+			run.Target, run.Delivery, run.ConfirmedAt = "", "withheld", nil
+		}
+	}
+	if err := s.checkRunSource(ctx, actor, id, run); err != nil {
+		if !errors.Is(err, errConflict) {
+			return run, err
+		}
+		run.VisibleCount, run.SourceState = 0, "unavailable"
+	}
+	return run, nil
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {

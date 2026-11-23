@@ -43,4 +43,5 @@ type Project struct {
 	PlannedEnd   string     `json:"planned_end,omitempty"`
 	BoardVersion int64      `json:"board_version"`
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	ShortCode    string     `json:"short_code,omitempty"`
 }

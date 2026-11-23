@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const latestMigration = 42
+const latestMigration = 45
 
 func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	versions, err := readMigrations()
@@ -26,6 +26,61 @@ func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 			t.Fatalf("unexpected migration metadata: %d", change.version)
 		}
 	}
+}
+
+func TestProjectShortCodeUpgrade(t *testing.T) {
+	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("requires isolated PostgreSQL")
+	}
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	run := func(sql string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(sql, want string) {
+		t.Helper()
+		var got string
+		if err := tx.QueryRow(ctx, sql).Scan(&got); err != nil || got != want {
+			t.Fatalf("%s: got %q, want %q (%v)", sql, got, want, err)
+		}
+	}
+	changes, err := readMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run("CREATE SCHEMA project_codes_upgrade; SET LOCAL search_path=project_codes_upgrade")
+	for _, change := range changes[:42] {
+		run(change.sql)
+	}
+	run(`INSERT INTO project_profiles(tenant_key,app_id,project_id,name,status,version) VALUES
+		('a','app','legacy','北辰项目','active',1),('b','app','legacy','北辰项目','archived',1);
+		INSERT INTO project_task_boards(tenant_key,app_id,project_id) VALUES ('a','app','legacy'),('a','app','board-only');
+		INSERT INTO accounts(tenant_key,app_id,id,open_id,name) VALUES ('a','app','author','author','甲');
+		SET LOCAL omnirelay.task_actor='author';
+		INSERT INTO project_tasks(tenant_key,app_id,project_id,id,title,position) VALUES ('a','app','legacy','old-task','存量任务',1024);`)
+	run(changes[42].sql)
+	check("SELECT string_agg(short_code,',' ORDER BY tenant_key) FROM project_short_codes WHERE project_id='legacy'", "BCX,BCY")
+	check("SELECT short_code FROM project_short_codes WHERE project_id='board-only'", "BOA")
+	check(`SELECT id||':'||project_task_code(short_code,display_number) FROM project_tasks JOIN project_short_codes USING(tenant_key,app_id,project_id)`, "old-task:BCX-T001")
+	run(`UPDATE project_profiles SET name='新的名称' WHERE tenant_key='a';
+		INSERT INTO project_profiles(tenant_key,app_id,project_id,name,status,version) VALUES ('a','app','new','ABC研发','active',1);
+		INSERT INTO project_task_boards(tenant_key,app_id,project_id,last_number) VALUES ('a','app','new',999);
+		INSERT INTO project_tasks(tenant_key,app_id,project_id,id,title,position) VALUES ('a','app','new','new-task','新任务',1024);`)
+	check("SELECT short_code FROM project_short_codes WHERE tenant_key='a' AND project_id='legacy'", "BCX")
+	check(`SELECT project_task_code(short_code,display_number) FROM project_tasks JOIN project_short_codes USING(tenant_key,app_id,project_id) WHERE id='new-task'`, "ABC-T1000")
 }
 
 func TestGroupDefaultMembersUpgrade(t *testing.T) {

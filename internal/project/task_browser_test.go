@@ -134,6 +134,14 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 	if err := roles.Bootstrap(t.Context(), "manager"); err != nil {
 		t.Fatal(err)
 	}
+	if schema == "task_board_replica_browser" {
+		_, err := pool.Exec(t.Context(), `INSERT INTO project_daily_briefs(tenant_key,app_id,project_id,business_date,title,body,version,updated_by) VALUES
+			('tenant','app','board-test','2026-11-22','交付进展','评审通过。',1,'manager'),
+			('tenant','app','board-test','2026-11-23','验收进展',E'联调完成。\n下周交付。',2,'manager')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	mux := http.NewServeMux()
 	server := httptest.NewUnstartedServer(mux)
 	server.StartTLS()

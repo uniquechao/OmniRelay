@@ -58,6 +58,8 @@ func (s *Service) RunTool(ctx context.Context, tx pgx.Tx, actor identity.Princip
 // the actor to have authority over the particular resource.
 func (s *Service) AuthorizeToolReceipt(ctx context.Context, tx pgx.Tx, actor identity.Principal, projectID, name string, a pmtools.Args) error {
 	switch name {
+	case "meeting_mark":
+		return s.checkMeetingFile(ctx, tx, scope(actor, projectID), actor, a.String("file_ref"))
 	case "task_update", "task_transition", "task_move", "task_feedback_submit":
 		k := scope(actor, projectID)
 		task, err := k.task(ctx, tx, a.String("task_id"), time.Now())
@@ -295,6 +297,8 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			next = ""
 		}
 		return s.setAssignment(ctx, actor, id, next, version)
+	case "meeting_mark":
+		return s.markMeetingFile(ctx, k, actor, a.String("file_ref"))
 	case "file_search", "file_get":
 		if name == "file_get" {
 			q.Set("file_ref", a.String("file_ref"))
@@ -319,6 +323,10 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			return map[string]any{"file": item, "excerpt": excerpt}, err
 		}
 		return view, nil
+	case "briefing_get":
+		return k.dailyBrief(ctx, tx, a.String("business_date"))
+	case "briefing_save":
+		return k.saveDailyBrief(ctx, tx, actor, a.String("business_date"), a.String("title"), a.String("body"), version)
 	case "daily_report_query":
 		switch a.String("source") {
 		case "", "reports":
@@ -329,8 +337,8 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		}
 		return s.reports(ctx, actor, k.project, q)
 	case "task_search":
-		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('id',id,'title',title,'status',status,'version',version,'owner_member_id',owner_member_id)
-   FROM project_tasks WHERE `+projectWhere+` AND deleted_at IS NULL AND strpos(lower(title||' '||description),lower($4))>0 AND ($5='' OR status=$5) AND ($6='' OR owner_member_id=$6)
+		rows, err := tx.Query(ctx, `SELECT jsonb_build_object('id',id,'task_code',`+taskCodeSQL+`,'title',title,'status',status,'version',version,'owner_member_id',owner_member_id)
+   FROM project_tasks t JOIN project_short_codes c USING(tenant_key,app_id,project_id) WHERE `+projectWhere+` AND deleted_at IS NULL AND strpos(lower(title||' '||description||' '||`+taskCodeSQL+`),lower($4))>0 AND ($5='' OR status=$5) AND ($6='' OR owner_member_id=$6)
    ORDER BY id LIMIT 25 OFFSET $7`, k.args(q.Get("q"), q.Get("status"), q.Get("owner_member_id"), (page-1)*25)...)
 		if err != nil {
 			return nil, err

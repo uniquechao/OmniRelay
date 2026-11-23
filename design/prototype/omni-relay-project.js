@@ -33,7 +33,6 @@ window.OmniRelayProject = (() => {
   const milestoneFilters = new Map();
   const taskDetails = (project,id,number) => taskAttributes.get(id + '/' + number) || initialTaskAttributes[id]?.[number-1] ||
     {priority:project.tasks[number-1][4] ? 'important' : 'normal',milestone:''};
-  const taskNumber = number => 'T-' + String(number).padStart(3,'0');
   const ownerAvatar = name => personAvatar(name,people[name]?.[1].split(' ').slice(0,2).join('-'));
   const selectOptions = (options,current) => Object.entries(options).map(([key,label]) =>
     `<option value="${esc(key)}"${key === current ? ' selected' : ''}>${esc(label)}</option>`).join('');
@@ -93,6 +92,7 @@ window.OmniRelayProject = (() => {
   function render(project, id, tab, subview, options) {
     const { chip, empty, panel, facts, overview, cardLink, botSettings, projects } = options;
     const editor = OmniRelayTaskEditor;
+    const taskNumber = number => editor.taskNumber(project,number);
     function applyTask(number,state) {
       const task = project.tasks[number-1];
       task[0] = state.title;

@@ -25,7 +25,7 @@ export function TaskBulkEdit({projectId,tasks,onClose,onSaved}:{projectId:string
         if (event.target.checked) next.set(task.id,task.version)
         else next.delete(task.id)
         setSelected(next); key.current=crypto.randomUUID()
-      }}/>T-{String(task.display_number).padStart(3,'0')} {task.title}</label>)}
+      }}/>{task.task_code} {task.title}</label>)}
     </fieldset><label>优先级 <NativeSelect aria-label="优先级" value={priority??''} disabled={pending} onChange={event=>{setPriority(event.target.value as ProjectTask['priority'] || null);key.current=crypto.randomUUID()}}><option value="">未设置</option>{['P0','P1','P2','P3'].map(p=><option key={p}>{p}</option>)}</NativeSelect></label>
     {error&&<p role="alert">{error}</p>}<Button disabled={pending||!selected.size} onClick={()=>void save()}>应用到所选任务</Button></div>
   </ProjectDialog>

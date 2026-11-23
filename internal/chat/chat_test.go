@@ -241,12 +241,15 @@ func TestReplayLegacyChatDisplayText(t *testing.T) {
 	applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: "oc_other", Kind: orchestrator.ChatGroup})
 	// Recreate the prior release's index and completed cursors in this isolated schema.
 	_, err := s.pool.Exec(ctx, `UPDATE feishu_chat_messages SET search_text=body::jsonb->>'text';
-		UPDATE feishu_chat_sync SET full_at=now(),next_at=now()+interval '1 day';
-		DELETE FROM omnirelay_schema_migrations WHERE version=42`)
+		UPDATE feishu_chat_sync SET full_at=now(),next_at=now()+interval '1 day'`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(ctx, s.pool); err != nil {
+	replay, err := os.ReadFile("../../migrations/0042_replay_chat_display_text.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, string(replay)); err != nil {
 		t.Fatal(err)
 	}
 	var scheduled []string

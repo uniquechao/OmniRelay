@@ -182,6 +182,22 @@ func TestProjectHTTPReadOnlyCheckAndBriefingBoundary(t *testing.T) {
 		request("GET", "/allowed/files/documents/local-note", "", 404)
 		request("GET", path+"/tasks", "", 404)
 	}
+	// The list classifies authorized documents without changing their source identity.
+	weeklyPath := "/allowed/sources/document/weekly"
+	request("PUT", weeklyPath, `{"title":"联调会议记录","body":"受限正文","reader_account_ids":["relay-user"]}`, 200)
+	for _, list := range []string{"/allowed/meetings?q=联调", "/allowed/files?category=minutes&q=联调"} {
+		body := request("GET", list, "", 200)
+		if !strings.Contains(body, "联调会议记录") || strings.Contains(body, "受限正文") {
+			t.Fatal(body)
+		}
+	}
+	if body := request("GET", "/allowed/meetings", "", 200); !strings.Contains(body, `"kind":"document"`) {
+		t.Fatal(body)
+	}
+	request("PUT", weeklyPath+"/readers", `{"reader_account_ids":[]}`, 200)
+	if body := request("GET", "/allowed/meetings", "", 200); strings.Contains(body, "联调会议记录") {
+		t.Fatal(body)
+	}
 	const checkPath = "/allowed/feishu/check"
 	check := func(account, action, scope string) checkResult {
 		t.Helper()

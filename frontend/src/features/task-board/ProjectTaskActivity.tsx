@@ -149,9 +149,7 @@ export function ProjectTaskActivity({
                   <span>
                     {event.kind === 'comment'
                       ? '发表评论'
-                      : event.action === 'task.created'
-                        ? '创建任务'
-                        : '修改任务'}
+                      : ({'task.created':'创建任务','task.claimed':'认领任务'}[event.action] ?? '修改任务')}
                   </span>
                   <time dateTime={event.created_at}>
                     {new Date(event.created_at).toLocaleString('zh-CN', {

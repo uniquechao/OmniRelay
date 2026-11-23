@@ -50,10 +50,12 @@ window.OmniRelayTaskEditor = (() => {
     catch { return false; }
   }
 
+  const taskNumber = (project,number) => project.short_code + '-T' + String(number).padStart(3,'0');
+
   function open({project,id,number,snapshot,dropStage,owners,milestones,stages,priorities,onSave,restoreFocus}) {
     let baseline = structuredClone(snapshot);
     const unique = 'task-editor-' + id + '-' + number;
-    const taskCode = 'T-' + String(number).padStart(3,'0');
+    const taskCode = taskNumber(project,number);
     const initialStage = dropStage || baseline.stage;
     const options = (values,selected) => Object.entries(values).map(([key,label]) =>
       '<option value="' + escape(key) + '"' + (selected === key ? ' selected' : '') + '>' + escape(label) + '</option>').join('');
@@ -292,5 +294,5 @@ window.OmniRelayTaskEditor = (() => {
     return dialog;
   }
 
-  return { read, persist, open, dateValue, displayDate, guardRoute:() => routeGuard?.() || false };
+  return { read, persist, open, taskNumber, dateValue, displayDate, guardRoute:() => routeGuard?.() || false };
 })();

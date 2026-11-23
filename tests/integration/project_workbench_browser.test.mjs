@@ -6,7 +6,7 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const moduleName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
 const origin = 'https://project.example.test';
-const project = { id: 'p-21', name: '联调项目', project_type: '交付', status: 'active', updated_at: '2026-11-21T09:15:00Z' };
+const project = { id: 'p-21', short_code:'LDX', name: '联调项目', project_type: '交付', status: 'active', updated_at: '2026-11-21T09:15:00Z' };
 const task = { id: 't-99', project_id: project.id, title: '联调验收', status: 'done' };
 const root = '/api/v1/projects/' + project.id;
 const list = (items) => ({ items, total: items.length });
@@ -365,7 +365,7 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
 test('总览只请求个人可见统计，项目列表默认进行中并可查看全部', { skip: !moduleName }, async (t) => {
   const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
-  const planned = { id: 'p-planned', name: '规划示例', project_type: '研发', status: 'planned' };
+  const planned = { id: 'p-planned', short_code:'GHS', name: '规划示例', project_type: '研发', status: 'planned' };
   for (const admin of [false, true]) for (const { width, theme } of [
     { width: 1366, theme: 'light' }, { width: 390, theme: 'dark' },
   ]) {

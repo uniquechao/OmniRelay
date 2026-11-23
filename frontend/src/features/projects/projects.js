@@ -97,7 +97,7 @@ function endpoint(route) {
   const { id, tab, parts, params } = route;
   const root = '/api/v1/projects';
   const query = new URLSearchParams();
-  if (['meetings', 'reports'].includes(tab) && !parts.length) {
+  if ((tab === 'meetings' && !parts.length) || (tab === 'reports' && parts.length < 2)) {
     query.set('page', pageNumber(params));
     query.set('page_size', 25);
   }

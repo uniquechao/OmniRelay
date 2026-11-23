@@ -30,6 +30,7 @@ var catalog = []Tool{
 	{"chat_set_primary", "按绑定版本和主群版本指定项目主群", "project.settings", true, false, "!chat_id !expected_version !primary_version"},
 	{"file_search", "搜索本人有来源读权的项目文件，返回引用和元数据", "project.read", false, true, "q page"},
 	{"file_get", "用搜索结果的 file_ref 查询单个文件元数据", "project.read", false, true, "!file_ref"},
+	{"meeting_mark", "将 file_search 返回的飞书文档或文件标记为当前项目的会议纪要，重复标记不会创建副本", "project.assign", true, false, "!file_ref"},
 	{"task_search", "按关键词、状态、负责人搜索当前项目的任务", "project.read", false, false, "q status owner_member_id page"},
 	{"task_get", "取得项目任务及当前版本", "project.read", false, false, "!task_id"},
 	{"task_create", "创建任务，默认由本人负责", "project.comment", true, false, "!title status column_id blocked_reason description owner_member_id priority start_at due_at milestone_id acceptance participant_ids tag_ids"},
@@ -62,6 +63,8 @@ var catalog = []Tool{
 	{"task_source_tasks", "按可读来源列出关联任务，消息来源须提供 chat_id", "project.read", false, true, "!source_kind !source_id chat_id"},
 	{"task_business_time", "查询看板业务时区及当前业务日期", "project.read", false, false, ""},
 	{"task_board_timezone", "按看板版本设置业务时区", "project.settings", true, false, "!expected_board_version !business_timezone"},
+	{"briefing_get", "按 YYYY-MM-DD 读取项目共享简报正文和版本，version 为 0 表示当天尚未撰写", "project.read", false, false, "!business_date"},
+	{"briefing_save", "按 YYYY-MM-DD 保存项目全体成员可见的简报标题和正文。先用 briefing_get 读取版本，首次创建传 expected_version=0，版本冲突时重新读取", "project.settings", true, false, "!business_date !title !body !expected_version"},
 	{"daily_report_query", "按日期范围查授权日报，source 可选 reports 或 published。published 只查已发布且本人仍能查看的简报", "project.read", false, true, "source date_from date_to q page"},
 }
 var ErrArguments = errors.New("invalid tool arguments")

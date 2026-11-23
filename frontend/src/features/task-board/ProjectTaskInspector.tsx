@@ -69,7 +69,7 @@ export function ProjectTaskInspector({
   const draftDirty = useRef(false)
   const visibleVersion = useRef<number | null>(null)
   const [formEpoch, setFormEpoch] = useState(0)
-  const [task, setTask] = useState<ProjectTask | null>(() => isNew ? { id: '', project_id: project.id, title: '', description: '', owner_member_id: canManage ? null : project.current_member_id, participant_ids: [], priority: null, due_at: null, start_at: null, tag_ids: [], acceptance: '', status: 'todo', column_id: initialColumnId, blocked_from: null, blocked_reason: '', completion_note: '', version: 0, created_by: '', updated_by: '', created_at: '', updated_at: '', overdue: false } : null)
+  const [task, setTask] = useState<ProjectTask | null>(() => isNew ? { id: '', task_code: '', project_id: project.id, title: '', description: '', owner_member_id: canManage ? null : project.current_member_id, participant_ids: [], priority: null, due_at: null, start_at: null, tag_ids: [], acceptance: '', status: 'todo', column_id: initialColumnId, blocked_from: null, blocked_reason: '', completion_note: '', version: 0, created_by: '', updated_by: '', created_at: '', updated_at: '', overdue: false } : null)
   const [selectedOwner, setSelectedOwner] = useState<string | null>(isNew && !canManage ? project.current_member_id : null)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [selectedColumn, setSelectedColumn] = useState(initialColumnId ?? '')
@@ -443,7 +443,7 @@ export function ProjectTaskInspector({
           <Modal className="task-inspector-panel">
             <Dialog aria-label={isNew ? '新建任务' : '任务详情'} className="task-inspector-dialog">
               <header className="task-inspector-top">
-                <span className="task-inspector-path"><Columns3 size={15} aria-hidden /><span className="task-path-project">{project.name}</span><ChevronRight size={14} aria-hidden />{!isNew && task && <span className="task-path-code">T-{String(task.display_number ?? '').padStart(3,'0')}</span>}<span className="task-path-title">{isNew ? '新建任务' : task?.title ?? '任务详情'}</span></span>
+                <span className="task-inspector-path"><Columns3 size={15} aria-hidden /><span className="task-path-project">{project.name}</span><ChevronRight size={14} aria-hidden />{!isNew && task && <span className="task-path-code">{task.task_code}</span>}<span className="task-path-title">{isNew ? '新建任务' : task?.title ?? '任务详情'}</span></span>
                 <div>
                   {!isNew && task && canManage && !denied && <Button variant="outline" aria-haspopup="dialog" disabled={pending || conflict || unsaved}
                     title={unsaved ? '请先保存或放弃更改' : '删除任务'} onClick={() => {setDeleteReason(''); setDeleteVersion(task.version); setError('')}}>删除任务</Button>}

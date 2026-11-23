@@ -48,5 +48,26 @@ func (s *Service) ProjectListEntries(ctx context.Context, actor identity.Princip
 	if err != nil {
 		return nil, err
 	}
-	return listEntries(files), nil
+	entries := listEntries(files)
+	for i := range entries {
+		entry := &entries[i]
+		entry.Category = ProjectFileCategory(entry.Category, entry.FormatKey, entry.Name)
+	}
+	return entries, nil
+}
+
+// Check the specific file against current project attribution and source access at write time.
+func (s *Service) CanMarkProjectFile(ctx context.Context, actor identity.Principal, project string, id int64) (bool, error) {
+	if id <= 0 || project == "" || actor.TenantKey != s.tenant || actor.AppID != s.app || actor.AccountID == "" {
+		return false, nil
+	}
+	files, err := s.visibleInProject(ctx, actor, id, nil, project)
+	if err != nil || len(files) != 1 {
+		return false, err
+	}
+	switch files[0].Category {
+	case "docs", "files", "minutes":
+		return true, nil
+	}
+	return false, nil
 }

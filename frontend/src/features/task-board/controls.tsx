@@ -12,7 +12,7 @@ export function Button({variant='default',size,...props}:ComponentProps<'button'
 export const Input = (props:ComponentProps<'input'>) => <input data-prototype-control="input" {...props}/>
 export const NativeSelect = (props:ComponentProps<'select'>) => <select data-prototype-control="select" {...props}/>
 export const Textarea = (props:ComponentProps<'textarea'>) => <textarea data-prototype-control="textarea" {...props}/>
-export const Popover=Pop.Root, PopoverTrigger=Pop.Trigger
+export const Popover=Pop.Root, PopoverTrigger=Pop.Trigger, PopoverAnchor=Pop.Anchor
 export function PopoverContent(props:ComponentProps<typeof Pop.Content>) {
   return <Pop.Portal><Pop.Content sideOffset={4} data-board-menu="" {...props}/></Pop.Portal>
 }

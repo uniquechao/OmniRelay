@@ -5,7 +5,7 @@ import { fileSources, fileProjects, editFileProjects, mountFileMetadata, syncSta
 
 export const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', images:'图片', videos:'视频', files:'文件' };
 const fileFormats = {pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'};
-const categoryLabel = row => categories[row.format_key] || categories[row.category] || '文件';
+const categoryLabel = row => categories[row.category] || categories[row.format_key] || '文件';
 const decimal = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:1});
 
 function sizeText(bytes) {
@@ -15,7 +15,7 @@ function sizeText(bytes) {
   return decimal.format(bytes / 1024 ** power) + ' ' + ['B','KB','MB','GB','TB'][power];
 }
 
-export function mountDrive(page, request, signal, {preview, editProjects, projectId, initialQuery, memory = {}} = {}) {
+export function mountDrive(page, request, signal, {preview, editProjects, projectId, initialQuery, onMeetingRows, memory = {}} = {}) {
   const { escape, mountList } = window.OmniRelayUI;
   const renderTime = value => `<time datetime="${escape(value)}">${escape(new Date(value).toLocaleString('zh-CN'))}</time>`;
   const returning = memory.source && memory.source.projectId === projectId && memory.source.key === history.state?.driveReturn ? memory.source : null;
@@ -29,6 +29,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
   let syncTimer;
   let tableSnapshot;
   let files = new Map();
+  let canMark = false;
   const filePath = path => projectId ? path + (path.includes('?') ? '&' : '?') + 'source_project=' + encodeURIComponent(projectId) : path;
   const fileRequest = (path, options) => request(path.startsWith('/api/v1/feishu/files/') ? filePath(path) : path, options);
   const listPath = projectId ? '/api/v1/projects/' + encodeURIComponent(projectId) + '/files' : '/api/v1/feishu/files';
@@ -129,6 +130,7 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
           assignmentAPI(request).choices(pageSignal).catch(() => [])
         ]);
         pageSignal.throwIfAborted();
+        canMark = data.can_mark_minutes === true;
         page.querySelector('[data-partial]').hidden = !data.partial;
         names = new Map(choices.map(item => [item.id, item.label]));
         files = new Map(data.items.map(row => [String(row.id),row]));
@@ -143,6 +145,13 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
           project_id:Object.fromEntries(Object.entries(data.projects).map(([id,label]) => [id, names.get(id) || label])),
           sync_state:projectId ? {...coverage, local:'本地记录'} : coverage, format:fileFormats
         }};
+      },
+      onPaint(body,rows) {
+        if (!onMeetingRows || lifetime.aborted) return;
+        onMeetingRows(Array.from(body.rows).flatMap((tr,i)=>{
+          const host=tr.querySelector('[data-meeting-mark]');
+          return host?[{host,row:rows[i],signal:lifetime,refresh:()=>view.refresh({keepRows:true})}]:[];
+        }));
       },
       columns:[
         {key:'name',label:'名称',sort:true,render:row => '<button class="drive-file-name" type="button" ' + previewAttrs(row) + '>' +
@@ -159,7 +168,8 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
             escape(row.updated_at) + '">' + escape(updated.toLocaleString('zh-CN')) + '</time>' : '');
         }},
         {key:'preview',label:'操作',render:row => {
-          const preview = '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>';
+          const mark = onMeetingRows && (row.marked_minutes || (canMark && row.file_ref && ['docs','files'].includes(row.category)));
+          const preview = '<button type="button" class="row-action" ' + previewAttrs(row) + '>预览</button>' + (mark?' <span data-meeting-mark></span>':'');
           if (row.local_source_id) return preview + ' <button type="button" class="row-action" data-local-download>下载</button> ' +
             '<a class="row-action" href="#/projects/' + encodeURIComponent(projectId) + '/tasks/source/document/' + encodeURIComponent(row.local_source_id) + '">查看关联任务</a>';
           if (!row.version_id) return preview;

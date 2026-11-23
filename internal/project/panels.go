@@ -17,6 +17,7 @@ import (
 type ProjectFiles interface {
 	ProjectListEntries(context.Context, identity.Principal, string) ([]drive.ListEntry, error)
 	ProjectSources(context.Context, identity.Principal, string) ([]drive.ProjectSource, error)
+	CanMarkProjectFile(context.Context, identity.Principal, string, int64) (bool, error)
 }
 
 func (s *Service) ConfigureFiles(files ProjectFiles) { s.files = files }
@@ -107,10 +108,6 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 	if err != nil || !before.IsZero() && !from.IsZero() && from.After(before) {
 		return panelView{}, errInput
 	}
-	category, kind := "docs", "document"
-	if panel == "meetings" {
-		category, kind = "minutes", "minutes"
-	}
 	coverage := "local"
 	items := []sourceSummary{}
 	if s.files != nil {
@@ -123,20 +120,28 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 			files = nil
 		}
 		for _, f := range files {
-			if panel != "agent_files" && (panel == "meetings") != (f.Category == "minutes") {
-				continue
-			}
 			items = append(items, sourceSummary{
 				ID: strconv.FormatInt(f.ID, 10), FileID: f.ID, VersionID: f.VersionID, Kind: f.FormatKey, Title: f.Title, Category: f.Category,
 				Status: f.State, ChatID: f.ChatID, MessageID: f.MessageID, Created: f.SharedAt,
 			})
 		}
 	}
-	local, err := s.localPanelSources(ctx, actor, id, kind, category, panel == "agent_files")
+	local, err := s.localPanelSources(ctx, actor, id, true)
 	if err != nil {
 		return panelView{}, err
 	}
 	items = append(items, local...)
+	if panel == "meetings" {
+		marks, err := scope(actor, id).meetingFiles(ctx, s.reader())
+		if err != nil {
+			return panelView{}, err
+		}
+		for i := range items {
+			if marks[fileRef(items[i])] {
+				items[i].Category = "minutes"
+			}
+		}
+	}
 	for i := range items {
 		if panel == "agent_files" {
 			items[i].Ref = fileRef(items[i])
@@ -148,7 +153,8 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 		filterKind = query.Get("resource_type")
 	}
 	items = slices.DeleteFunc(items, func(item sourceSummary) bool {
-		return (query.Has("file_ref") && item.Ref != query.Get("file_ref")) || !strings.Contains(strings.ToLower(item.Title), search) ||
+		return (panel != "agent_files" && (panel == "meetings") != (item.Category == "minutes")) ||
+			(query.Has("file_ref") && item.Ref != query.Get("file_ref")) || !strings.Contains(strings.ToLower(item.Title), search) ||
 			query.Get("tag") != "" || (query.Get("category") != "" && item.Category != query.Get("category")) ||
 			(filterKind != "" && item.Kind != filterKind) ||
 			!from.IsZero() && item.Created.Before(from) || !before.IsZero() && !item.Created.Before(before)
@@ -165,22 +171,24 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 		map[string]any{"coverage": map[string]string{"state": coverage}}), nil
 }
 
-func (s *Service) localPanelSources(ctx context.Context, actor identity.Principal, id, kind, category string, includeMinutes bool) ([]sourceSummary, error) {
+func (s *Service) localPanelSources(ctx context.Context, actor identity.Principal, id string, includeMinutes bool) ([]sourceSummary, error) {
 	// Read local source grants after the external authorization checks finish.
 	rows, err := s.reader().Query(ctx, `SELECT s.id,s.title,s.created_at,s.kind FROM project_sources s
 		JOIN project_source_readers r ON (r.tenant_key,r.app_id,r.project_id,r.kind,r.source_id)=(s.tenant_key,s.app_id,s.project_id,s.kind,s.id)
 		JOIN project_members m ON (m.tenant_key,m.app_id,m.project_id,m.account_id)=(r.tenant_key,r.app_id,r.project_id,r.account_id)
 		JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
-		WHERE (s.tenant_key,s.app_id,s.project_id,r.account_id)=($1,$2,$3,$5) AND (s.kind=$4 OR ($7 AND s.kind='minutes'))
-		  AND m.role<>'revoked' AND a.active AND a.open_id=$6`, scope(actor, id).args(kind, actor.AccountID, actor.OpenID, includeMinutes)...)
+		WHERE (s.tenant_key,s.app_id,s.project_id,r.account_id)=($1,$2,$3,$4) AND (s.kind='document' OR ($6 AND s.kind='minutes'))
+		  AND m.role<>'revoked' AND a.active AND a.open_id=$5`, scope(actor, id).args(actor.AccountID, actor.OpenID, includeMinutes)...)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (sourceSummary, error) {
-		src := sourceSummary{Kind: kind, Category: category}
+		var src sourceSummary
 		err := row.Scan(&src.RefID, &src.Title, &src.Created, &src.Kind)
-		if src.Kind == "minutes" {
+		if src.Kind == "minutes" || drive.ProjectFileCategory("docs", "docs", src.Title) == "minutes" {
 			src.Category = "minutes"
+		} else {
+			src.Category = "docs"
 		}
 		src.ID = src.RefID
 		return src, err
@@ -195,17 +203,35 @@ func (s *Service) filePage(ctx context.Context, actor identity.Principal, id str
 		entries, err = s.files.ProjectListEntries(ctx, actor, id)
 		partial = err != nil
 	}
-	local, err := s.localPanelSources(ctx, actor, id, "document", "docs", false)
+	local, err := s.localPanelSources(ctx, actor, id, false)
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range local {
 		entries = append(entries, drive.LocalDocument(id, row.RefID, row.Title))
 	}
+	marks, err := scope(actor, id).meetingFiles(ctx, s.reader())
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.LocalSourceID != "" {
+			entry.FileRef = "document:" + entry.LocalSourceID
+		} else {
+			entry.FileRef = "drive:" + strconv.FormatInt(entry.ID, 10)
+		}
+		entry.MarkedMinutes = marks[entry.FileRef]
+	}
+	canMark, err := s.allowed(ctx, actor, "project.assign", id)
+	if err != nil {
+		return nil, err
+	}
 	page, err := drive.FilePage(query, entries)
 	if err != nil {
 		return nil, errInput
 	}
 	page["partial"] = partial
+	page["can_mark_minutes"] = canMark
 	return page, nil
 }

@@ -12,6 +12,33 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
+func TestConcurrentShortCodeAllocation(t *testing.T) {
+	pool := testProjectPool(t, "concurrent_project_codes")
+	const projects = 8
+	start := make(chan struct{})
+	done := make(chan error, projects)
+	ctx := t.Context()
+	for i := range projects {
+		go func() {
+			<-start
+			_, err := pool.Exec(ctx, `INSERT INTO project_profiles(tenant_key,app_id,project_id,name,status,version)
+				VALUES('tenant','app',$1,'ABC 同名项目','active',1)`, fmt.Sprintf("project-%d", i))
+			done <- err
+		}()
+	}
+	close(start)
+	for range projects {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var distinct int
+	err := pool.QueryRow(ctx, `SELECT count(DISTINCT project_task_code(short_code,1)) FROM project_short_codes`).Scan(&distinct)
+	if err != nil || distinct != projects {
+		t.Fatalf("并发建项后不同任务编号数 %d，错误 %v", distinct, err)
+	}
+}
+
 func TestProjectTypeSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name, existing, want string

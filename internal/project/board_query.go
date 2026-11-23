@@ -14,7 +14,7 @@ import (
 // All caller-provided values are SQL parameters. Counts and pages share this predicate.
 func boardPredicate(k taskScope, column string, q url.Values, now time.Time) (string, []any, string, error) {
 	args := k.args()
-	where := " FROM project_tasks t WHERE " + projectWhere + " AND deleted_at IS NULL"
+	where := " FROM project_tasks t JOIN project_short_codes c USING(tenant_key,app_id,project_id) WHERE " + projectWhere + " AND deleted_at IS NULL"
 	bind := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
 	if column != "" {
 		where += " AND column_id=" + bind(column)
@@ -27,6 +27,9 @@ func boardPredicate(k taskScope, column string, q url.Values, now time.Time) (st
 	if q.Get("status") == "" && q.Has("board_view") {
 		where += " AND status!='cancelled'"
 	}
+	if q.Get("exclude_done") == "true" {
+		where += " AND status!='done'"
+	}
 	for key, col := range map[string]string{"owner_unassigned": "owner_member_id", "milestone_unassigned": "milestone_id", "priority_unset": "priority", "no_due": "due_at"} {
 		if q.Get(key) == "true" {
 			where += " AND " + col + " IS NULL"
@@ -37,7 +40,7 @@ func boardPredicate(k taskScope, column string, q url.Values, now time.Time) (st
 	}
 	if term := strings.TrimSpace(q.Get("q")); term != "" {
 		arg := bind(term)
-		where += " AND (strpos(lower(title||' '||description||' '||coalesce(t.relation_names->>t.owner_member_id,'')||' '||id||' T-'||lpad(display_number::text,greatest(3,length(display_number::text)),'0')),lower(" + arg + "))>0 OR strpos(lower(t.project_id),lower(" + arg + "))>0 OR EXISTS(SELECT FROM project_profiles p WHERE (p.tenant_key,p.app_id,p.project_id)=(t.tenant_key,t.app_id,t.project_id) AND strpos(lower(p.name),lower(" + arg + "))>0) OR EXISTS(SELECT FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE (m.tenant_key,m.app_id,m.project_id,m.member_id)=(t.tenant_key,t.app_id,t.project_id,t.owner_member_id) AND strpos(lower(a.name),lower(" + arg + "))>0))"
+		where += " AND (strpos(lower(title||' '||description||' '||" + taskCodeSQL + "||' '||coalesce(t.relation_names->>t.owner_member_id,'')||' '||id||' T-'||lpad(display_number::text,greatest(3,length(display_number::text)),'0')),lower(" + arg + "))>0 OR strpos(lower(t.project_id),lower(" + arg + "))>0 OR EXISTS(SELECT FROM project_profiles p WHERE (p.tenant_key,p.app_id,p.project_id)=(t.tenant_key,t.app_id,t.project_id) AND strpos(lower(p.name),lower(" + arg + "))>0) OR EXISTS(SELECT FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE (m.tenant_key,m.app_id,m.project_id,m.member_id)=(t.tenant_key,t.app_id,t.project_id,t.owner_member_id) AND strpos(lower(a.name),lower(" + arg + "))>0))"
 	}
 	// Older callers stored date-only strings. Interpret these in the project timezone.
 	due := "CASE WHEN length(due_at)=10 THEN due_at::date::timestamp AT TIME ZONE " + bind(now.Location().String()) + " ELSE due_at::timestamptz END"
@@ -75,6 +78,23 @@ func boardCursorScope(k taskScope, q url.Values, column string) string {
 
 func (s *Service) flatTaskQuery(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 	q := r.URL.Query()
+	page := 0
+	if q.Has("page") {
+		var err error
+		page, err = strconv.Atoi(q.Get("page"))
+		if err != nil || page < 1 || page > 100000 || q.Has("cursor") || len(q["page"]) != 1 {
+			return nil, errInput
+		}
+		q.Del("page")
+	}
+	for _, key := range []string{"include_cancelled", "exclude_done"} {
+		if q.Has(key) && (len(q[key]) != 1 || q.Get(key) != "true") {
+			return nil, errInput
+		}
+	}
+	includeCancelled, excludeDone := q.Has("include_cancelled"), q.Has("exclude_done")
+	q.Del("include_cancelled")
+	q.Del("exclude_done")
 	view := q.Get("view")
 	if view != "" && view != "summary" && view != "full" {
 		return nil, errInput
@@ -91,7 +111,12 @@ func (s *Service) flatTaskQuery(_ http.ResponseWriter, r *http.Request, a identi
 	if err != nil {
 		return nil, err
 	}
-	q.Set("board_view", "true")
+	if !includeCancelled {
+		q.Set("board_view", "true")
+	}
+	if excludeDone {
+		q.Set("exclude_done", "true")
+	}
 	k, ctx := scope(a, r.PathValue("projectID")), r.Context()
 	limit := 50
 	if q.Has("limit") {
@@ -102,6 +127,7 @@ func (s *Service) flatTaskQuery(_ http.ResponseWriter, r *http.Request, a identi
 	}
 	items := []storedTask{}
 	var next *string
+	var total int
 	var version int64
 	err = s.withReportSnapshot(ctx, func(tx pgx.Tx) error {
 		var zone string
@@ -129,7 +155,13 @@ func (s *Service) flatTaskQuery(_ http.ResponseWriter, r *http.Request, a identi
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, "SELECT to_jsonb(t)"+filter+order, append(args, limit+1, offset)...)
+		if page > 0 {
+			offset = (page - 1) * limit
+			if err := tx.QueryRow(ctx, "SELECT count(*)"+filter, args...).Scan(&total); err != nil {
+				return err
+			}
+		}
+		rows, err := tx.Query(ctx, "SELECT "+taskWithCode+filter+order, append(args, limit+1, offset)...)
 		if err != nil {
 			return err
 		}
@@ -151,5 +183,9 @@ func (s *Service) flatTaskQuery(_ http.ResponseWriter, r *http.Request, a identi
 		}
 		return nil
 	})
-	return map[string]any{"project_id": k.project, "items": items, "next_cursor": next, "version": version}, err
+	result := map[string]any{"project_id": k.project, "items": items, "next_cursor": next, "version": version}
+	if page > 0 {
+		result["total"] = total
+	}
+	return result, err
 }

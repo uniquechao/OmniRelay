@@ -41,6 +41,23 @@ function Briefings({base,items}) {
   return <Table headers={['项目简报','生成状态','投递状态','确认时间']} items={items} empty="暂无项目简报。" cells={row=>[
     <a href={base+'/reports/brief/'+row.id}>{row.business_date}</a>, row.generated_at?'已生成':'生成待确认',briefingState(row),row.delivery_confirmed_at || '—']}/>;
 }
+function BriefList({base,items,params}) {
+  if (!items.length) return <p className="empty" role="status">暂无项目简报。</p>;
+  return <ul className="pr-records">{items.map(row=><li key={row.id}>
+    <a className="pr-record pr-brief-link" href={withQuery(base+'/reports/brief/'+row.id,params)}>
+      <span><strong>{row.title || row.business_date+' 项目简报'}</strong>
+        <small><time dateTime={row.business_date}>{row.business_date}</time>{row.generated_at && <> · <span>已生成</span></>}{row.delivery_state && <> · <span>{briefingState(row)}</span></>}</small>
+        {row.excerpt && <span className="pr-brief-excerpt">{row.excerpt}</span>}</span>
+      <span aria-hidden="true" className="pr-record-end">›</span>
+    </a></li>)}</ul>;
+}
+function BriefDetail({row,base,params}) {
+  return <Panel title={row.title || row.business_date+' 项目简报'} action={<a href={withQuery(base+'/reports/brief',params)}>返回简报列表</a>}>
+    <time dateTime={row.business_date}>{row.business_date}</time>
+    {row.body ? <div className="pr-copy pr-brief-body">{row.body}</div> :
+      <Facts rows={ [['投递状态',briefingState(row)],['可见提交数',row.visible_submissions ?? (row.source_state==='unavailable'?'来源暂不可核验':'—')],['生成时间',row.generated_at],['确认时间',row.delivery_confirmed_at],['目标群',row.target_chat_id]] }/>}
+  </Panel>;
+}
 function ConnectionCheck({projectId,request,signal}) {
   const [state,setState]=useState(null),[busy,setBusy]=useState(false);
   async function check() {
@@ -61,8 +78,10 @@ export function ProjectPanels({route,data,people,openSettings,request,signal}) {
     const project=workspace.project;
     const owner=node=>node.owner_name || people.get(node.owner_member_id) || node.owner_member_id || '—';
     return <><Panel title="项目概况" action={workspace.can_manage_profile && <button className="button" type="button" data-project-settings="" aria-haspopup="dialog" onClick={e=>openSettings(e.currentTarget)}>项目设置</button>}>
-      <Facts rows={ [['负责人',workspace.owner?.display_name],['项目类型',<TypeBadge type={project.project_type} types={workspace.project_types}/>],
+      <Facts rows={ [['项目简称',project.short_code],['负责人',workspace.owner?.display_name],['项目类型',<TypeBadge type={project.project_type} types={workspace.project_types}/>],
         ['进展速览',milestones.progress?.record?.title || '待补充'],['计划开始日期',project.planned_start || '—'],['计划结束日期',project.planned_end || '—'],['业务时区',project.business_timezone || '—'],['项目背景',project.background || '—']] }/></Panel>
+      <Panel title="最近一次项目简报" action={<a href={base+'/reports/brief'}>查看全部简报</a>}>
+        <BriefList base={base} params={new URLSearchParams()} items={data.latest_briefing?[data.latest_briefing]:[]}/></Panel>
       <Panel title="关键节点"><Table headers={['期限','节点','负责人','状态']} items={milestones.items.filter(n=>n.kind==='milestone')} empty="暂无关键节点。"
         cells={n=>[n.occurs_on || '—',n.task_id?<><a href={base+'/tasks/'+n.task_id}>{n.title}</a>{n.task?.due_at && <> · <Deadline row={n.task}/></>}</>:n.title,owner(n),taskStages[n.status] || label(n.status)]}/>
         <a href={base+'/tasks'}>查看全部任务</a></Panel>
@@ -76,14 +95,14 @@ export function ProjectPanels({route,data,people,openSettings,request,signal}) {
   if (tab==='reports') {
     const row=parts[1] && data.items.find(r=>r.id===parts[1]);
     return <><nav className="pr-segment" aria-label="日报视图">{['成员日报','项目简报'].map((name,i)=><a key={name} href={base+'/reports'+(i?'/brief':'')} aria-current={Boolean(i)===Boolean(parts.length)?'page':undefined}>{name}</a>)}</nav>
-      {parts.length ? <Panel title="项目简报"><Briefings base={base} items={data.items}/>
-        {row && <Facts rows={ [['可见提交数',row.visible_submissions ?? (row.source_state==='unavailable'?'来源暂不可核验':'—')],['生成时间',row.generated_at],['目标群',row.target_chat_id]] }/>}</Panel> :
+      {row ? <BriefDetail row={row} base={base} params={route.params}/> : parts.length ? <Panel title="项目简报">
+        <BriefList base={base} items={data.items} params={route.params}/><Pager route={route} total={data.total}/></Panel> :
         <Panel title="成员日报"><Search route={route}/><Table headers={['成员','工作日','日报','提交状态']} items={data.items} empty="暂无成员日报。"
           cells={r=>[r.person_name,r.work_date,r.note,r.submission_state==='pending'?'待提交':label(r.submission_state)]}/><Pager route={route} total={data.total}/></Panel>}</>;
   }
   if (tab==='tasks') return <Panel title="关联任务"><Table headers={['任务','状态','优先级','负责人','里程碑','期限']} items={data.items} empty="暂无任务。"
     cells={r=>[<a href={base+'/tasks/'+r.id}>{r.title}</a>,taskStages[r.status] || label(r.status),r.priority_label || '未设置',r.owner_member_id || '未分配',r.milestone_id || '未关联',<Deadline row={r}/>]}/></Panel>;
-  return <Panel title={projectTabs[tab]}><Search route={route}/><Table headers={['标题','来源信息','关联任务']} items={data.items} empty="暂无记录。" cells={r=>{
+  return <Panel title={projectTabs[tab]}><Search route={route}/><Table headers={['标题','来源信息','关联任务']} items={data.items} empty={tab==='meetings' ? (route.params.get('q') ? '没有匹配的会议纪要。' : '暂无可读会议纪要。这里收录飞书妙记和标题含“纪要”“会议记录”等关键词的项目文档。') : '暂无记录。'} cells={r=>{
     const kind=r.ref?.kind || r.resource_type || r.kind, source=r.ref?.source_id || r.resource_token;
     return [<>{r.title || '未命名'}{r.file_id && r.version_id && <> <a download href={'/api/v1/feishu/files/'+encodeURIComponent(r.file_id)+'/versions/'+encodeURIComponent(r.version_id)+'/content?download=1&source_project='+encodeURIComponent(id)}>下载</a></>}</>,
       identifier.test(r.chat_id || '') && identifier.test(r.message_id || '')?<a href={'#/feishu/bot-chats/'+r.chat_id+'/'+r.message_id}>查看分享消息</a>:r.editor || r.created_at || '—',

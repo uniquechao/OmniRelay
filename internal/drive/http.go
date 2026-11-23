@@ -363,6 +363,8 @@ type ListEntry struct {
 	Key           any        `json:"id"`
 	SharedAt      *time.Time `json:"shared_at"`
 	LocalSourceID string     `json:"local_source_id,omitempty"`
+	FileRef       string     `json:"file_ref,omitempty"`
+	MarkedMinutes bool       `json:"marked_minutes,omitempty"`
 }
 
 func listEntries(files []item) []ListEntry {
@@ -376,7 +378,7 @@ func listEntries(files []item) []ListEntry {
 
 func LocalDocument(project, id, name string) ListEntry {
 	return ListEntry{Key: "document:" + id, LocalSourceID: id, item: item{
-		Name: name, Category: "files", Format: "项目文档", FormatKey: "generic", State: "local",
+		Name: name, Category: ProjectFileCategory("files", "generic", name), Format: "项目文档", FormatKey: "generic", State: "local",
 		Projects: []string{project}, Sources: []share{},
 	}}
 }
@@ -432,7 +434,7 @@ func FilePage(q url.Values, files []ListEntry) (map[string]any, error) {
 		for _, project := range f.Projects {
 			projectOptions[project] = project
 		}
-		if category != "" && category != "all" && category != f.Category && category != f.listCategory() {
+		if category != "" && category != "all" && category != f.Category && category != f.listCategory() && !(category == "minutes" && f.MarkedMinutes) {
 			continue
 		}
 		if state := q.Get("sync_state"); state != "" && state != f.State {
@@ -445,6 +447,9 @@ func FilePage(q url.Values, files []ListEntry) (map[string]any, error) {
 			continue
 		}
 		fields := []string{f.Name, f.Format, f.Category, categoryLabels[f.Category]}
+		if f.MarkedMinutes {
+			fields = append(fields, categoryLabels["minutes"])
+		}
 		fields = append(fields, f.Projects...)
 		for _, src := range f.Sources {
 			fields = append(fields, src.SenderName, src.ChatName)

@@ -148,6 +148,26 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	check("file_search", "reader", `{"q":"私有"}`, "document:doc")
 	check("file_get", "reader", `{"file_ref":"document:doc"}`, "私有文件")
 	call(t, "manager", "file_get", `{"file_ref":"document:doc"}`, 403)
+	call(t, "manager", "meeting_mark", `{"file_ref":"document:doc"}`, 403)
+	sql(`INSERT INTO project_sources(tenant_key,app_id,project_id,kind,id,title,body) VALUES('tenant','app','north','document','notes','讨论要点','记录');
+		INSERT INTO project_source_readers VALUES('tenant','app','north','document','notes','editor')`)
+	check("meeting_mark", "editor", `{"file_ref":"document:notes"}`, `"marked":true`)
+	call(t, "editor", "meeting_mark", `{"file_ref":"document:notes"}`, 200)
+	sql(`DELETE FROM project_source_readers WHERE source_id='notes'`)
+	call(t, "editor", "meeting_mark", `{"file_ref":"document:notes"}`, 403)
+	const dateArg = `{"business_date":"2026-11-23"}`
+	check("briefing_get", "member", dateArg, `"version":0`)
+	saveBrief := func(title string, v int) string {
+		return fmt.Sprintf(`{"business_date":"2026-11-23","title":%q,"body":"跨成员可读的项目进展","expected_version":%d}`, title, v)
+	}
+	check("briefing_save", "manager", saveBrief("第一版", 0), `"version":1`)
+	call(t, "manager", "briefing_save", saveBrief("重复创建", 0), 409)
+	call(t, "manager", "briefing_save", saveBrief("修订版", 1), 200)
+	call(t, "manager", "briefing_save", saveBrief("过期更新", 1), 409)
+	if got := call(t, "reader", "briefing_get", dateArg, 200); !strings.Contains(got, "修订版") || !strings.Contains(got, "跨成员可读的项目进展") || !strings.Contains(got, `"version":2`) {
+		t.Fatal(got)
+	}
+	call(t, "reader", "briefing_get", `{"business_date":"2026-02-30"}`, 400)
 	if got := call(t, "manager", "file_search", "{}", 200); strings.Contains(got, "私有") {
 		t.Fatal(got)
 	}

@@ -105,7 +105,7 @@ try {
     await b.reload();
     const link = route !== 'overview'?b.locator('#board-task-'+task.id):b.locator('a[href="#/projects/h3' + path + '"]').first();
     await link.waitFor();
-    const row = route !== 'overview' ? link : link.locator('xpath=ancestor::tr');
+    const row = route === 'tasks' ? link : link.locator('xpath=ancestor::tr');
     assert.match(await row.innerText(), /项目负责人/);
     if (route !== 'overview') assert.match(await row.innerText(), /联验/);
     if (route !== 'overview') assert.match(await link.innerText(), /两账号核验/);

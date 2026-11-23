@@ -5,6 +5,18 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+PROJECT_TOOLS = set("""
+context_whoami project_get project_update member_list member_add member_set_role member_update
+member_candidates member_remove chat_list chat_search_messages chat_bind chat_unbind chat_set_primary
+file_search file_get meeting_mark task_search task_get task_create task_update task_delete
+task_transition task_add_progress task_board_get task_query task_move task_bulk_update task_board_save
+task_tag_create task_tag_update task_tag_delete task_activity_list task_evidence_list task_feedback_list
+task_feedback_submit task_feedback_review task_candidate_sources task_candidate_chat_sources
+task_candidate_submit task_candidate_list task_candidate_review task_actions task_milestone_list
+task_milestone_create task_evidence_link task_source_tasks task_business_time task_board_timezone
+briefing_get briefing_save daily_report_query
+""".split())
+
 class Model(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -15,9 +27,7 @@ class Model(BaseHTTPRequestHandler):
         smoke = not tools and "Reply with exactly DSH_OK." in str(req["messages"][-1])
         if smoke:
             print("DSH model probe path", self.path, flush=True)
-        elif tools != set(("context_whoami project_get project_update member_list member_add member_set_role member_remove "
-                           "chat_list chat_search_messages chat_bind chat_unbind chat_set_primary file_search file_get "
-                           "task_search task_get task_create task_update task_transition task_add_progress daily_report_query").split()) and tools not in ({"context_whoami"}, {"activate_notice"}):
+        elif tools != PROJECT_TOOLS and tools not in ({"context_whoami"}, {"activate_notice"}):
             print("model-visible tools", sorted(tools), flush=True)
             self.send_error(400, "Unexpected tool roster")
             return

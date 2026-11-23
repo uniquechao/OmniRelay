@@ -337,7 +337,16 @@ func TestFileArchiveAccess(t *testing.T) {
 	if sources, err := s.ProjectSources(ctx, alice, "unrelated"); err != nil || len(sources) != 0 {
 		t.Fatal(sources, err)
 	}
+	if allowed, err := s.CanMarkProjectFile(ctx, alice, "p", docs[0].ID); err != nil || !allowed {
+		t.Fatal(allowed, err)
+	}
+	if allowed, err := s.CanMarkProjectFile(ctx, alice, "unrelated", docs[0].ID); err != nil || allowed {
+		t.Fatal(allowed, err)
+	}
 	exec("UPDATE project_members SET role='revoked'")
+	if allowed, err := s.CanMarkProjectFile(ctx, alice, "p", docs[0].ID); err != nil || allowed {
+		t.Fatal(allowed, err)
+	}
 	if total, _ := page(""); total != 0 {
 		t.Fatal(total)
 	}

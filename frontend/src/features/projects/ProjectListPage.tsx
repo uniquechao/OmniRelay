@@ -8,7 +8,7 @@ import {projectFollowsChanged, projectStatuses, projectStatusLabel} from './proj
 import {openProjectProfile} from './project-profile.js';
 
 type ProjectType = {name:string; tone:string};
-type ProjectRow = {id:string; name:string; status:string; project_type?:string; updated_at?:string; followed?:boolean; tone?:string};
+type ProjectRow = {id:string; short_code?:string; name:string; status:string; project_type?:string; updated_at?:string; followed?:boolean; tone?:string};
 type ProjectResult = {items:ProjectRow[]; total:number; can_create:boolean; project_types?:ProjectType[]};
 const emptyRows:ProjectRow[]=[];
 const nameOf=(row:ProjectRow)=>row.name;
@@ -74,6 +74,7 @@ export function ProjectListPage({guard}:{guard:RefObject<Guard>}) {
         Object.assign(memory,{list:location.hash,focus:href,scroll:scroller?.scrollTop,left:scroller?.scrollLeft});
       }}>{row.name}</a>;
     }},
+    {key:'short_code',label:'项目简称',text:row=>row.short_code || '—'},
     {key:'project_type',label:'类型',sort:row=>row.project_type || '',render:row=>row.project_type
       ? <span className="kind" data-project-type-tone={row.tone || 'neutral'}>{row.project_type}</span>:'—'},
     {key:'status',label:'阶段',sort:row=>row.status,render:row=><Status tone={stageTones[row.status as keyof typeof stageTones] || 'pending'}>{projectStatusLabel(row.status)}</Status>},

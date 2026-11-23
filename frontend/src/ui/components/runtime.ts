@@ -35,7 +35,7 @@ declare global {
       mountOrganizationTree(host: HTMLElement, nodes: Department[], options: {initialId?:string; includeAll?: boolean; selectBranches?:boolean; onChange?: (value: Selection) => void}): {focus(): void; value(): Selection | undefined};
       personView(person: Person): string;
       mountPersonCards(root: HTMLElement, options: {signal: AbortSignal}): void;
-      mountList(root: HTMLElement, config: object): {refresh(): void};
+      mountList(root: HTMLElement, config: object): {refresh(options?:{keepRows:boolean}): void};
     };
     OmniRelayLoading: {markup(options: Wait): string};
     OmniRelayLoginMotion(stage: HTMLElement): (() => void) | undefined;

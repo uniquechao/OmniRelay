@@ -94,7 +94,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
   const el = host.firstElementChild,
     q = (s) => el.querySelector(s);
   q('.task-path-project').textContent = project;
-  q('.task-path-code').textContent = creating ? '新建任务' : task.id;
+  q('.task-path-code').textContent = creating ? '新建任务' : task.task_code || task.id;
   if (creating) q('[data-save]').textContent = '创建任务';
   q('[data-close]').href = back;
   q('[data-close]').innerHTML = window.OmniRelayUI.icon('action-close');

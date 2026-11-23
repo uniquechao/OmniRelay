@@ -1,5 +1,5 @@
 import { useProjectRevision } from './project-state'
-import { useContext, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Button } from './controls'
 import { Input } from './controls'
 import { NativeSelect } from './controls'
@@ -33,6 +33,7 @@ import {
   type TaskSort,
 } from './api'
 import { TaskBulkEdit } from './TaskBulkEdit'
+import { ProjectTaskList } from './ProjectTaskList'
 import './project-task-board.css'
 import './task-board-header.css'
 
@@ -120,6 +121,16 @@ export function ProjectTaskBoard({
   }, [])
   const query = boardQuery({ q, sort, owner, milestone, status: '', column: '', tags: tagIds, overdue, dueFrom, dueBefore, due, timezone: project?.business_timezone, priority })
   const queryString = query.toString()
+  const listParams = new URLSearchParams(query)
+  if (column) listParams.set('filter_column_id', column)
+  if (status) listParams.set('status', status)
+  if (!column && !status) {
+    listParams.set('include_cancelled', 'true')
+    if (!showDone) listParams.set('exclude_done', 'true')
+  }
+  const listQuery = listParams.toString()
+  const [listPage, setListPage] = useState<{query:string; tasks:ProjectTask[]} | null>(null)
+  const onListPage = useCallback((tasks:ProjectTask[]) => setListPage({query:listQuery,tasks}), [listQuery])
   function failure(cause: unknown) {
     if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
       setBoard(null)
@@ -141,10 +152,12 @@ export function ProjectTaskBoard({
         setDrop(null)
       }
     })
-    const cancelledQuery = new URLSearchParams(queryString)
+    const activeQuery = new URLSearchParams(queryString)
+    if (layout === 'list') activeQuery.set('limit','1')
+    const cancelledQuery = new URLSearchParams(activeQuery)
     cancelledQuery.set('status','cancelled')
     Promise.all([
-      getProjectBoard(projectId, new URLSearchParams(queryString), controller.signal),
+      getProjectBoard(projectId, activeQuery, controller.signal),
       getProjectBoard(projectId, cancelledQuery, controller.signal),
     ]).then(([value, cancelled]) => {
         if (!controller.signal.aborted && generation === scope.current) {
@@ -167,7 +180,7 @@ export function ProjectTaskBoard({
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [projectId, queryString, retry, refreshKey, stateRevision])
+  }, [projectId, layout, queryString, retry, refreshKey, stateRevision])
   useEffect(() => {
     if (!notice) return
     const timer = setTimeout(() => setNotice(''), 6000)
@@ -366,6 +379,7 @@ export function ProjectTaskBoard({
   if (cancelledBoard?.columns.length && (status === 'cancelled' || (!column && !status && cancelledCount))) {
     visibleColumns.push({...cancelledBoard.columns[0], id:cancelledId, name:'已取消', color:'#798294', items:cancelledBoard.columns.flatMap(item=>item.items), total:cancelledCount, next_cursor:null})
   }
+  const bulkTasks = layout === 'list' ? (listPage?.query === listQuery ? listPage.tasks : []) : visibleColumns.flatMap(item=>item.items)
   const tabs = [
     {id:'', name:'全部', count:(board?.total ?? 0) + cancelledCount},
     ...columns.map(item=>({id:item.id,name:item.name,count:item.total})),
@@ -400,33 +414,35 @@ export function ProjectTaskBoard({
         <TaskTagPicker tags={board?.tags ?? []} value={tagIds} onChange={values => updateHashParams({ task_tags: values.length ? JSON.stringify(values) : null, task_tag: null })} label="按标签筛选" />
 <label>优先级<NativeSelect value={priority} onChange={event => setPriority(event.target.value)}><option value="">全部优先级</option><option value="unset">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</NativeSelect></label><label>截止开始（UTC）<Input type="date" value={dueFrom} onChange={event => { setDueFrom(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label><label>截止结束（UTC，不含）<Input type="date" value={dueBefore} onChange={event => { setDueBefore(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label>
             {filtered && <Button variant="outline" onClick={clear}>清空筛选</Button>}
-            <details><summary>移动操作说明</summary>拖动卡片或按 Alt + 方向键移动任务。</details>
+            {layout === 'board' && <details><summary>移动操作说明</summary>拖动卡片或按 Alt + 方向键移动任务。</details>}
           </PopoverContent></Popover>
-          {canManage && <Button variant="ghost" disabled={!board || !visibleColumns.some(c=>c.items.length)} onClick={()=>setBulk(true)}><ListChecks size={15} aria-hidden />批量操作</Button>}
+          {canManage && <Button variant="ghost" disabled={!board || !bulkTasks.length} onClick={()=>setBulk(true)}><ListChecks size={15} aria-hidden />批量操作</Button>}
         </div>
         <div className="task-page-display"><div className="task-layout-switch" role="group" aria-label="显示方式">
           <button type="button" aria-pressed={layout==='list'} onClick={()=>setLayout('list')}><List size={14} aria-hidden />列表</button>
           <button type="button" aria-pressed={layout==='board'} onClick={()=>setLayout('board')}><Columns3 size={14} aria-hidden />看板</button>
         </div>
           <Popover open={sortOpen} onOpenChange={setSortOpen}><PopoverTrigger asChild><Button ref={sortTrigger} className="board-toolbar-icon" variant="outline" aria-label="任务排序" title="任务排序" data-active={sort !== 'manual' || undefined}><ArrowUpDown size={15} aria-hidden /></Button></PopoverTrigger><PopoverContent align="end" className="board-choice-menu" aria-label="任务排序"><p>排序方式</p><fieldset><legend className="sr-only">排序方式</legend>{Object.entries({manual:'手动顺序',priority:'优先级',due:'截止日期',title:'任务名称'}).map(([value,label])=><label key={value}><input type="radio" name="task-sort" value={value} checked={sort===value} onChange={()=>{setSort(value as TaskSort);setSortOpen(false);requestAnimationFrame(()=>sortTrigger.current?.focus({preventScroll:true}))}} />{label}</label>)}</fieldset></PopoverContent></Popover>
-          <Popover open={fieldsOpen} onOpenChange={setFieldsOpen}><PopoverTrigger asChild><Button id="board-fields-trigger" variant="outline" aria-label="展示字段" title="展示字段"><Settings size={15} aria-hidden />展示字段</Button></PopoverTrigger><PopoverContent align="end" className="board-choice-menu" aria-label="展示字段"><p>显示选项</p><label><input type="checkbox" checked={showDone} onChange={event=>setShowDone(event.target.checked)} />显示已完成列</label><label><input type="checkbox" checked={fit} onChange={event=>setFit(event.target.checked)} />铺满可用宽度</label><label><input type="checkbox" checked={showTags} onChange={event=>setShowTags(event.target.checked)} />显示标签</label><label><input type="checkbox" checked={showDates} onChange={event=>setShowDates(event.target.checked)} />显示日期</label>{(project?.actions?.includes('configure_board') ?? canManage) && <Button variant="ghost" disabled={!board || loading} onClick={() => {setFieldsOpen(false);setSettingsColumn(undefined);setSettings(true)}}>看板设置</Button>}</PopoverContent></Popover>
+          <Popover open={fieldsOpen} onOpenChange={setFieldsOpen}><PopoverTrigger asChild><Button id="board-fields-trigger" variant="outline" aria-label="展示字段" title="展示字段"><Settings size={15} aria-hidden />展示字段</Button></PopoverTrigger><PopoverContent align="end" className="board-choice-menu" aria-label="展示字段"><p>显示选项</p><label><input type="checkbox" checked={showDone} onChange={event=>setShowDone(event.target.checked)} />{layout === 'list' ? '显示已完成任务' : '显示已完成列'}</label>{layout === 'board' && <label><input type="checkbox" checked={fit} onChange={event=>setFit(event.target.checked)} />铺满可用宽度</label>}<label><input type="checkbox" checked={showTags} onChange={event=>setShowTags(event.target.checked)} />显示标签</label><label><input type="checkbox" checked={showDates} onChange={event=>setShowDates(event.target.checked)} />显示日期</label>{(project?.actions?.includes('configure_board') ?? canManage) && <Button variant="ghost" disabled={!board || loading} onClick={() => {setFieldsOpen(false);setSettingsColumn(undefined);setSettings(true)}}>看板设置</Button>}</PopoverContent></Popover>
         </div>
       </div>
       <div className="task-page-status"><div className="task-status-tabs" role="group" aria-label="任务状态筛选">
         {tabs.map(tab=><button key={tab.id} type="button" aria-pressed={currentTab===tab.id} onClick={()=>selectTab(tab.id)}>{tab.name}<span>{board ? tab.count : '—'}</span></button>)}
       </div><span className="task-page-total" role="status">{board ? `${visibleColumns.reduce((sum,item)=>sum+item.total,0)} 项任务` : '正在加载…'}</span></div>
     </header>
-    {bulk && <TaskBulkEdit projectId={projectId} tasks={visibleColumns.flatMap(item=>item.items)} onClose={()=>setBulk(false)} onSaved={()=>{setBulk(false);setRetry(n=>n+1);setNotice('所选任务的优先级已更新。')}}/>}
-    {sort !== 'manual' && <p className="board-help ui-hint" role="status">当前排序禁止手动移动，请先切换手动排序。</p>}
+    {bulk && <TaskBulkEdit projectId={projectId} tasks={bulkTasks} onClose={()=>setBulk(false)} onSaved={()=>{setBulk(false);setRetry(n=>n+1);setNotice('所选任务的优先级已更新。')}}/>}
+    {layout === 'board' && sort !== 'manual' && <p className="board-help ui-hint" role="status">当前排序禁止手动移动，请先切换手动排序。</p>}
     {error && <div className="board-notice error" role="alert">{error}<Button variant="outline" onClick={() => setRetry(value => value + 1)}>重新加载看板</Button></div>}
     {notice && <div className="board-notice" role="status">{notice}<Button variant="ghost" onClick={() => setNotice('')}>关闭提示</Button></div>}
-    <div ref={scrollRef} className={`board-scroll${layout==="list" ? " task-list-layout" : ""}`} role="region" aria-label="任务状态列" tabIndex={0}>
-      <div className={`board-columns${!fit ? ' board-fixed' : ''}${visibleColumns.length === 1 ? ' board-single' : ''}`}>
+    <div ref={scrollRef} className={`board-scroll${layout==="list" ? " task-list-layout" : ""}`} role="region" aria-label={layout === 'list' ? '任务清单' : '任务状态列'} tabIndex={layout === 'board' ? 0 : undefined}>
+      {layout === 'list' ? board && project && <ProjectTaskList key={projectId + listQuery} {...{project,board,canManage,showDates,showTags}}
+        query={listQuery} revision={retry + refreshKey + stateRevision} onPage={onListPage} onOpen={onOpenTask}
+        onRefresh={()=>setRetry(n=>n+1)} onNotice={setNotice} /> : <div className={`board-columns${!fit ? ' board-fixed' : ''}${visibleColumns.length === 1 ? ' board-single' : ''}`}>
         {visibleColumns.map(item => { const ci = board!.columns.findIndex(source => source.id === item.id); return <section key={item.id} className="board-lane" role="region" aria-label={item.name} data-drop-target={drop?.column === item.id || undefined} onDragOver={event => {if(item.id!==cancelledId) over(event,item.id)}} onDrop={event => { event.preventDefault(); if (item.id!==cancelledId && drop) void move(drop) }}>
           <header><span className="board-dot" style={{background:item.color}} /><h3>{item.name}</h3><span className="board-count">{item.total}</span>{item.id !== cancelledId && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" id={'board-menu-'+item.id} className="board-lane-menu" aria-label={`${item.name}列操作`}><MoreHorizontal size={15} aria-hidden /></button></DropdownMenuTrigger><DropdownMenuContent align="end" aria-label={`${item.name}列操作`}><DropdownMenuItem onSelect={() => { setColumn(column === item.id ? '' : item.id); setStatus('') }}>{column === item.id ? '查看全部状态' : '只看此列'}</DropdownMenuItem>{(project?.actions?.includes('configure_board') ?? canManage) && <DropdownMenuItem onSelect={() => { setSettingsColumn(item.id); setSettings(true) }}>编辑状态列</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>}{item.id !== cancelledId && (canManage || project?.actions.includes('create_task') && item.stage==='todo') && project && <button className="board-lane-add" type="button" aria-label={`在「${item.name}」新建任务`} onClick={() => setCreating(item.id)}><Plus size={15} aria-hidden /></button>}</header>
           <div className="board-cards">{item.items.map((task,ti) => { const ownerName = task.owner_member_id ? project?.members.find(member => member.id === task.owner_member_id)?.display_name ?? task.relation_names?.[task.owner_member_id] ?? '成员姓名未知' : '未分配'; const cardTags = task.tag_ids?.map(id => board!.tags.find(tag => tag.id === id)).filter((tag): tag is NonNullable<typeof tag> => Boolean(tag)) ?? []; return <article key={task.id} className="board-card" data-dragging={drag?.id === task.id || undefined} data-insert={drop?.before === task.id ? 'before' : drop?.after === task.id ? 'after' : undefined} draggable={canMove(task)} onDragStart={event => { if (!canMove(task)) { event.preventDefault(); return }; event.dataTransfer.setData('text/plain', task.id); event.dataTransfer.effectAllowed='move'; setDrag(task) }} onDragOver={event => {if(item.id!==cancelledId) over(event,item.id,task)}} onDragEnd={() => { setDrag(null); setDrop(null) }}>
-            <button type="button" id={`board-task-${task.id}`} className="board-card-open" data-view-trigger={task.id} aria-haspopup="dialog" aria-keyshortcuts={canMove(task) ? 'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight' : undefined} aria-label={`T-${String(task.display_number ?? '').padStart(3,'0')} ${task.title}`} onClick={() => onOpenTask(task.id)} onKeyDown={event => keyboard(event,task,ci,ti)}>
-              <span className="board-card-top"><small>T-{String(task.display_number ?? '').padStart(3,'0')}</small><span className="board-card-owner">{task.owner_member_id && <span className="board-avatar" aria-hidden>{Array.from(ownerName).slice(-2).join('')}</span>}{ownerName}</span></span>
+            <button type="button" id={`board-task-${task.id}`} className="board-card-open" data-view-trigger={task.id} aria-haspopup="dialog" aria-keyshortcuts={canMove(task) ? 'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight' : undefined} aria-label={`${task.task_code} ${task.title}`} onClick={() => onOpenTask(task.id)} onKeyDown={event => keyboard(event,task,ci,ti)}>
+              <span className="board-card-top"><small>{task.task_code}</small><span className="board-card-owner">{task.owner_member_id && <span className="board-avatar" aria-hidden>{Array.from(ownerName).slice(-2).join('')}</span>}{ownerName}</span></span>
               {(task.priority || (showTags && cardTags.length > 0)) && <span className="board-tags">{task.priority && <span className="board-priority" data-priority={task.priority}>{{P0:'紧急',P1:'高',P2:'中',P3:'低'}[task.priority]}</span>}{showTags && <>{cardTags.slice(0,2).map(tag => <span key={tag.id} title={`${tag.type} / ${tag.name}`}>{tag.name}</span>)}{cardTags.length > 2 && <span title={cardTags.slice(2).map(tag => `${tag.type} / ${tag.name}`).join('、')}>+{cardTags.length - 2}</span>}</>}</span>}
               <strong>{task.title}</strong>{task.blocked_reason && <span className="board-blocker" title={task.blocked_reason}>{task.blocked_reason}</span>}
               {showDates && <time dateTime={task.due_at ?? undefined} className={task.overdue ? 'board-overdue' : ''} title={task.due_at ?? undefined}>{task.overdue ? '逾期 ' : ''}{task.due_at ? taskDate(task.due_at,project?.business_timezone ?? 'UTC').slice(5).replace('-', '/') : '无截止日期'}</time>}
@@ -434,7 +450,7 @@ export function ProjectTaskBoard({
             {(canManage || project?.actions?.includes('update_own_task')) && <Popover><PopoverTrigger asChild><button className="board-card-action" type="button" aria-label={`任务操作：${task.title}`}><MoreHorizontal size={14} aria-hidden /></button></PopoverTrigger><PopoverContent align="end" className="board-card-actions" aria-label={`任务操作：${task.title}`}><label>移动到<NativeSelect aria-label={`移动${task.title}`} value={task.column_id} disabled={!canMove(task)} onChange={event => void move({task,column:event.target.value})}>{board!.columns.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}</NativeSelect></label></PopoverContent></Popover>}
           </article>})}{!item.items.length && <p className="board-empty">{filtered ? '无匹配任务' : '暂无任务'}</p>}{item.id === cancelledId && cancelledBoard!.columns.filter(source=>source.next_cursor).map(source=><Button key={source.id} variant="outline" disabled={pending||loading} onClick={()=>void loadMore(source,true)}>继续加载已取消任务（{source.name}）</Button>)}{item.next_cursor && <Button variant="outline" disabled={pending || loading} onClick={() => void loadMore(item)}>继续加载{item.name}</Button>}</div>
         </section>})}
-      </div>
+      </div>}
     </div>
     {settings && board && <ProjectBoardSettings projectId={projectId} board={board} initialColumnId={settingsColumn} onDenied={failure} onClose={() => setSettings(false)} onSaved={() => { setSettings(false); setRetry(value => value+1); setNotice('看板设置已保存，列中全部任务已按配置迁移。') }} />}
     {creating !== null && project && <ProjectTaskInspector project={project} taskId="" mode="create" initialColumnId={creating || board?.default_column_id} canManage={canManage} onClose={() => setCreating(null)} onChanged={() => setRetry(value => value+1)} onCreated={() => { setCreating(null); setNotice('正式任务已创建。') }} />}

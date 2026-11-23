@@ -46,7 +46,7 @@ export function ProjectTaskWorkspace({ project, canManage }: { project: ProjectD
   }, [project.id, view, countRevision, stateRevision])
   function openTask(id: string, intent?: TaskEditIntent) {
     if (id && taskId && id !== taskId && !window.dispatchEvent(new CustomEvent('omni-grid:before-route-change', { cancelable: true }))) return
-    const scroll = boardDock.current?.querySelector<HTMLElement>('.board-scroll')
+    const scroll = boardDock.current?.querySelector<HTMLElement>('.task-list-layout .list-scroll') ?? boardDock.current?.querySelector<HTMLElement>('.board-scroll')
     if (id && !taskId && scroll) boardPosition.current = { left: scroll.scrollLeft, top: scroll.scrollTop }
     const prior = taskId
     const position = boardPosition.current ?? { left: scroll?.scrollLeft ?? 0, top: scroll?.scrollTop ?? 0 }

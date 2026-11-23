@@ -82,15 +82,17 @@ export type Column<Row>={key:string;label:string;text?:(row:Row)=>string;render?
 export type RowAction<Row>={label:string;run:(row:Row,trigger:HTMLButtonElement)=>void;visible?:(row:Row)=>boolean};
 export type PageState = {page:number;pageSize:number;query:string;filters:Record<string,string>;sort:{key:string;direction:'asc'|'desc'}};
 export type RemotePage<Row> = (state:PageState,signal:AbortSignal)=>Promise<{items:Row[];total:number;options?:Record<string,Record<string,string>>}>;
-export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,rowLabel,search,filters,actions,onSelection,loadPage,defaultSort,initial,defaultFilters,selection,actionLabel="操作"}: {
+export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,rowLabel,search,filters,actions,onSelection,loadPage,defaultSort,initial,defaultFilters,selection,toolbar=true,revision,actionLabel="操作"}: {
   label:string;itemLabel:string;rows:Row[];columns:Column<Row>[];rowLabel:(row:Row)=>string;search:(row:Row)=>string;
   filters?:{key:string;label:string;options:Record<string,string>;matches?:(row:Row,value:string)=>boolean}[];
-  selection?:boolean;actionLabel?:string;
+  selection?:boolean;toolbar?:boolean;revision?:number;actionLabel?:string;
   initial?:Partial<PageState>;defaultFilters?:Record<string,string>;
   actions?:RowAction<Row>[];onSelection?:(ids:string[])=>void;
 } & ({loadPage:RemotePage<Row>;defaultSort:PageState['sort']} | {loadPage?:undefined;defaultSort?:PageState['sort']})) {
   const id=useId().replace(/[^a-zA-Z0-9_-]/g,'_');
   const states=useRef(new Map());
+  const mountedList=useRef<ReturnType<typeof ui.mountList> | null>(null);
+  const lastRevision=useRef(revision);
   const latest=useLatest({actions,rowLabel,onSelection});
   const lastSelection=useRef<string[]>([]);
   const [slots,setSlots]=useState<{host:Element;row:Row;column:number}[]>([]);
@@ -102,7 +104,7 @@ export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,
     if(actions?.length) cells.push({key:'actions',label:ui.escape(actionLabel),render:row=>'<div class="dev-actions">'+
       (latest.current.actions ?? []).map((action,i)=>action.visible && !action.visible(row)?'':`<button type="button" class="row-action" data-row-action="${i}" aria-label="${ui.escape(action.label+' '+latest.current.rowLabel(row))}">${ui.escape(action.label)}</button>`).join('')+'</div>'});
     let visibleRows=rows;
-    ui.mountList(host,{signal,loadPage,defaultSort:initial?.sort ?? defaultSort,defaultFilters,initialFilters:initial?.filters,initialQuery:initial?.query,
+    mountedList.current=ui.mountList(host,{signal,loadPage,toolbar,defaultSort:initial?.sort ?? defaultSort,defaultFilters,initialFilters:initial?.filters,initialQuery:initial?.query,
       initialPage:initial?.page,initialPageSize:initial?.pageSize,selection,key:id,label:ui.escape(label),itemLabel:ui.escape(itemLabel),rows,states:states.current,columns:cells,rowLabel,search,
       onSelection(ids:string[]) {
         if(ids.length===lastSelection.current.length && ids.every((v,i)=>v===lastSelection.current[i])) return;
@@ -122,7 +124,11 @@ export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,
       const row=visibleRows.find(r=>r.id===button.closest('tr')?.dataset.row);
       if(row) latest.current.actions?.[Number(button.dataset.rowAction)]?.run(row,button);
     });
-  },[id,label,itemLabel,rows,columns,filters,actions,rowLabel,search,loadPage,defaultSort,initial,defaultFilters,selection,actionLabel]);
+  },[id,label,itemLabel,rows,columns,filters,actions,rowLabel,search,loadPage,defaultSort,initial,defaultFilters,selection,toolbar,actionLabel]);
+  useLayoutEffect(()=>{
+    if (lastRevision.current !== revision) mountedList.current?.refresh({keepRows:true});
+    lastRevision.current=revision;
+  },[revision]);
   return <><div className="react-list-host" ref={ref}/>{slots.map(slot=>
     createPortal(columns[slot.column]?.render?.(slot.row),slot.host,slot.row.id+'-'+slot.column))}</>;
 }

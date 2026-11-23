@@ -47,6 +47,7 @@ type interactionMember struct {
 type storedTask struct {
 	RelationNames           map[string]string   `json:"relation_names,omitempty"`
 	InteractionParticipants []interactionMember `json:"interaction_participants,omitempty"`
+	TaskCode                string              `json:"task_code"`
 	DisplayNumber           int64               `json:"display_number"`
 	Overdue                 bool                `json:"overdue"`
 	CreatedBy               *string             `json:"created_by"`
@@ -169,7 +170,9 @@ type taskReader interface {
 
 // Detail and milestone views share a projection. Assignment is stored separately so
 // that someone who comments appears among participants without gaining edit access.
-const taskWithInteractions = `to_jsonb(t) || jsonb_build_object('interaction_participants', (
+const taskCodeSQL = "project_task_code(c.short_code,t.display_number)"
+const taskWithCode = "to_jsonb(t) || jsonb_build_object('task_code'," + taskCodeSQL + ")"
+const taskWithInteractions = taskWithCode + ` || jsonb_build_object('interaction_participants', (
     WITH actors(id) AS (
         SELECT t.created_by
         UNION SELECT e.actor_id FROM project_task_activity e
@@ -189,7 +192,7 @@ func (k taskScope) task(ctx context.Context, db taskReader, id string, now time.
 	var raw []byte
 	var version int64
 	var zone string
-	err := db.QueryRow(ctx, "SELECT "+taskWithInteractions+", b.version,b.business_timezone FROM project_tasks t JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4 AND t.deleted_at IS NULL", k.args(id)...).Scan(&raw, &version, &zone)
+	err := db.QueryRow(ctx, "SELECT "+taskWithInteractions+", b.version,b.business_timezone FROM project_tasks t JOIN project_short_codes c USING(tenant_key,app_id,project_id) JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4 AND t.deleted_at IS NULL", k.args(id)...).Scan(&raw, &version, &zone)
 	if err != nil {
 		return result, taskError(err)
 	}
@@ -325,7 +328,7 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 			if err := tx.QueryRow(ctx, "SELECT count(*)"+filter, args...).Scan(&c.Total); err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, "SELECT to_jsonb(t)"+filter+order, append(args, limit, offset)...)
+			rows, err := tx.Query(ctx, "SELECT "+taskWithCode+filter+order, append(args, limit, offset)...)
 			if err != nil {
 				return err
 			}

@@ -350,7 +350,7 @@ window.OmniRelayUI = (() => {
     root.className = 'standard-list';
     root.setAttribute('aria-label', config.label);
     root.innerHTML = `
-      <section class="list-toolbar" aria-label="列表工具栏">
+      <section class="list-toolbar" aria-label="列表工具栏" ${config.toolbar === false ? 'hidden' : ''}>
         <div class="list-toolbar-main">
           <input class="search" data-search type="search" aria-label="${queryLabel}" placeholder="${queryLabel}" value="${escape(state.query)}">
           <button class="button" type="button" data-more popovertarget="${popoverId}">${optionsLabel}</button>

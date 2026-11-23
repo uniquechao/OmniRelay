@@ -361,7 +361,7 @@ td a:hover { text-decoration: underline; }
 <script>
 const projects = {
   beichen: {
-    name: '北辰交付项目', kind: '交付验收', status: 'progress', lead: '王宁', group: '北辰交付项目群', update: '11 月 18 日 17:50',
+    name: '北辰交付项目', short_code:'BCJ', kind: '交付验收', status: 'progress', lead: '王宁', group: '北辰交付项目群', update: '11 月 18 日 17:50',
     updatedAt: '2026-11-18T17:50:00+08:00',
     summary: '联调能否按期验收，取决于测试环境恢复时间。', latest: '验收主路径待环境恢复',
     tasks: [
@@ -380,7 +380,7 @@ const projects = {
     brief: '11 月 18 日 · 项目每日简报'
   },
   qiming: {
-    name: '启明试点项目', kind: '内部试点', status: 'pending', lead: '林晓', group: '待绑定', update: '11 月 17 日 16:20',
+    name: '启明试点项目', short_code:'QMS', kind: '内部试点', status: 'pending', lead: '林晓', group: '待绑定', update: '11 月 17 日 16:20',
     updatedAt: '2026-11-17T16:20:00+08:00',
     summary: '', latest: '正在确定首批试点范围',
     tasks: [
@@ -391,20 +391,20 @@ const projects = {
   }
 };
 const extraProjects = [
-  ['云帆运营试点', '赵可', 'progress'], ['星河质量专项', '陈悦', 'progress'],
-  ['知行流程梳理', '林晓', 'pending'], ['青禾交付准备', '王宁', 'progress'],
-  ['远山验收演练', '陈悦', 'success'], ['海棠上线准备', '赵可', 'danger'],
-  ['山岚数据迁移', '林晓', 'progress'], ['新桥工单归档', '王宁', 'success'],
-  ['南星联调试点', '赵可', 'progress'], ['长风需求收集', '林晓', 'pending'],
-  ['栖云运营交接', '陈悦', 'pending'], ['向阳文档治理', '王宁', 'success'],
-  ['启航发布试点', '林晓', 'progress'], ['松石评审计划', '陈悦', 'pending'],
-  ['东篱回归验证', '赵可', 'progress'], ['明川项目复盘', '王宁', 'success']
+  ['云帆运营试点', 'YFY', '赵可', 'progress'], ['星河质量专项', 'XHZ', '陈悦', 'progress'],
+  ['知行流程梳理', 'ZXL', '林晓', 'pending'], ['青禾交付准备', 'QHJ', '王宁', 'progress'],
+  ['远山验收演练', 'YSY', '陈悦', 'success'], ['海棠上线准备', 'HTS', '赵可', 'danger'],
+  ['山岚数据迁移', 'SLS', '林晓', 'progress'], ['新桥工单归档', 'XQG', '王宁', 'success'],
+  ['南星联调试点', 'NXL', '赵可', 'progress'], ['长风需求收集', 'CFX', '林晓', 'pending'],
+  ['栖云运营交接', 'QYY', '陈悦', 'pending'], ['向阳文档治理', 'XYW', '王宁', 'success'],
+  ['启航发布试点', 'QHF', '林晓', 'progress'], ['松石评审计划', 'SSP', '陈悦', 'pending'],
+  ['东篱回归验证', 'DLH', '赵可', 'progress'], ['明川项目复盘', 'MCX', '王宁', 'success']
 ];
 const exampleProgress = { progress:'按当前节点推进', pending:'待确认启动范围', success:'已完成本期交付', danger:'等待依赖确认' };
-extraProjects.forEach(([name, lead, status], index) => {
+extraProjects.forEach(([name, short_code, lead, status], index) => {
   const day = 16 - Math.floor(index / 2);
   projects['example-' + (index + 1)] = {
-    name, lead, status, kind:'内部示例', group:'待绑定', update:'11 月 ' + day + ' 日',
+    name, short_code, lead, status, kind:'内部示例', group:'待绑定', update:'11 月 ' + day + ' 日',
     updatedAt:'2026-11-' + String(day).padStart(2,'0') + 'T00:00:00+08:00',
     latest:exampleProgress[status], summary:'', tasks:[], milestones:[], attention:[], brief:''
   };
