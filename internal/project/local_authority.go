@@ -201,8 +201,11 @@ func (s *Service) setTag(w http.ResponseWriter, r *http.Request, a identity.Prin
 	}
 	k, ctx := scope(a, r.PathValue("projectID")), r.Context()
 	err := k.write(ctx, s, a, "project.assign", func(tx pgx.Tx, _ int64) error {
-		_, err := tx.Exec(ctx, `INSERT INTO project_task_tags VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_key,app_id,project_id,id) DO UPDATE SET name=EXCLUDED.name`, k.args(id, in.Name)...)
-		return err
+		_, err := tx.Exec(ctx, `INSERT INTO project_task_tags(tenant_key,app_id,project_id,id,name) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_key,app_id,project_id,id) DO UPDATE SET name=EXCLUDED.name`, k.args(id, in.Name)...)
+		if err != nil {
+			return err
+		}
+		return k.bump(ctx, tx)
 	})
 	return map[string]string{"id": id, "name": in.Name}, err
 }

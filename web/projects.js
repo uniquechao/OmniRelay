@@ -10,7 +10,7 @@ const tabs = {
   meetings: '会议纪要',
   docs: '文件',
   reports: '日报',
-  tasks: '任务',
+  tasks: '任务看板',
   bot: 'Bot',
 };
 const identifier = /^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,199}$/;
@@ -192,8 +192,6 @@ export async function mountProjectSummary(host, request, signal) {
 }
 
 const taskStages = { todo: '待开始', in_progress: '进行中', blocked: '受阻', done: '已完成' };
-const priorityStyles = { P0: 'urgent', P1: 'important', P2: 'normal', P3: 'low' };
-const priorityTones = { P0: 'danger', P1: 'important' };
 
 function taskDeadline(row) {
   if (!row?.due_at) return '<span class="pr-deadline">无截止日期</span>';
@@ -217,14 +215,14 @@ function taskFilters(route, board, nodes, people) {
     [...nodes].map(([id,title]) => choice(id,title,milestone)).join('') + choice('@none','未关联里程碑',milestone) + '</select>');
 }
 
-function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = false) {
+function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = false, columns = []) {
   return table(
     ['任务', '状态', '优先级', '负责人', '里程碑', '期限'],
     items.map((row) => [
       link(base + '/tasks/' + row.id, row.title),
       (row.can_move ?? canMove) && row.status !== 'cancelled'
-        ? `<select class="select" data-move-task="${esc(row.id)}" aria-label="移动任务：${esc(row.title)}">${Object.entries(taskStages).map(([id, name]) =>
-          `<option value="${id}"${id === row.column_id ? ' selected' : ''}>${name}</option>`).join('')}</select>`
+        ? `<select class="select" data-move-task="${esc(row.id)}" aria-label="移动任务：${esc(row.title)}">${columns.map(({id, name}) =>
+          `<option value="${esc(id)}"${id === row.column_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
         : esc(taskStages[row.status] || label(row.status)),
       esc(row.priority_label || '未设置'),
       esc(people.get(row.owner_member_id) || row.owner_member_id || '未分配'),
@@ -233,25 +231,6 @@ function taskRows(base, items, nodes = new Map(), people = new Map(), canMove = 
     ]),
     '暂无任务。',
   );
-}
-
-function taskCard(base, row, nodes, people, canMove, tagNames) {
-  const owner = people.get(row.owner_member_id) || row.owner_member_id || '未分配';
-  const milestone = nodes.get(row.milestone_id) || row.milestone_id;
-  const tags = (row.tag_ids || []).map(id => tagNames.get(id) || id);
-  const movable = (row.can_move ?? canMove) && row.status !== 'cancelled';
-  return `<li data-task-id="${esc(row.id)}" draggable="${movable}">
-    <a href="${esc(base + '/tasks/' + row.id)}" class="pr-task" draggable="false" data-priority="${priorityStyles[row.priority] || 'normal'}"
-       ${movable ? 'aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" aria-describedby="task-move-help"' : ''}>
-      <span class="pr-task-top"><span class="pr-task-code" title="${esc(row.id)}">${esc(row.id)}</span>
-        <span class="pr-task-person" title="${esc(owner)}">${window.OmniRelayUI.personAvatar(owner, row.owner_member_id || owner)}<span class="sr-only">负责人：${esc(owner)}</span></span></span>
-      <span class="pr-task-tags"><span data-tone="${priorityTones[row.priority] || 'pending'}">${esc(row.priority_label || '未设置')}</span>
-        ${tags.slice(0, 2).map(tag => '<span>' + esc(tag) + '</span>').join('')}${tags.length > 2 ? '<span>+' + (tags.length - 2) + '</span>' : ''}</span>
-      <strong class="pr-task-title" title="${esc(row.title)}">${esc(row.title)}</strong>
-      ${row.status === 'blocked' && row.blocked_reason ? `<span class="pr-task-blocker" title="${esc(row.blocked_reason)}">${esc(row.blocked_reason)}</span>` : ''}
-      ${milestone ? `<span class="pr-task-milestone" title="里程碑：${esc(milestone)}"><svg class="icon" aria-hidden="true"><use href="#status-milestone"/></svg><span><span class="sr-only">里程碑：</span>${esc(milestone)}</span></span>` : ''}
-      ${taskDeadline(row)}
-    </a></li>`;
 }
 
 function firstTaskPage(route) {
@@ -294,11 +273,12 @@ function wireMoves(body, route, board, request, signal, reload) {
   }
   async function move(id, target, before) {
     const task = tasks.get(id);
-    if (!current() || busy || !task || task.can_move === false || task.status === 'cancelled' || !Object.hasOwn(taskStages, target) ||
+    if (!current() || busy || !task || task.can_move === false || task.status === 'cancelled' || !board.columns.some(c=>c.id===target) ||
         before === id || (!before && target === task.column_id)) return;
     busy = true;
+    const targetStage=board.columns.find(c=>c.id===target)?.stage;
     let reason = task.blocked_reason || '';
-    if (target === 'blocked' && task.column_id !== target) {
+    if (targetStage === 'blocked' && task.column_id !== target) {
       reason = await requestMoveReason(task, signal, false);
       if (reason === undefined || !current()) {
         busy = false;
@@ -306,7 +286,7 @@ function wireMoves(body, route, board, request, signal, reload) {
       }
     }
     let changeReason = '';
-    if (task.status === 'done' && target !== task.column_id) {
+    if (task.status === 'done' && targetStage !== 'done') {
       changeReason = await requestMoveReason(task, signal, true);
       if (!changeReason || !current()) {
         busy = false;
@@ -319,7 +299,7 @@ function wireMoves(body, route, board, request, signal, reload) {
         method: 'POST', signal,
         body: { request_key: crypto.randomUUID(), expected_task_version: task.version,
           expected_board_version: board.version, target_column_id: target, before_id: before,
-          blocked_reason: target === 'blocked' ? reason : '', change_reason: changeReason },
+          blocked_reason: targetStage === 'blocked' ? reason : '', change_reason: changeReason },
       });
     } catch (error) {
       if (!current()) return;
@@ -350,7 +330,7 @@ function wireMoves(body, route, board, request, signal, reload) {
     const card = e.target.closest('[data-task-id][draggable="true"]');
     if (!card || !e.altKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     e.preventDefault();
-    const stages = Object.keys(taskStages);
+    const stages = board.columns.map(column=>column.id);
     const index = stages.indexOf(card.closest('[data-column]').dataset.column);
     void move(card.dataset.taskId, stages[index + (e.key === 'ArrowRight' ? 1 : -1)]);
   };
@@ -389,7 +369,7 @@ function columnNext(route, column) {
   params.set('cursor', column.next_cursor);
   return link(withQuery(route.hash.split('?')[0], params), '查看「' + column.name + '」下一页');
 }
-function contents(route, data, milestones = [], people = new Map(), tagNames = new Map()) {
+function contents(route, data, milestones = [], people = new Map()) {
   const { base, tab, parts } = route;
   if (tab === 'overview') {
     const { workspace, milestones } = data;
@@ -517,7 +497,6 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
   }
   if (tab === 'tasks') {
     if (parts.length === 3) return panel('关联任务', taskRows(base, data.items));
-    const list = parts[0] === 'list';
     const criteria = new URLSearchParams(route.params);
     criteria.delete('cursor');
     criteria.delete('column_id');
@@ -526,14 +505,8 @@ function contents(route, data, milestones = [], people = new Map(), tagNames = n
     const nav = '<nav class="pr-segment" aria-label="任务视图">' + views.map(([name, path]) =>
       `<a href="${esc(withQuery(path, criteria))}"${route.hash.split('?')[0] === path ? ' aria-current="page"' : ''}>${name}</a>`).join('') + '</nav>';
     const toolbar = '<div class="pr-toolbar task-toolbar">' + taskFilters(route, data, nodes, people) + nav + '</div>';
-    if (list) return toolbar + taskRows(base, data.columns.flatMap(c => c.items), nodes, people, data.can_move) +
+    return toolbar + taskRows(base, data.columns.flatMap(c => c.items), nodes, people, data.can_move, data.columns) +
       data.columns.map(c => columnNext(route, c)).join(' ');
-    const tones = { todo: 'pending', in_progress: 'progress', blocked: 'danger', done: 'success' };
-    return toolbar + (data.can_move ? '<small id="task-move-help">拖动卡片可移动任务，键盘可用 Alt + 左右方向键移列。</small>' : '') +
-      '<div class="pr-board" role="region" aria-label="任务看板" tabindex="0">' + data.columns.map(c =>
-        `<section class="pr-lane" data-column="${esc(c.id)}"><h3><span class="chip" data-tone="${tones[c.id] || 'pending'}">${esc(c.name)}</span><span>${esc(c.total)}</span></h3>
-        <ul>${c.items.map(row => taskCard(base, row, nodes, people, data.can_move, tagNames)).join('')}</ul>
-        ${c.items.length ? '' : '<p class="pr-lane-empty">暂无任务</p>'}${columnNext(route, c)}</section>`).join('') + '</div>';
   }
   const rows = data.items.map((row) => {
     const kind = row.ref?.kind || row.resource_type || row.kind,
@@ -723,10 +696,9 @@ export async function mountProjects(host, route, request, { signal, memory, scop
         ? overview
         : tab === 'chats' || tab === 'docs' || (tab === 'bot' && !botSettings)
           ? Promise.resolve()
-          : creatingTask ? request('/api/v1/projects/' + id + '/tasks', {signal}) : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
+          : creatingTask ? request('/api/v1/projects/' + id + '/tasks', {signal}) : boardView && !parts.length ? request('/api/v1/projects/'+id+'/board?limit=1',{signal}) : boardView ? fetchTaskBoard(route, request, signal) : request(endpoint(contentRoute), { signal });
     const members = boardView || tab === 'overview' ? request('/api/v1/projects/' + id + '/members', { signal }) : undefined;
-    const tagList = boardView && !parts.length ? request('/api/v1/projects/' + id + '/task-tags', { signal }) : undefined;
-    const [header, result, directory, tagDirectory] = await Promise.allSettled([overview, content, members, tagList]);
+    const [header, result, directory] = await Promise.allSettled([overview, content, members]);
     if (!current()) return;
     if (header.status === 'rejected' && [403, 404].includes(header.reason.status)) throw header.reason;
     if (result.status === 'rejected') throw result.reason;
@@ -778,6 +750,18 @@ export async function mountProjects(host, route, request, { signal, memory, scop
       return;
     }
     const data = result.value.data ?? result.value;
+    if (boardView && !parts.length) {
+      const {mountBoard}=await import('../frontend/src/features/task-board/mount.tsx');
+      if (!current()) return;
+      if (directory.status==='rejected') throw directory.reason;
+      const actions=[];
+      if (data.can_comment) actions.push('comment');
+      if (data.can_create) actions.push('create_task','update_own_task');
+      if (data.can_configure) actions.push('configure_board');
+      mountBoard(body,{id,name:project?.name || id,business_timezone:data.business_timezone,current_member_id:data.member_id,
+        actions,members:(directory.value?.data?.members || []).map(member=>({...member,id:member.member_id || member.id}))},data.can_assign,signal,navigation);
+      return;
+    }
     if (tab === 'tasks' && parts.length === 1 && parts[0] !== 'list') {
       const { mountTaskDetail } = await import('./task-detail.js');
       if (!current()) return;
@@ -787,11 +771,10 @@ export async function mountProjects(host, route, request, { signal, memory, scop
       return;
     }
     body.innerHTML =
-      (header.status === 'rejected' || directory.status === 'rejected' || tagDirectory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
+      (header.status === 'rejected' || directory.status === 'rejected' || partial(data) ? empty('部分数据暂不可用。') : '') +
       (botSettings ? link(base + '/bot', '返回 Bot 对话') : '') +
       contents(contentRoute, data, header.value?.data.milestones?.items || [],
-        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])),
-        new Map((tagDirectory.value?.items || []).map(tag => [tag.id, tag.name])));
+        new Map((directory.value?.data?.members || []).map(m => [m.member_id || m.id, m.display_name])));
     if (tab === 'members') wireProjectMembers(body,{data,projectId:id,request,signal,navigation,refresh});
     if (boardView && data.can_create) body.querySelector('.task-toolbar')?.insertAdjacentHTML('beforeend', `<a class="button primary" href="${base}/tasks/new">新建任务</a>`);
     const settings = body.querySelector('[data-project-settings]');

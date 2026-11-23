@@ -23,11 +23,26 @@ func viewQuery(panel string, input url.Values) (url.Values, error) {
 		keys = []string{"q", "page", "page_size", "category", "kind", "tag"}
 	case "reports":
 		keys = []string{"q", "page", "page_size", "date_from", "date_to", "revision"}
-	case "tasks":
+	case "tasks", "board":
 		keys = []string{"q", "status", "owner_member_id", "milestone_id", "milestone_unassigned", "limit", "column_id", "cursor"}
+	}
+	if panel == "board" {
+		keys = append(keys, "sort", "priority", "priority_unset", "tag_ids", "tag_match", "no_due", "overdue_only", "due_from", "due_before", "owner_unassigned", "filter_column_id")
 	}
 	result := make(url.Values)
 	for key, values := range input {
+		if panel == "board" && key == "tag_ids" {
+			if len(values) > 50 {
+				return nil, errInput
+			}
+			for _, v := range values {
+				if !identifier.MatchString(v) {
+					return nil, errInput
+				}
+				result.Add(key, v)
+			}
+			continue
+		}
 		if !slices.Contains(keys, key) || len(values) != 1 || len(values[0]) > 1024 && (key != "cursor" || len(values[0]) > 1500) {
 			return nil, errInput
 		}

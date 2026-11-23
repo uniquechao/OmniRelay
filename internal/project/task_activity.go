@@ -79,7 +79,7 @@ func taskValues(t storedTask) map[string]any {
 	if t.Status == "cancelled" {
 		status = "已取消"
 	}
-	return map[string]any{"列内位置": t.Position, "标题": t.Title, "正文": t.Description, "主负责人": t.Owner, "参与人": t.Participants, "验收条件": t.Acceptance, "开始日期": t.Start, "截止日期": t.Due, "优先级": t.PriorityLabel, "标签": t.Tags, "里程碑": t.Milestone, "状态": status, "受阻原因": t.Blocked, "完成结果": t.Completion, "变更原因": t.Change}
+	return map[string]any{"所在列": t.Column, "列内位置": t.Position, "标题": t.Title, "正文": t.Description, "主负责人": t.Owner, "参与人": t.Participants, "验收条件": t.Acceptance, "开始日期": t.Start, "截止日期": t.Due, "优先级": t.PriorityLabel, "标签": t.Tags, "里程碑": t.Milestone, "状态": status, "受阻原因": t.Blocked, "完成结果": t.Completion, "变更原因": t.Change}
 }
 
 func (k taskScope) history(ctx context.Context, tx pgx.Tx, actor identity.Principal, action string, old, new storedTask) error {

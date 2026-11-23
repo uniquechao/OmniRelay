@@ -40,6 +40,8 @@ type taskFields struct {
 	Tags         []string `json:"tag_ids"`
 }
 type storedTask struct {
+	DisplayNumber int64      `json:"display_number"`
+	Overdue       bool       `json:"overdue"`
 	CreatedBy     *string    `json:"created_by"`
 	CreatedByName *string    `json:"created_by_name"`
 	CreatedAt     *time.Time `json:"created_at"`
@@ -65,7 +67,6 @@ type storedTask struct {
 }
 
 var priorityLabels = map[string]string{"P0": "紧急", "P1": "重要", "P2": "普通", "P3": "低"}
-var columnOrder = []string{"todo", "in_progress", "blocked", "done"}
 var columnNames = map[string]string{"todo": "待开始", "in_progress": "进行中", "blocked": "受阻", "done": "已完成"}
 
 func businessDate(raw string, loc *time.Location) (time.Time, error) {
@@ -102,6 +103,7 @@ func (t *storedTask) present(now time.Time, version int64) error {
 	if due.Year() != y {
 		t.DueLabel = due.Format("2006/1/2")
 	}
+	t.Overdue = t.Status != "done" && t.Status != "cancelled" && due.Before(today)
 	t.DueAlert = t.Status != "done" && t.Status != "cancelled" && !due.After(today.AddDate(0, 0, 3))
 	if t.DueAlert {
 		switch {
@@ -179,6 +181,8 @@ func (k taskScope) task(ctx context.Context, db taskReader, id string, now time.
 }
 
 type boardColumn struct {
+	Stage  string       `json:"stage"`
+	Color  string       `json:"color"`
 	ID     string       `json:"id"`
 	Name   string       `json:"name"`
 	Items  []storedTask `json:"items"`
@@ -186,23 +190,27 @@ type boardColumn struct {
 	Cursor *string      `json:"next_cursor"`
 }
 type taskBoard struct {
-	CanMove   bool          `json:"can_move"`
-	CanCreate bool          `json:"can_create"`
-	MemberID  string        `json:"member_id"`
-	CanAssign bool          `json:"can_assign"`
-	Owners    []string      `json:"owner_member_ids"`
-	Project   string        `json:"project_id"`
-	Version   int64         `json:"version"`
-	Timezone  string        `json:"business_timezone"`
-	Columns   []boardColumn `json:"columns"`
-	Total     int           `json:"total"`
+	Tags         []boardTag    `json:"tags"`
+	Default      string        `json:"default_column_id"`
+	CanComment   bool          `json:"can_comment"`
+	CanConfigure bool          `json:"can_configure"`
+	CanMove      bool          `json:"can_move"`
+	CanCreate    bool          `json:"can_create"`
+	MemberID     string        `json:"member_id"`
+	CanAssign    bool          `json:"can_assign"`
+	Owners       []string      `json:"owner_member_ids"`
+	Project      string        `json:"project_id"`
+	Version      int64         `json:"version"`
+	Timezone     string        `json:"business_timezone"`
+	Columns      []boardColumn `json:"columns"`
+	Total        int           `json:"total"`
 }
 
 func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Values, now time.Time) (taskBoard, error) {
 	board := taskBoard{Project: k.project}
 	limit, offset := 50, 0
 	selected := query.Get("column_id")
-	if selected != "" && columnNames[selected] == "" {
+	if selected != "" && !identifier.MatchString(selected) {
 		return board, errInput
 	}
 	if query.Has("limit") {
@@ -215,6 +223,12 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 	var cursorVersion int64
 	if query.Has("cursor") {
 		parts := strings.Split(query.Get("cursor"), ".")
+		if query.Has("board_view") {
+			if len(parts) != 3 || parts[2] != boardCursorScope(k, query, selected) {
+				return board, errConflict
+			}
+			parts = parts[:2]
+		}
 		if len(parts) != 2 || selected == "" {
 			return board, errInput
 		}
@@ -260,17 +274,34 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 		if err != nil {
 			return err
 		}
-		for _, id := range columnOrder {
+		cfg, err := k.config(ctx, tx)
+		if err != nil {
+			return err
+		}
+		board.Default = cfg.Default
+		if selected != "" {
+			if _, err := cfg.resolve(selected, ""); err != nil {
+				return err
+			}
+		}
+		board.Tags, err = k.boardTags(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, l := range cfg.Columns {
+			id := l.ID
 			if selected != "" && selected != id {
 				continue
 			}
-			c := boardColumn{ID: id, Name: columnNames[id], Items: []storedTask{}}
-			filter := " FROM project_tasks t WHERE " + projectWhere + ` AND deleted_at IS NULL AND column_id=$4 AND ($5='' OR strpos(lower(title||' '||description),lower($5))>0) AND ($6='' OR owner_member_id=$6) AND ($7='' OR milestone_id=$7) AND (NOT $8 OR milestone_id IS NULL) AND ($9='' OR status=$9)`
-			args := k.args(id, query.Get("q"), query.Get("owner_member_id"), query.Get("milestone_id"), query.Get("milestone_unassigned") == "true", query.Get("status"))
+			c := boardColumn{ID: id, Name: l.Name, Stage: l.Stage, Color: l.Color, Items: []storedTask{}}
+			filter, args, order, err := boardPredicate(k, id, query, now)
+			if err != nil {
+				return err
+			}
 			if err := tx.QueryRow(ctx, "SELECT count(*)"+filter, args...).Scan(&c.Total); err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, "SELECT to_jsonb(t)"+filter+" ORDER BY position,id LIMIT $10 OFFSET $11", append(args, limit, offset)...)
+			rows, err := tx.Query(ctx, "SELECT to_jsonb(t)"+filter+order, append(args, limit, offset)...)
 			if err != nil {
 				return err
 			}
@@ -288,6 +319,9 @@ func (k taskScope) board(ctx context.Context, pool *pgxpool.Pool, query url.Valu
 			c.Items = tasks
 			if offset+len(tasks) < c.Total {
 				cursor := fmt.Sprintf("%d.%d", board.Version, offset+len(tasks))
+				if query.Has("board_view") {
+					cursor += "." + boardCursorScope(k, query, id)
+				}
 				c.Cursor = &cursor
 			}
 			board.Columns = append(board.Columns, c)

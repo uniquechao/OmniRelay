@@ -39,7 +39,7 @@ try{
  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
  await dialog.getByRole('button',{name:'保存修改',exact:true}).click();await page.getByRole('cell',{name:'最终验收职责',exact:true}).waitFor();
  await mkdir('.runtime/evidence',{recursive:true});await page.screenshot({path:'.runtime/evidence/members-1440-light.png'});
- await page.goto(origin+'/#/projects/h3/tasks');await page.getByRole('link',{name:'新建任务',exact:true}).click();
+ await page.goto(origin+'/#/projects/h3/tasks/list');await page.getByRole('link',{name:'新建任务',exact:true}).click();
  await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
  // Owner and participants select the same system identities, within project membership.
  await page.getByLabel('主负责人',{exact:true}).fill('second');
@@ -66,6 +66,7 @@ try{
  const assigned=await api('POST','/tasks',{title:'需交接任务',owner_member_id:'second'});second=(await api('GET','/members')).data.members.find(m=>m.account_id==='second');await api('PUT','/members/second',{role:'revoked',expected_version:second.version},409);
  await api('DELETE','/tasks/'+assigned.id,{expected_version:assigned.version,change_reason:'清理',request_key:'cleanup-assigned'});
  await page.goto(origin+'/#/projects/h3/members');await page.getByRole('button',{name:'编辑 项目成员',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByRole('button',{name:'移除成员',exact:true}).click();await page.getByRole('dialog').last().getByRole('button',{name:'移除成员',exact:true}).click();await page.getByRole('button',{name:'添加成员',exact:true}).waitFor();
+ await page.getByRole('button',{name:'编辑 项目成员',exact:true}).waitFor({state:'detached'});
  assert.equal((await api('GET','/members')).data.members.length,1);
  const manager=(await api('GET','/members')).data.members[0];await api('PUT','/members/manager',{role:'revoked',expected_version:manager.version},409);
  // Reader sees data but cannot manage it through either the page or direct API calls.
@@ -73,6 +74,6 @@ try{
  const reader=await browser.newContext({ignoreHTTPSErrors:true});const rp=await reader.newPage();await reader.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username:'second',password:process.env.H3_PASSWORD}});const rme=await(await reader.request.get(origin+'/api/v1/me')).json();
  await rp.goto(origin+'/#/projects/h3/members');await rp.getByRole('heading',{name:'项目成员',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'添加成员',exact:true}).count(),0);
  const denied=await reader.request.put(origin+root+'/members/manager',{headers:{Origin:origin,'X-CSRF-Token':rme.csrf_token},data:{expected_version:manager.version,responsibility:'不允许'}});assert.equal(denied.status(),404);
- await rp.goto(origin+'/#/projects/h3/tasks');await rp.getByRole('region',{name:'任务看板',exact:true}).waitFor();assert.equal(await rp.getByRole('link',{name:'新建任务',exact:true}).count(),0);
+ await rp.goto(origin+'/#/projects/h3/tasks');await rp.getByRole('region',{name:'正式任务看板',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'新建任务',exact:true}).count(),0);
  assert.deepEqual(errors,[]);console.log('PASS real API/browser member add/edit/conflict/remove/last-manager/reader; task create/update/delete; desktop/mobile light/dark');
 }finally{await browser.close();}

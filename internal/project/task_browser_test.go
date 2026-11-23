@@ -57,10 +57,17 @@ func TestTaskTwoAccountBrowser(t *testing.T) {
 }
 
 func TestProjectMemberTaskCRUDBrowser(t *testing.T) {
+	runProjectBrowser(t, "member_task_crud_browser", "tests/integration/project_member_task_crud.mjs")
+}
+func TestTaskBoardReplicaBrowser(t *testing.T) {
+	runProjectBrowser(t, "task_board_replica_browser", "tests/integration/task_board_replica.mjs")
+}
+func runProjectBrowser(t *testing.T, schema, script string) {
+	t.Helper()
 	if os.Getenv("OMNIRELAY_PLAYWRIGHT_MODULE") == "" {
 		t.Skip("双账号浏览器验收需要 Playwright")
 	}
-	pool := testProjectPool(t, "member_task_crud_browser")
+	pool := testProjectPool(t, schema)
 	roles := access.New(pool, "tenant", "app")
 	roles.ProjectAccess = access.LocalProjects{Pool: pool}
 	var secret [24]byte
@@ -90,7 +97,7 @@ func TestProjectMemberTaskCRUDBrowser(t *testing.T) {
 	service := Service{pool: pool, roles: roles}
 	service.Register(mux, auth.Authenticate)
 	web.Register(mux)
-	cmd := exec.CommandContext(t.Context(), "node", "tests/integration/project_member_task_crud.mjs")
+	cmd := exec.CommandContext(t.Context(), "node", script)
 	cmd.Dir = "../.."
 	cmd.Env = append(os.Environ(), "H3_ORIGIN="+server.URL, "H3_PASSWORD="+password)
 	if out, err := cmd.CombinedOutput(); err != nil {

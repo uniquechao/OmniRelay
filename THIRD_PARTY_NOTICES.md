@@ -21,3 +21,5 @@ README 中的第三方图形和品牌链接用于标明来源，相关权利归�
 | [Vercel Web Design Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines) | `.agents/skills/web-design-guidelines/` | [MIT](.agents/skills/web-design-guidelines/LICENSE)，[上游声明](https://github.com/vercel-labs/agent-skills#license) |
 
 聊天文档卡片使用飞书开放平台提供的文档、电子表格、多维表格、妙记、知识库和文件图标，资源保存在 `web/feishu-icons/`。图标权利归各自权利人。[飞书图标枚举](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/enumerations-for-icons)
+
+项目任务看板移植自 OmniGrid 的《任务看板独立复刻交付包》（2026-11-22）。看板、任务检查器、候选审核、设置面板及其样式位于 `frontend/src/features/task-board/`。菜单和弹层使用 Radix UI，组合框和任务检查器使用 React Aria Components，图标使用 Lucide React，拼音搜索使用 pinyin-pro。对应版本记录在 `package-lock.json`。

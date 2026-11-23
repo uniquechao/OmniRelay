@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -122,10 +123,18 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PUT "+project+"/profile", "project.settings", s.setProfile)
 	handle("POST "+project+"/archive", "project.settings", s.archiveProject)
 	handle("PUT "+project+"/reports/mine/{date}", "project.comment", s.saveReport)
-	handle("GET "+project+"/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		query, err := viewQuery("tasks", r.URL.Query())
+	readBoard := func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+		replica := strings.HasSuffix(r.URL.Path, "/board")
+		view := "tasks"
+		if replica {
+			view = "board"
+		}
+		query, err := viewQuery(view, r.URL.Query())
 		if err != nil {
 			return nil, err
+		}
+		if replica {
+			query.Set("board_view", "true")
 		}
 		board, err := scope(actor, r.PathValue("projectID")).board(r.Context(), s.pool, query, time.Now())
 		if err != nil {
@@ -138,6 +147,11 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 		if !grant.Member {
 			return nil, errDenied
 		}
+		board.CanComment = grant.CanComment
+		board.CanConfigure, err = s.roles.Check(r.Context(), actor, "project.settings", board.Project)
+		if err != nil {
+			return nil, err
+		}
 		board.MemberID = grant.MemberID
 		board.CanCreate, board.CanAssign = grant.CanUpdateOwn || grant.CanAssign, grant.CanAssign
 		board.CanMove = grant.CanAssign
@@ -148,8 +162,42 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				board.CanMove = board.CanMove || movable
 			}
 		}
+		if strings.HasSuffix(r.URL.Path, "/board/tags") {
+			return map[string]any{"tags": board.Tags, "version": board.Version}, nil
+		}
+		if strings.HasSuffix(r.URL.Path, "/board/config") {
+			return board, nil
+		}
+		if replica {
+			return board, nil
+		}
 		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
+	}
+	handle("GET "+project+"/tasks", "project.read", readBoard)
+	handle("GET "+project+"/board", "project.read", readBoard)
+	handle("GET "+project+"/tasks/query", "project.read", s.flatTaskQuery)
+	handle("GET "+project+"/tasks/{taskID}/history", "project.read", func(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
+		q := r.URL.Query()
+		q.Set("kind", "change")
+		r.URL.RawQuery = q.Encode()
+		return s.activity(w, r, a)
 	})
+	handle("PUT "+project+"/board", "project.settings", s.saveBoard)
+	handle("GET "+project+"/task-candidates", "project.read", s.candidates)
+	handle("GET "+project+"/task-candidates/chat-source", "project.assign", s.chatCandidateSources)
+	handle("GET "+project+"/task-candidates/source", "project.assign", s.candidateSources)
+	handle("POST "+project+"/task-candidates", "project.assign", s.submitCandidates)
+	handle("POST "+project+"/task-candidates/{candidateID}/review", "project.assign", s.reviewCandidate)
+	handle("POST "+project+"/tasks/bulk-update", "project.assign", s.bulkTasks)
+	for _, op := range []string{"POST", "PUT"} {
+		handle(op+" "+project+"/board/tags", "project.settings", s.boardTagCommand)
+	}
+	for _, op := range []string{"DELETE", "PUT"} {
+		handle(op+" "+project+"/board/tags/{tagID}", "project.settings", s.boardTagCommand)
+	}
+	handle("GET "+project+"/board/config", "project.read", readBoard)
+	handle("GET "+project+"/board/tags", "project.read", readBoard)
+	handle("GET "+project+"/tasks/business-time", "project.read", s.businessTime)
 	handle("POST "+project+"/tasks", "project.read", s.saveTask)
 	handle("PUT "+project+"/tasks/{taskID}", "project.read", s.saveTask)
 	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", func(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {

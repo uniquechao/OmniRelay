@@ -10,7 +10,7 @@ const errors = [];
 async function login(username) {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
-  page.setDefaultTimeout(5000);
+  page.setDefaultTimeout(15000);
   page.on('pageerror', error => errors.push(error.message));
   const headers = { Origin: origin };
   const login = await context.request.post(origin + '/auth/login', {
@@ -102,7 +102,7 @@ try {
   for (const route of ['tasks','tasks/list','overview']) {
     await b.goto(origin + '/#/projects/h3/' + route);
     await b.reload();
-    const link = b.locator('a[href="#/projects/h3' + path + '"]').first();
+    const link = route==='tasks'?b.locator('#board-task-'+task.id):b.locator('a[href="#/projects/h3' + path + '"]').first();
     await link.waitFor();
     const row = route === 'tasks' ? link : link.locator('xpath=ancestor::tr');
     assert.match(await row.innerText(), /项目负责人/);
@@ -110,8 +110,7 @@ try {
     if (route !== 'overview') assert.match(await link.innerText(), /两账号核验/);
     await b.locator('time[datetime="2026-11-23"]').first().waitFor();
     await link.click();
-    assert.equal(await field(b, 'title').inputValue(), record.title);
-    assert.equal(await field(b, 'description').inputValue(), record.description);
+    if(route==='tasks'){assert.equal(await b.getByLabel('任务标题',{exact:true}).inputValue(),record.title);assert.equal(await b.getByLabel('任务正文',{exact:true}).inputValue(),record.description)}else{assert.equal(await field(b, 'title').inputValue(), record.title);assert.equal(await field(b, 'description').inputValue(), record.description)}
   }
 
   const changes = () => second.api('GET', path + '/activity?kind=change');

@@ -15,7 +15,11 @@ import (
 )
 
 type saveTask struct {
-	BoardVersion *int64 `json:"expected_board_version,omitempty"`
+	AddTags         []string `json:"add_tags,omitempty"`
+	RemoveTags      []string `json:"remove_tags,omitempty"`
+	ExpectedVersion *int64   `json:"expected_version,omitempty"`
+	Column          string   `json:"column_id,omitempty"`
+	BoardVersion    *int64   `json:"expected_board_version,omitempty"`
 	taskFields
 	Expected   int64   `json:"expected_task_version"`
 	Key        string  `json:"request_key"`
@@ -97,6 +101,16 @@ func (s *Service) saveTask(w http.ResponseWriter, r *http.Request, a identity.Pr
 	return s.saveTaskInput(r.Context(), scope(a, r.PathValue("projectID")), r.PathValue("taskID"), a, in)
 }
 func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a identity.Principal, in saveTask) (any, error) {
+	if in.ExpectedVersion != nil {
+		if in.Expected != 0 && in.Expected != *in.ExpectedVersion {
+			return nil, errInput
+		}
+		in.Expected = *in.ExpectedVersion
+	}
+	incremental := in.AddTags != nil || in.RemoveTags != nil
+	if incremental && (in.Tags != nil || id == "") {
+		return nil, errInput
+	}
 	if strings.TrimSpace(in.Title) == "" || !textLimit(in.Title, 200) || !textLimit(in.Description, 10000) || !textLimit(in.Acceptance, 4000) || !textLimit(in.Change, 4000) || in.Key != "" && !validKey(in.Key) {
 		return nil, errInput
 	}
@@ -153,6 +167,9 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 			return errDenied
 		}
 		if !grant.CanAssign {
+			if incremental {
+				return errDenied
+			}
 			if !grant.CanUpdateOwn || in.Change != "" {
 				return errDenied
 			}
@@ -172,6 +189,13 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 			}
 		}
 		result, err = k.command(ctx, tx, a, in.Key, []any{"save", id, in}, func() (any, error) {
+			if incremental {
+				var e error
+				in.Tags, e = deltaTags(old.Tags, in.AddTags, in.RemoveTags)
+				if e != nil {
+					return nil, e
+				}
+			}
 			if id != "" && !canUpdateProgress(old, grant) {
 				return nil, errDenied
 			}
@@ -186,7 +210,9 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 				}
 				start, _ := businessDate(*in.Start, loc)
 				due, _ := businessDate(*in.Due, loc)
-				if due.Before(start) {
+				startInstant, se := time.Parse(time.RFC3339, *in.Start)
+				dueInstant, de := time.Parse(time.RFC3339, *in.Due)
+				if due.Before(start) || se == nil && de == nil && dueInstant.Before(startInstant) {
 					return nil, errInput
 				}
 			}
@@ -196,11 +222,27 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 			if old.Version != in.Expected {
 				return nil, errTaskVersion
 			}
-			status := in.Status
-			if status == "" {
-				status = old.Status
-				if status == "" {
-					status = "todo"
+			cfg, err := k.config(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
+			status, column := in.Status, in.Column
+			if status == "cancelled" {
+				column = old.Column
+				if column == "" {
+					return nil, errInput
+				}
+			} else {
+				if column == "" && old.ID != "" && (status == "" || status == old.Status) {
+					column = old.Column
+				}
+				l, err := cfg.resolve(column, status)
+				if err != nil || status != "" && status != l.Stage {
+					return nil, errInput
+				}
+				column, status = l.ID, l.Stage
+				if !grant.CanAssign && id == "" && status != "todo" {
+					return nil, errDenied
 				}
 			}
 			blocked, completion := old.Blocked, old.Completion
@@ -226,21 +268,14 @@ func (s *Service) saveTaskInput(ctx context.Context, k taskScope, id string, a i
 			if err != nil {
 				return nil, err
 			}
-			column := status
-			if status == "cancelled" {
-				column = old.Column
-				if column == "" {
-					column = "todo"
-				}
-			}
 			args := k.args(in.Title, in.Description, in.Owner, in.Milestone, in.Priority, in.Due, in.Tags, status, column, blocked, completion, in.Change, in.Acceptance, in.Participants, in.Start, names)
 			action := "task.updated"
 			if id == "" {
 				action = "task.created"
 				err = tx.QueryRow(ctx, `INSERT INTO project_tasks(tenant_key,app_id,project_id,title,description,owner_member_id,milestone_id,priority,due_at,tag_ids,status,column_id,blocked_reason,completion_note,change_reason,acceptance,participant_ids,start_at,relation_names,position)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,COALESCE(max(position),0)+1 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12 RETURNING id", args...).Scan(&id)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,COALESCE(max(position),0)+1024 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12 RETURNING id", args...).Scan(&id)
 			} else {
-				_, err = tx.Exec(ctx, `UPDATE project_tasks SET title=$4,description=$5,owner_member_id=$6,milestone_id=$7,priority=$8,due_at=$9,tag_ids=$10,status=$11,column_id=$12,blocked_reason=$13,completion_note=$14,change_reason=$15,acceptance=$16,participant_ids=$17,start_at=$18,relation_names=relation_names||$19::jsonb,version=version+1,position=CASE WHEN column_id=$12 THEN position ELSE (SELECT COALESCE(max(position),0)+1 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12) END WHERE "+projectWhere+" AND id=$20", append(args, id)...)
+				_, err = tx.Exec(ctx, `UPDATE project_tasks SET title=$4,description=$5,owner_member_id=$6,milestone_id=$7,priority=$8,due_at=$9,tag_ids=$10,status=$11,column_id=$12,blocked_reason=$13,completion_note=$14,change_reason=$15,acceptance=$16,participant_ids=$17,start_at=$18,relation_names=relation_names||$19::jsonb,version=version+1,position=CASE WHEN column_id=$12 THEN position ELSE (SELECT COALESCE(max(position),0)+1024 FROM project_tasks WHERE `+projectWhere+" AND column_id=$12) END WHERE "+projectWhere+" AND id=$20", append(args, id)...)
 			}
 			if err != nil {
 				return nil, err

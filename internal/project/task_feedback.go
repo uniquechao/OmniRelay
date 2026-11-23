@@ -102,7 +102,18 @@ func (s *Service) review(w http.ResponseWriter, r *http.Request, a identity.Prin
 			if old.Version != taskVersion {
 				return errTaskVersion
 			}
-			_, err = tx.Exec(ctx, "UPDATE project_tasks SET status=$5,column_id=$5,blocked_reason=CASE WHEN $5='blocked' THEN $6 ELSE '' END,completion_note=CASE WHEN $5='done' THEN $6 ELSE completion_note END,change_reason=$7,version=version+1,position=CASE WHEN column_id=$5 THEN position ELSE (SELECT COALESCE(max(position),0)+1 FROM project_tasks WHERE "+projectWhere+" AND column_id=$5) END WHERE "+projectWhere+" AND id=$4", k.args(taskID, proposed, note, in.Reason)...)
+			cfg, err := k.config(ctx, tx)
+			if err != nil {
+				return err
+			}
+			target, err := cfg.resolve("", proposed)
+			if err != nil {
+				return err
+			}
+			if old.Status == proposed {
+				target.ID = old.Column
+			}
+			_, err = tx.Exec(ctx, "UPDATE project_tasks SET status=$5,column_id=$8,blocked_reason=CASE WHEN $5='blocked' THEN $6 ELSE '' END,completion_note=CASE WHEN $5='done' THEN $6 ELSE completion_note END,change_reason=$7,version=version+1,position=CASE WHEN column_id=$8 THEN position ELSE (SELECT COALESCE(max(position),0)+1024 FROM project_tasks WHERE "+projectWhere+" AND column_id=$8) END WHERE "+projectWhere+" AND id=$4", k.args(taskID, proposed, note, in.Reason, target.ID)...)
 			if err != nil {
 				return err
 			}

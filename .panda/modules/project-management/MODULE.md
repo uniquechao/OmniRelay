@@ -58,3 +58,9 @@ last_used_ts: 1795196363110
 - `DELETE /api/v1/projects/{projectID}/tasks/{taskID}` 要求任务管理权、`expected_version` 和 `change_reason`；`request_key` 可重放原回执。任务逻辑删除保留活动和来源引用，但退出看板、搜索、详情、评论和来源任务查询，同时解除节点绑定。插件 `task_delete` 共用同一命令，由 Gateway 回执账本去重。
 - 插件 `member_candidates`、`member_update` 分别提供候选查询和按资料版本修改；`task_create` / `task_update` 接受日期、验收条件、里程碑、参与人与标签，仍执行字段级权限。
 - 关键回归：`TestMemberTaskCRUDAtomicity`、`TestProjectMemberTaskCRUDBrowser`、`TestProjectPMToolMatrix`、`TestProjectToolCRUDRecoveryGate`。浏览器通过真实登录与独立 PostgreSQL 验证网页操作；Gateway 回调独立验证插件重试和撤权。
+
+## 项目任务看板
+
+- 工作台 `#/projects/{id}/tasks` 挂载独立 React 看板，按当前登录会话和会籍读取任务。旧链接 `tasks/{taskID}` 和 `tasks/list` 仍可用于原任务详情、里程碑与软删除管理。
+- 任务编号在项目内稳定。业务阶段与展示列分开，修改设置按版本校验，在同一事务中迁移整列任务。看板的列计数反映筛选后的全量，续页游标绑定筛选条件、项目、列和版本。
+- 候选依据使用项目已登记来源，审核操作重新读取来源权限和修订。确认创建正式任务，合并只增加来源依据。相关回归见 `TestTaskBoardReplicaBrowser`。
