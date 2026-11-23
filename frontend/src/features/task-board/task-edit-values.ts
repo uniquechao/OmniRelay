@@ -15,10 +15,9 @@ export type TaskEditValues = ReturnType<typeof taskEditValues>
 export function readTaskEditValues(form: HTMLFormElement, previous: TaskEditValues): TaskEditValues {
   const data = new FormData(form)
   const text = (name: keyof TaskEditValues) => data.has(name) ? String(data.get(name) ?? '') : String(previous[name] ?? '')
-  const participants = form.elements.namedItem('participants') as HTMLSelectElement | null
   return {
     title: text('title'), description: text('description'), acceptance: text('acceptance'),
-    participant_ids: participants?.disabled ? previous.participant_ids : data.getAll('participants').map(String),
+    participant_ids: previous.participant_ids,
     priority: data.has('priority') ? (String(data.get('priority')) || null) as ProjectTask['priority'] : previous.priority,
     start: text('start'), due: text('due'), blocked_reason: text('blocked_reason'),
     completion_note: text('completion_note'), change_reason: text('change_reason'),

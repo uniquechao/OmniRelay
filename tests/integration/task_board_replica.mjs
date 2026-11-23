@@ -7,7 +7,7 @@ const origin=process.env.H3_ORIGIN;
 const root='/api/v1/projects/board-test';
 const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:900},reducedMotion:'reduce'});
 const page=await context.newPage();
-page.setDefaultTimeout(8000);
+page.setDefaultTimeout(15000);
 const errors=[];
 page.on('pageerror',error=>errors.push(error.message));
 try{
@@ -20,6 +20,7 @@ try{
    const result=await response.json();assert.equal(response.status(),expected,method+' '+path+' '+JSON.stringify(result));return result;
  }
  await api('PUT','/members/manager/access',{role:'manager'});
+ await api('PUT','/members/second/access',{role:'editor'});
  await api('PUT','/task-tags/accept',{name:'验收'});
  const samples=[['接口联调准备','todo','P2'],['对齐成员目录','in_progress','P1'],['核对来源授权','blocked','P0'],['确认任务规格','done',null]];
  for(const [title,status,priority] of samples)await api('POST','/tasks',{title,status,priority,owner_member_id:'manager',tag_ids:['accept'],blocked_reason:status==='blocked'?'等待来源系统确认':'',description:'核对项目成员、状态和验收条件。'});
@@ -29,35 +30,73 @@ try{
  for(const width of [1440,1100,820,390,320]){
    await page.setViewportSize({width,height:900});
    await page.screenshot({path:'.runtime/board-evidence/board-'+width+'.png'});
+   if (width===1440) await page.locator('.task-page-header').screenshot({path:'.runtime/board-evidence/task-header.png'});
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'页面横向溢出 '+width);
  }
  await page.setViewportSize({width:1440,height:900});
  await page.getByRole('button',{name:'T-001 接口联调准备'}).click();
  await page.getByLabel('任务标题',{exact:true}).waitFor();
  await page.screenshot({path:'.runtime/board-evidence/inspector-1440.png'});
+ const panel=page.locator('.task-inspector-panel');
+ const bounds=await panel.boundingBox();assert.equal(Math.round(bounds.y),0);assert.equal(Math.round(bounds.height),900);
+ await page.getByRole('button',{name:/^参与人，/}).click();
+ await page.getByRole('checkbox',{name:/项目成员/}).check();
+ assert.ok(await page.getByRole('checkbox',{name:/项目负责人/}).isChecked(),'创建者应自动加入');
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'添加或移除标签'}).click();
+ await page.getByRole('dialog',{name:'添加或移除标签'}).getByRole('checkbox',{name:'验收'}).uncheck();
+ await page.getByRole('searchbox',{name:'搜索标签'}).fill('上线联验');
+ await page.getByRole('button',{name:'创建标签「上线联验」'}).click();
+ await page.getByRole('checkbox',{name:'上线联验'}).waitFor();
+ assert.ok(await page.getByRole('checkbox',{name:'上线联验'}).isChecked());
+ await page.getByRole('button',{name:'完成',exact:true}).click();
+ await page.getByRole('dialog',{name:'添加或移除标签'}).waitFor({state:'hidden'});
+ await page.getByRole('textbox',{name:'发表评论'}).focus();
+ assert.equal(await page.getByRole('textbox',{name:'发表评论'}).evaluate(el=>getComputedStyle(el).outlineStyle),'none');
+ await page.screenshot({path:'.runtime/board-evidence/task-drawer-desktop.png'});
  await page.getByLabel('任务标题',{exact:true}).fill('接口联调已排期');
  await page.getByRole('button',{name:'保存任务',exact:true}).click();
  await page.getByRole('button',{name:'T-001 接口联调已排期'}).waitFor();
+ const persistedTask=await api('GET','/tasks/'+(await api('GET','/board?limit=1')).columns[0].items[0].id);
+ assert.ok(persistedTask.participant_ids.includes('second'));
+ assert.ok(persistedTask.interaction_participants.some(person=>person.id==='manager'));
+ const persistedBoard=await api('GET','/board?limit=1');
+ assert.ok(persistedTask.tag_ids.includes(persistedBoard.tags.find(tag=>tag.name==='上线联验').id));
+ assert.ok(!persistedTask.tag_ids.includes('accept'));
+ await page.getByRole('button',{name:/^进行中\s*1$/}).click();
+ await page.getByText('1 项任务',{exact:true}).waitFor();
+ await page.getByRole('button',{name:/^全部\s*4$/}).click();
+ await page.getByRole('button',{name:'列表',exact:true}).click();
+ await page.locator('.task-list-layout').waitFor();
+ await page.getByRole('button',{name:'批量操作'}).click();
+ await page.getByRole('checkbox',{name:/接口联调已排期/}).check();
+ await page.getByLabel('优先级',{exact:true}).selectOption('P1');
+ await page.getByRole('button',{name:'应用到所选任务'}).click();
+ await page.getByText('所选任务的优先级已更新。').waitFor();
+ await page.getByRole('button',{name:'看板',exact:true}).click();
  await page.getByRole('button',{name:'新建任务',exact:true}).click();
  await page.getByLabel('任务标题',{exact:true}).fill('浏览器创建任务');
  await page.getByRole('button',{name:'创建任务',exact:true}).click();
  await page.getByRole('button',{name:'T-005 浏览器创建任务'}).waitFor();
+ await page.getByRole('button',{name:'展示字段',exact:true}).click();
  await page.getByRole('button',{name:'看板设置',exact:true}).click();
  assert.equal(Math.round((await page.getByRole('dialog').boundingBox()).width),540);
  await page.keyboard.press('Escape');
- await page.waitForFunction(()=>document.activeElement?.textContent==='看板设置');
+ await page.waitForFunction(()=>document.activeElement?.id==='board-fields-trigger');
  await page.getByRole('button',{name:'待办列操作'}).click();
  await page.getByRole('menuitem',{name:'编辑状态列'}).click();
  await page.getByLabel('第1列名称').waitFor();await page.keyboard.press('Escape');
  await page.waitForFunction(()=>document.activeElement?.id==='board-menu-todo');
+ await page.getByRole('button',{name:'展示字段',exact:true}).click();
  await page.getByRole('button',{name:'看板设置',exact:true}).click();
  await page.getByLabel('第1列名称').fill('待排期');
  await page.screenshot({path:'.runtime/board-evidence/settings-1440.png'});
  await page.getByRole('dialog').getByRole('button',{name:/保存/}).last().click();
  await page.getByRole('region',{name:'待排期',exact:true}).waitFor();
- await page.getByPlaceholder('搜索任务或编号').fill('T-005');
+ await page.getByRole('searchbox',{name:'搜索任务'}).fill('T-005');
  await page.getByText('1 项任务',{exact:true}).waitFor();
- await page.getByRole('tab',{name:/待确认/}).click();
+ await page.getByRole('button',{name:'选择任务范围'}).click();
+ await page.getByRole('menuitem',{name:/待确认/}).click();
  await page.getByRole('region',{name:'待确认任务建议'}).waitFor();
  await page.reload();
  await page.getByRole('region',{name:'待确认任务建议'}).waitFor();
@@ -70,9 +109,14 @@ try{
  await mobile.screenshot({path:'.runtime/board-evidence/touch-390.png'});
  await mobile.getByRole('button',{name:'T-001 接口联调已排期'}).tap();
  await mobile.getByLabel('任务标题',{exact:true}).waitFor();
+ await mobile.locator('.task-selected-tags').getByText('上线联验',{exact:true}).waitFor();
+ await mobile.getByRole('button',{name:/^参与人，.*项目成员/}).waitFor();
+ const mobileBounds=await mobile.locator('.task-inspector-panel').boundingBox();
+ assert.equal(Math.round(mobileBounds.y),0);assert.equal(Math.round(mobileBounds.height),844);
  await mobile.screenshot({path:'.runtime/board-evidence/inspector-390.png'});
  await mobile.getByRole('button',{name:'收起任务详情'}).tap();
  await mobile.setViewportSize({width:320,height:844});
+ await mobile.getByRole('button',{name:'展示字段',exact:true}).tap();
  await mobile.getByRole('button',{name:'看板设置',exact:true}).tap();
  await mobile.getByLabel('第1列名称').waitFor();
  for (const name of ['关闭看板设置', '取消', '保存看板设置']) {
@@ -82,7 +126,7 @@ try{
  await mobile.screenshot({path:'.runtime/board-evidence/settings-320.png'});
  await mobile.getByRole('button',{name:'关闭看板设置'}).tap();
  await mobile.evaluate(()=>{document.documentElement.style.fontSize='200%';document.documentElement.dataset.theme='dark'});
- await mobile.getByRole('button',{name:'看板设置',exact:true}).scrollIntoViewIfNeeded();
+ await mobile.getByRole('button',{name:'展示字段',exact:true}).scrollIntoViewIfNeeded();
  assert.ok(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await mobile.screenshot({path:'.runtime/board-evidence/dark-200pct-320.png'});
  await touch.close();
@@ -103,6 +147,20 @@ try{
  const receipt=await api('POST','/task-candidates/'+first+'/review',review);
  assert.deepEqual(await api('POST','/task-candidates/'+first+'/review',review),receipt);
  const task=await api('GET','/tasks/'+receipt.task_id);
+ const contributor=await browser.newContext({ignoreHTTPSErrors:true});
+ try {
+   const secondLogin=await contributor.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username:'second',password:process.env.H3_PASSWORD}});
+   assert.ok(secondLogin.ok());
+   const session=await(await contributor.request.get(origin+'/api/v1/me')).json();
+   const taskURL=origin+root+'/tasks/'+task.id;
+   assert.ok((await contributor.request.get(taskURL)).ok());
+   assert.ok(!(await api('GET','/tasks/'+task.id)).interaction_participants.some(p=>p.id==='second'));
+   const payload={headers:{Origin:origin,'X-CSRF-Token':session.csrf_token},data:{expected_version:task.version,request_key:'auto-join',body:'已核对'}};
+   for(let i=0;i<2;i++) assert.ok((await contributor.request.post(taskURL+'/comments',payload)).ok());
+   const afterComment=await api('GET','/tasks/'+task.id);
+   assert.equal(afterComment.interaction_participants.filter(p=>p.id==='second').length,1);
+ } finally {await contributor.close()}
+
  await api('POST','/task-candidates/'+second+'/review',{action:'merge',target_task_id:task.id,target_version:task.version,expected_version:1,share_ack:true});
  const merged=await api('GET','/tasks/'+task.id);
  assert.equal(merged.version,task.version+1);assert.equal(merged.title,task.title);

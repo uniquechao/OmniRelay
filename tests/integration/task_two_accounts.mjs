@@ -76,10 +76,10 @@ try {
   await field(a, 'milestone_id').selectOption(node.id);
   await field(a, 'start_at').fill('2026-11-19');
   await field(a, 'due_at').fill('2026-11-23');
-  await a.getByText('验收与参与人', {exact:true}).click();
+  await a.locator('summary').filter({hasText:'验收条件'}).click();
   await field(a, 'acceptance').fill('以同一任务为准');
   for (const [key, term, id] of [['owner_member_id','项目负责人','u'], ['participant_ids','项目成员','v'], ['tag_ids','联验','check']]) {
-    if (key === 'tag_ids') await a.getByText('添加标签', {exact:true}).click();
+    if (key === 'tag_ids') await a.getByRole('button',{name:'添加标签',exact:true}).click();
     await field(a, key).fill(term);
     await a.locator('[data-picker="' + key + '"] [data-pick="' + id + '"]').click();
   }

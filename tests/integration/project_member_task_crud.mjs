@@ -45,7 +45,7 @@ try{
  await page.getByLabel('主负责人',{exact:true}).fill('second');
  await page.locator('[data-picker=owner_member_id] [data-pick=second]').waitFor();
  await page.getByLabel('主负责人',{exact:true}).press('ArrowDown');await page.keyboard.press('Enter');
- await page.getByText('验收与参与人',{exact:true}).click();
+ await page.locator('summary').filter({hasText:'验收条件'}).click();
  await page.getByLabel('参与人',{exact:true}).fill('manager');
  await page.locator('[data-picker=participant_ids] [data-pick=manager]').click();
 

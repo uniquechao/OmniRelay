@@ -39,7 +39,7 @@ func (s *Service) createMilestone(w http.ResponseWriter, r *http.Request, actor 
 }
 
 func (s *Service) milestones(ctx context.Context, k taskScope, now time.Time) ([]map[string]any, error) {
-	rows, err := s.pool.Query(ctx, `SELECT m.id,m.title,m.occurs_on::text,m.task_id,to_jsonb(t),b.version,b.business_timezone
+	rows, err := s.pool.Query(ctx, `SELECT m.id,m.title,m.occurs_on::text,m.task_id,`+taskWithInteractions+`,b.version,b.business_timezone
  FROM project_milestones m JOIN project_task_boards b USING(tenant_key,app_id,project_id)
  LEFT JOIN project_tasks t ON t.deleted_at IS NULL AND (t.tenant_key,t.app_id,t.project_id,t.id)=(m.tenant_key,m.app_id,m.project_id,m.task_id)
  WHERE (m.tenant_key,m.app_id,m.project_id)=($1,$2,$3) ORDER BY m.occurs_on NULLS LAST,m.id`, k.args()...)

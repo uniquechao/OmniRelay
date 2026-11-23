@@ -7,7 +7,7 @@ export interface ProjectMember {id:string; display_name:string; organization_pat
 export interface ProjectDetail {owner_member_id?:string;id:string; name:string; business_timezone:string; current_member_id:string; members:ProjectMember[]; actions:string[]}
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
 export interface TaskFields { start_at?: string | null; tag_ids?: string[]; title: string; description: string; owner_member_id: string | null; participant_ids: string[]; priority: 'P0' | 'P1' | 'P2' | 'P3' | null; due_at: string | null; acceptance: string }
-export interface ProjectTask extends TaskFields { created_by_name?:string; updated_by_name?:string; milestone_id?:string | null; display_number?: number; column_id?: string; rank?: number; id: string; project_id: string; status: TaskStatus; blocked_from: TaskStatus | null; blocked_reason: string; completion_note: string; version: number; created_by: string; updated_by: string; created_at: string; updated_at: string; overdue: boolean }
+export interface ProjectTask extends TaskFields { interaction_participants?: ProjectMember[]; created_by_name?:string; updated_by_name?:string; milestone_id?:string | null; display_number?: number; column_id?: string; rank?: number; id: string; project_id: string; status: TaskStatus; blocked_from: TaskStatus | null; blocked_reason: string; completion_note: string; version: number; created_by: string; updated_by: string; created_at: string; updated_at: string; overdue: boolean }
 export function getProjectTasks(id: string, params: URLSearchParams, signal?: AbortSignal) { return json<{ items: ProjectTask[]; next_cursor: string | null }>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/query?${params}`, { signal }) }
 export function createProjectTask(id: string, fields: TaskFields & { column_id?: string; blocked_reason?: string }, requestKey: string) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks`, body({ ...fields, request_key: requestKey })) }
 export function updateProjectTask(id: string, task: ProjectTask, fields: TaskFields & { status: TaskStatus; blocked_reason: string; completion_note: string; change_reason: string; request_key?: string }) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task.id)}`, put({ ...fields, milestone_id: task.milestone_id, expected_task_version: task.version })) }
@@ -37,3 +37,11 @@ export interface TaskActivityEvent { id: string; kind: 'change' | 'comment'; act
 export interface TaskActivityPage { items: TaskActivityEvent[]; next_cursor: string | null }
 export function getTaskActivity(pid: string, tid: string, kind: string, cursor = '', signal?: AbortSignal) { const query = new URLSearchParams({ kind }); if (cursor) query.set('cursor', cursor); return json<TaskActivityPage>(`/api/v1/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}/activity?${query}`, { signal }) }
 export function commentOnTask(pid: string, tid: string, expected_version: number, request_key: string, text: string) { return json<TaskActivityEvent>(`/api/v1/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}/comments`, body({ expected_version, request_key, body: text })) }
+
+export function updateTaskPriorities(projectId: string, items: {id: string; expected_version: number; priority: ProjectTask["priority"]}[], key: string) {
+  return json(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/bulk-update`, body({items, request_key: key}))
+}
+
+export function createBoardTag(projectId: string, tag: {id:string;name:string;type:string;color:string;expected_version:number;request_key:string}) {
+  return json<{tags:TaskTag[]}>(`/api/v1/projects/${encodeURIComponent(projectId)}/board/tags`, body(tag))
+}

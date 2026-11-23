@@ -7,10 +7,11 @@ import { Input } from './controls'
 import { Textarea } from './controls'
 import { NativeSelect } from './controls'
 import { Columns3, ChevronRight, PanelRightClose, Send } from 'lucide-react'
+import { TaskParticipantsField } from './TaskParticipantsField'
 import { TaskOwnerField } from './TaskOwnerField'
 import { TaskDateField } from './TaskDateField'
 import { readTaskEditValues, taskEditSnapshot, taskEditValues } from './task-edit-values'
-import { TaskTagPicker } from './TaskTagPicker'
+import { TaskLabelField } from './TaskLabelField'
 import { ProjectTaskActivity } from './ProjectTaskActivity'
 import { ProjectTaskFeedback } from './ProjectTaskFeedback'
 import { ProjectTaskEvidence } from './ProjectTaskEvidence'
@@ -65,7 +66,6 @@ export function ProjectTaskInspector({
   const draftDirty = useRef(false)
   const visibleVersion = useRef<number | null>(null)
   const [formEpoch, setFormEpoch] = useState(0)
-  const [host, setHost] = useState<HTMLDivElement | null>(null)
   const [task, setTask] = useState<ProjectTask | null>(() => isNew ? { id: '', project_id: project.id, title: '', description: '', owner_member_id: canManage ? null : project.current_member_id, participant_ids: [], priority: null, due_at: null, start_at: null, tag_ids: [], acceptance: '', status: 'todo', column_id: initialColumnId, blocked_from: null, blocked_reason: '', completion_note: '', version: 0, created_by: '', updated_by: '', created_at: '', updated_at: '', overdue: false } : null)
   const [selectedOwner, setSelectedOwner] = useState<string | null>(isNew && !canManage ? project.current_member_id : null)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -198,39 +198,6 @@ export function ProjectTaskInspector({
       })
     return () => controller.abort()
   }, [project.id, taskId, retry, failure, isNew, initialColumnId, applyInitialIntent])
-  useEffect(() => {
-    if (!host) return
-    const position = () => {
-      const bounds = host.getBoundingClientRect()
-      const viewport = window.visualViewport
-      const top = Math.max(bounds.top + 8, (viewport?.offsetTop ?? 0) + 8)
-      const bottom = Math.min(
-        bounds.bottom,
-        (viewport?.offsetTop ?? 0) +
-          (viewport?.height ?? window.innerHeight) -
-          8,
-      )
-      host.style.setProperty('--task-inspector-offset', `${top - bounds.top}px`)
-      host.style.setProperty(
-        '--task-inspector-height',
-        `${Math.max(0, bottom - top)}px`,
-      )
-    }
-    const observer = new ResizeObserver(position)
-    observer.observe(host)
-    position()
-    window.addEventListener('resize', position)
-    window.addEventListener('scroll', position, true)
-    window.visualViewport?.addEventListener('resize', position)
-    window.visualViewport?.addEventListener('scroll', position)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', position)
-      window.removeEventListener('scroll', position, true)
-      window.visualViewport?.removeEventListener('resize', position)
-      window.visualViewport?.removeEventListener('scroll', position)
-    }
-  }, [host])
   const dirty = Boolean(task && !denied && taskEditSnapshot(draftValues, selectedOwner, selectedTags, selectedColumn, draftStatus, ownerSearch) !== taskEditSnapshot(taskEditValues(task, project.business_timezone), task.owner_member_id, task.tag_ids ?? [], task.status === 'cancelled' ? 'cancelled' : task.column_id ?? task.status, task.status))
   useEffect(() => { draftDirty.current = dirty || Boolean(comment.trim()); visibleVersion.current = task?.version ?? null }, [dirty, comment, task])
   // 编辑时只核验读取权，保留人工并发基线；未编辑时更新实际任务事实。
@@ -264,10 +231,10 @@ export function ProjectTaskInspector({
   }, [project.id, taskId, failure, stateRevision, acceptPristineTask, isNew])
   const unsaved = dirty || Boolean(comment.trim())
   const requestClose = useCallback(() => {
-    if (!closing) returnFocus.current = document.activeElement instanceof HTMLElement && host?.contains(document.activeElement) ? document.activeElement : closeButton.current
+    if (!closing) returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement?.closest('.task-inspector-dialog') ? document.activeElement : closeButton.current
     setClosing(true)
     keepEditing.current?.focus({ preventScroll: true })
-  }, [closing, host])
+  }, [closing])
   useEffect(() => {
     const guard = (event: Event) => {
       if (unsaved || pending) {
@@ -335,13 +302,13 @@ export function ProjectTaskInspector({
             title: String(data.get('title')).trim(),
             description: String(data.get('description') ?? ''),
             owner_member_id: String(data.get('owner') ?? '') || null,
-            participant_ids: data.getAll('participants').map(String),
+            participant_ids: draftValues.participant_ids,
             priority: (String(data.get('priority') ?? '') || null) as TaskFields['priority'],
             acceptance: String(data.get('acceptance') ?? ''),
             start_at: date('start', task.start_at),
             due_at: date('due', task.due_at, true),
             tag_ids:
-              tags === null ? task.tag_ids : data.getAll('tags').map(String),
+              tags === null ? task.tag_ids : selectedTags,
           }
         : {
             title: String(data.get('title') ?? task.title).trim(),
@@ -392,7 +359,7 @@ export function ProjectTaskInspector({
     setPending(true)
     setError('')
     try {
-      await commentOnTask(
+      const event = await commentOnTask(
         project.id,
         task.id,
         task.version,
@@ -404,6 +371,12 @@ export function ProjectTaskInspector({
         setComment('')
         setRevision((n) => n + 1)
         setNotice('评论已保存。')
+        const id = project.current_member_id
+        if (id) setTask(current => {
+          if (!current || current.interaction_participants?.some(person => person.id === id)) return current
+          const actor = project.members.find(person => person.id === id) ?? {id, display_name: event.actor_name || id}
+          return {...current, interaction_participants:[...(current.interaction_participants ?? []),actor]}
+        })
       }
     } catch (cause) {
       failure(cause)
@@ -422,10 +395,7 @@ export function ProjectTaskInspector({
     !['done', 'cancelled'].includes(task.status),
   )
   return (
-    <div ref={setHost} className="task-inspector-host">
-      {host && (
         <ModalOverlay
-          UNSTABLE_portalContainer={host}
           isOpen
           isDismissable
           isKeyboardDismissDisabled={pending || closing}
@@ -587,7 +557,7 @@ export function ProjectTaskInspector({
                     ref={form}
                     className="task-inspector-fields"
                     onSubmit={save}
-                    onChange={event => { const next = readTaskEditValues(event.currentTarget, draftValues); setDraftValues(next) }}
+                    onChange={event => { if (event.currentTarget.contains(event.target as Node)) setDraftValues(readTaskEditValues(event.currentTarget, draftValues)) }}
                   >
                     <section className="task-inspector-copy">
                       <h2 className="sr-only">{isNew ? '新建任务' : task.title}</h2>
@@ -596,16 +566,17 @@ export function ProjectTaskInspector({
                       <label hidden={draftStatus !== 'blocked'} className="task-blocker-field">受阻原因<Textarea aria-label="受阻原因" name="blocked_reason" disabled={draftStatus !== 'blocked'} required={draftStatus === 'blocked'} defaultValue={task.blocked_reason} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
                       {!isNew && <label hidden={draftStatus !== 'done' && !task.completion_note}>完成结果<Textarea aria-label="完成结果" name="completion_note" defaultValue={task.completion_note} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>}
                       {!isNew && canManage && <label hidden={draftStatus !== 'cancelled' && !['done','cancelled'].includes(task.status)}>变更原因<Textarea aria-label="变更原因" name="change_reason" maxLength={4000} rows={2} readOnly={pending} /></label>}
-                      <details className="task-inspector-extra"><summary>验收与参与人</summary><label>验收条件<Textarea aria-label="验收条件" name="acceptance" defaultValue={task.acceptance} maxLength={4000} rows={2} readOnly={!canManage || pending} /></label><label>参与人<NativeSelect aria-label="参与人" name="participants" multiple defaultValue={task.participant_ids} disabled={!canManage || pending}>{project.members.filter(member => member.active !== false || task.participant_ids.includes(member.id)).map(member => <option key={member.id} value={member.id}>{member.display_name}</option>)}</NativeSelect></label></details>
+                      <details className="task-inspector-extra"><summary>验收条件</summary><label>验收条件<Textarea aria-label="验收条件" name="acceptance" defaultValue={task.acceptance} maxLength={4000} rows={2} readOnly={!canManage || pending} /></label></details>
                     </section>
                     <aside className="task-inspector-sidebar" aria-label="任务属性">
                       <section className="task-side-section"><h3>属性</h3>
                         <label className="task-property"><span>状态</span><span className="task-status-control" data-stage={draftStatus} style={{ '--task-status-dot': boardColumns.find(column => column.id === selectedColumn)?.color || ({ todo: '#7b8495', in_progress: '#1746e8', blocked: '#b66b16', done: '#528a14', cancelled: '#7b8495' })[draftStatus] } as CSSProperties}><NativeSelect aria-label="任务状态" name="column" value={selectedColumn || draftStatus} disabled={(!canManage && !own && !isNew) || pending} onChange={event => { setSelectedColumn(event.target.value); setDraftStatus(boardColumns.find(column => column.id === event.target.value)?.stage ?? event.target.value as TaskStatus) }}>{boardColumns.length > 0 && selectedColumn && selectedColumn !== 'cancelled' && !boardColumns.some(column => column.id === selectedColumn) && <option value={selectedColumn} disabled>原状态列已移除，请选择当前状态列</option>}{boardColumns.length ? boardColumns.map(column => <option key={column.id} value={column.id}>{column.name}</option>) : Object.entries(statuses).filter(([status]) => isNew ? status !== 'cancelled' : true).map(([status,label]) => <option key={status} value={status}>{label}</option>)}{boardColumns.length > 0 && !isNew && (canManage || task.status === 'cancelled') && <option value="cancelled">已取消</option>}</NativeSelect></span></label>
                         <label className="task-property"><span>优先级</span><NativeSelect aria-label="优先级" name="priority" defaultValue={task.priority ?? ''} disabled={!canManage || pending}><option value="">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</NativeSelect></label>
                         <div className="task-property task-owner-property"><span aria-hidden>主负责人</span><input type="hidden" name="owner" value={selectedOwner ?? ''} /><TaskOwnerField members={project.members.filter(member => member.active !== false || member.id === task.owner_member_id)} value={selectedOwner} inputRef={ownerInput} onChange={value => { setSelectedOwner(value); setError(current => current === '请从搜索结果中选择负责人。' ? '' : current) }} onQueryChange={setOwnerSearch} disabled={!canManage || pending} /></div>
+                        <TaskParticipantsField members={project.members} value={draftValues.participant_ids} interactions={task.interaction_participants} disabled={!canManage || pending} onChange={ids => setDraftValues(current => ({ ...current, participant_ids: ids }))} />
                         <TaskDateField timezone={timezone} label="开始日期" name="start" defaultValue={taskDate(task.start_at,project.business_timezone || 'UTC')} disabled={!canManage || pending} />
                         <TaskDateField timezone={timezone} label="截止日期" name="due" defaultValue={taskDate(task.due_at,project.business_timezone || 'UTC')} disabled={!canManage || pending} />
-                        <div className="task-property task-property-tags"><span>标签</span><div><div className="task-selected-tags">{selectedTags.map(id => { const tag=tags?.find(tag => tag.id === id); return <span key={id} title={tag?.type}>{tag?.name ?? '标签名称未知'}</span> })}</div><TaskTagPicker tags={tags ?? []} value={selectedTags} name="tags" onChange={setSelectedTags} label="添加或移除标签" placeholder="添加标签" editor disabled={!canManage || pending || tags === null} /></div></div>
+                        <div className="task-property task-property-tags"><span>标签</span><div><div className="task-selected-tags">{selectedTags.map(id => { const tag=tags?.find(tag => tag.id === id); return <span key={id} title={tag?.type}>{tag?.name ?? '标签名称未知'}</span> })}</div><TaskLabelField projectId={project.id} tags={tags ?? []} value={selectedTags} onChange={setSelectedTags} onTags={setTags} disabled={!canManage || pending || tags === null} canCreate={project.actions.includes('configure_board')} /></div></div>
                       </section>
                       {!isNew && <section className="task-side-section"><h3>详情</h3><dl className="task-info-list"><dt>创建者</dt><dd>{task.created_by_name || task.created_by || '未知'}</dd><dt>创建于</dt><dd><time dateTime={task.created_at}>{task.created_at && new Date(task.created_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd><dt>更新于</dt><dd><time dateTime={task.updated_at}>{task.updated_at && new Date(task.updated_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd></dl><details className="task-version-info"><summary>版本与更新人</summary><p>版本 v{task.version}</p><p>更新人：{task.updated_by_name || task.updated_by || '未知'}</p><p>业务时区：{project.business_timezone || 'UTC（业务时区未设置）'}</p></details><ProjectTaskEvidence projectId={project.id} taskId={task.id} /></section>}
                     </aside>
@@ -618,7 +589,7 @@ export function ProjectTaskInspector({
                           ref={commentInput}
                           aria-label="发表评论"
                           placeholder="留下评论…"
-                          rows={2}
+                          rows={1}
                           value={comment}
                           maxLength={4000}
                           disabled={pending}
@@ -679,7 +650,5 @@ export function ProjectTaskInspector({
             </Dialog>
           </Modal>
         </ModalOverlay>
-      )}
-    </div>
   )
 }

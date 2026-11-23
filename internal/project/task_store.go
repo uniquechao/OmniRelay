@@ -39,16 +39,22 @@ type taskFields struct {
 	Due          *string  `json:"due_at"`
 	Tags         []string `json:"tag_ids"`
 }
+type interactionMember struct {
+	ID   string `json:"id"`
+	Name string `json:"display_name"`
+}
+
 type storedTask struct {
-	DisplayNumber int64      `json:"display_number"`
-	Overdue       bool       `json:"overdue"`
-	CreatedBy     *string    `json:"created_by"`
-	CreatedByName *string    `json:"created_by_name"`
-	CreatedAt     *time.Time `json:"created_at"`
-	UpdatedBy     *string    `json:"updated_by"`
-	UpdatedByName *string    `json:"updated_by_name"`
-	UpdatedAt     *time.Time `json:"updated_at"`
-	CanMove       *bool      `json:"can_move,omitempty"`
+	InteractionParticipants []interactionMember `json:"interaction_participants,omitempty"`
+	DisplayNumber           int64               `json:"display_number"`
+	Overdue                 bool                `json:"overdue"`
+	CreatedBy               *string             `json:"created_by"`
+	CreatedByName           *string             `json:"created_by_name"`
+	CreatedAt               *time.Time          `json:"created_at"`
+	UpdatedBy               *string             `json:"updated_by"`
+	UpdatedByName           *string             `json:"updated_by_name"`
+	UpdatedAt               *time.Time          `json:"updated_at"`
+	CanMove                 *bool               `json:"can_move,omitempty"`
 	taskFields
 	ID            string `json:"id"`
 	Project       string `json:"project_id"`
@@ -160,12 +166,29 @@ type taskReader interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// Detail and milestone views share a projection. Assignment is stored separately so
+// that someone who comments appears among participants without gaining edit access.
+const taskWithInteractions = `to_jsonb(t) || jsonb_build_object('interaction_participants', (
+    WITH actors(id) AS (
+        SELECT t.created_by
+        UNION SELECT e.actor_id FROM project_task_activity e
+            WHERE (e.tenant_key,e.app_id,e.project_id,e.task_id)=(t.tenant_key,t.app_id,t.project_id,t.id)
+            AND e.action <> 'task.reordered'
+        UNION SELECT unnest(ARRAY[f.actor_id,f.reviewed_by]) FROM project_task_suggestions f
+            WHERE (f.tenant_key,f.app_id,f.project_id,f.task_id)=(t.tenant_key,t.app_id,t.project_id,t.id)
+    ) SELECT coalesce(jsonb_agg(jsonb_build_object('id',pm.member_id,'display_name',coalesce(nullif(a.name,''),pm.member_id))
+              ORDER BY a.name,pm.member_id),'[]'::jsonb)
+        FROM actors JOIN project_members pm
+          ON (pm.tenant_key,pm.app_id,pm.project_id,pm.account_id)=(t.tenant_key,t.app_id,t.project_id,actors.id)
+        JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(pm.tenant_key,pm.app_id,pm.account_id)
+))`
+
 func (k taskScope) task(ctx context.Context, db taskReader, id string, now time.Time) (storedTask, error) {
 	var result storedTask
 	var raw []byte
 	var version int64
 	var zone string
-	err := db.QueryRow(ctx, "SELECT to_jsonb(t), b.version,b.business_timezone FROM project_tasks t JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4 AND t.deleted_at IS NULL", k.args(id)...).Scan(&raw, &version, &zone)
+	err := db.QueryRow(ctx, "SELECT "+taskWithInteractions+", b.version,b.business_timezone FROM project_tasks t JOIN project_task_boards b USING(tenant_key,app_id,project_id) WHERE "+projectWhere+" AND t.id=$4 AND t.deleted_at IS NULL", k.args(id)...).Scan(&raw, &version, &zone)
 	if err != nil {
 		return result, taskError(err)
 	}

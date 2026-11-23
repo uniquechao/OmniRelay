@@ -100,7 +100,7 @@ export function ProjectBoardSettings({
     <Modal
       className="project-dialog board-settings-drawer"
       presentation="sheet"
-      returnTo={initialColumnId ? document.getElementById('board-menu-'+initialColumnId) : undefined}
+      returnTo={initialColumnId ? document.getElementById('board-menu-'+initialColumnId) : document.getElementById('board-fields-trigger')}
       labelledBy={id}
       busy={pending}
       onClose={close}

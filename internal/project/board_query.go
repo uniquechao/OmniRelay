@@ -37,7 +37,7 @@ func boardPredicate(k taskScope, column string, q url.Values, now time.Time) (st
 	}
 	if term := strings.TrimSpace(q.Get("q")); term != "" {
 		arg := bind(term)
-		where += " AND (strpos(lower(title||' '||description||' '||id||' T-'||lpad(display_number::text,greatest(3,length(display_number::text)),'0')),lower(" + arg + "))>0 OR EXISTS(SELECT FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE (m.tenant_key,m.app_id,m.project_id,m.member_id)=(t.tenant_key,t.app_id,t.project_id,t.owner_member_id) AND strpos(lower(a.name),lower(" + arg + "))>0))"
+		where += " AND (strpos(lower(title||' '||description||' '||id||' T-'||lpad(display_number::text,greatest(3,length(display_number::text)),'0')),lower(" + arg + "))>0 OR strpos(lower(t.project_id),lower(" + arg + "))>0 OR EXISTS(SELECT FROM project_profiles p WHERE (p.tenant_key,p.app_id,p.project_id)=(t.tenant_key,t.app_id,t.project_id) AND strpos(lower(p.name),lower(" + arg + "))>0) OR EXISTS(SELECT FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id) WHERE (m.tenant_key,m.app_id,m.project_id,m.member_id)=(t.tenant_key,t.app_id,t.project_id,t.owner_member_id) AND strpos(lower(a.name),lower(" + arg + "))>0))"
 	}
 	// Older callers stored date-only strings. Interpret these in the project timezone.
 	due := "CASE WHEN length(due_at)=10 THEN due_at::date::timestamp AT TIME ZONE " + bind(now.Location().String()) + " ELSE due_at::timestamptz END"

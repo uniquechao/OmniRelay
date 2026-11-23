@@ -150,12 +150,13 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     );
   }
   function picker(k, choices, multiple) {
-    const ids = multiple ? draft[k] : draft[k] ? [draft[k]] : [];
+    const automatic = k === 'participant_ids' ? new Map((task.interaction_participants || []).map(person => [person.id, person.display_name])) : new Map();
+    const ids = multiple ? [...new Set([...draft[k], ...automatic.keys()])] : draft[k] ? [draft[k]] : [];
     const selected = ids
       .map((id) => {
-        const name = choices.get(id) || id;
+        const name = choices.get(id) || automatic.get(id) || id;
         const text = (k === 'owner_member_id' ? window.OmniRelayUI.personAvatar(name, id) : '') + esc(name);
-        return enabled(k)
+        return enabled(k) && !automatic.has(id)
           ? '<button type="button" class="button" data-remove="' +
               esc(id) +
               '" aria-label="移除' +
@@ -183,12 +184,12 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       '</div>' +
       (enabled(k)
         ? k === 'tag_ids'
-          ? '<details><summary>添加标签</summary>' + searchBox + '</details>'
+          ? '<button type="button" class="button" data-tag-toggle aria-expanded="false">添加标签</button><div data-tag-search hidden>' + searchBox + '</div>'
           : searchBox
         : '<div hidden>' + searchBox + '</div>');
     return (
       '<div class="' +
-      (k === 'participant_ids' ? 'task-edit-label' : 'task-property') +
+      'task-property' +
       '" data-picker="' +
       k +
       '"><span>' +
@@ -206,9 +207,8 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       field('blocked_reason') +
       field('completion_note') +
       field('change_reason') +
-      '<details class="task-edit-extra"><summary>验收与参与人</summary>' +
+      '<details class="task-edit-extra"><summary>验收条件</summary>' +
       field('acceptance') +
-      picker('participant_ids', people, true) +
       '</details>';
     const states = Object.entries(statuses).filter(
       ([s]) => (actions.assign ?? actions.edit_fields) || s !== 'cancelled' || s === task.status,
@@ -220,6 +220,7 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       field('status', 'select', states) +
       field('priority', 'select', [['', '未设置'], ...Object.entries(priorities)]) +
       picker('owner_member_id', people, false) +
+      picker('participant_ids', people, true) +
       field('start_at', 'date') +
       field('due_at', 'date') +
       field('milestone_id', 'select', [['', '未关联'], ...ms]) +
@@ -294,6 +295,16 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
     if (box && !box.contains(e.relatedTarget)) box.querySelector('[data-results]').hidden = true;
   });
   el.addEventListener('click', (e) => {
+    if (e.target.matches('[data-picker] input')) results(e.target.closest('[data-picker]'));
+    const toggle = e.target.closest('[data-tag-toggle]');
+    if (toggle) {
+      const box = toggle.closest('[data-picker]');
+      const searchBox = box.querySelector('[data-tag-search]');
+      searchBox.hidden = !searchBox.hidden;
+      toggle.setAttribute('aria-expanded', String(!searchBox.hidden));
+      if (!searchBox.hidden) searchBox.querySelector('input').focus();
+      return;
+    }
     const button = e.target.closest('[data-pick],[data-remove]');
     if (!button) return;
     const box = button.closest('[data-picker]'),
@@ -311,8 +322,13 @@ export async function mountTaskDetail(host, { task, project, route, back, reques
       draft[k] = [...baseline[k]];
     box.outerHTML = picker(k, k === 'tag_ids' ? tags : people, k !== 'owner_member_id');
     const nextInput = control(k);
-    if (nextInput.closest('details')) nextInput.closest('details').open = true;
+    const searchBox = nextInput.closest('[data-tag-search]');
+    if (searchBox) {
+      searchBox.hidden = false;
+      searchBox.parentElement.querySelector('[data-tag-toggle]').setAttribute('aria-expanded','true');
+    }
     nextInput.focus();
+    nextInput.closest('[data-picker]').querySelector('[data-results]').hidden = true;
     sync();
   });
   el.addEventListener('input', (e) => {

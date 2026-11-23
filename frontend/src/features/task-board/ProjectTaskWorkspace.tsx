@@ -2,7 +2,8 @@ import { useProjectRevision } from './project-state'
 import { Textarea } from './controls'
 import { Input } from './controls'
 import { NativeSelect } from './controls'
-import { Button } from './controls'
+import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './controls'
+import { ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from 'react'
 
 import { ApiError } from './api'
@@ -73,9 +74,14 @@ export function ProjectTaskWorkspace({ project, canManage }: { project: ProjectD
     if (next === 'discovery') { query.delete('task'); setTaskId('') }
     window.history.replaceState(history.state, '', `${location.hash.split('?')[0]}?${query}`)
   }
-  const navigation = <div className="board-views" role="tablist" aria-label="任务视图">{(['confirmed', 'discovery'] as const).map((key) => <button type="button" id={`task-view-${key}`} key={key} role="tab" aria-selected={view === key} aria-controls="project-task-view-panel" tabIndex={view === key ? 0 : -1} onClick={() => select(key)} onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'confirmed' : event.key === 'End' ? 'discovery' : view === 'discovery' ? 'confirmed' : 'discovery'; select(next); document.getElementById(`task-view-${next}`)?.focus() } }}>{key === 'discovery' ? <>待确认{candidateCount !== null && <span className="board-count">{candidateCount}</span>}</> : '看板'}</button>)}</div>
+  const navigation = <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" id="task-scope-menu" aria-label="选择任务范围">
+    {view === 'confirmed' ? '全部任务' : '待确认任务'}<ChevronDown size={14} aria-hidden />
+  </Button></DropdownMenuTrigger><DropdownMenuContent align="start" aria-label="任务范围">
+    <DropdownMenuItem onSelect={() => select('confirmed')}>全部任务</DropdownMenuItem>
+    <DropdownMenuItem onSelect={() => select('discovery')}>待确认任务{candidateCount !== null && `（${candidateCount}）`}</DropdownMenuItem>
+  </DropdownMenuContent></DropdownMenu>
   return <div className="project-task-workspace-root">
-    <div id="project-task-view-panel" role="tabpanel" aria-labelledby={`task-view-${view}`}>
+    <div id="project-task-view-panel" role="region" aria-label={view === 'confirmed' ? '正式任务' : '待确认'}>
       {view === 'confirmed' ? <div ref={boardDock} className="board-inspector-dock"><ProjectTaskBoard key={project.id} projectId={project.id} project={project} refreshKey={boardRevision} navigation={navigation} canManage={canManage} onOpenTask={openTask} />{taskId && <ProjectTaskInspector key={`${project.id}:${taskId}`} project={project} taskId={taskId} initialColumnId={taskIntent?.columnId} canManage={canManage} onChanged={() => setBoardRevision(value => value + 1)} onClose={() => openTask('')} />}</div> : <DiscoveryPanel navigation={navigation} project={project} canManage={canManage} onTask={openTask} onReviewed={onReviewed} />}
     </div>
   </div>
