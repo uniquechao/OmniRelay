@@ -769,7 +769,7 @@ test('任务字段、条件校验、草稿、冲突及活动', {skip: !moduleNam
   await byName('title').fill('本地草稿');
   await byName('owner_member_id').fill('wangning');await save.click();
   assert.equal(await page.evaluate(()=>document.activeElement.name),'owner_member_id');
-  await byName('owner_member_id').fill('wn');await page.getByRole('button',{name:'王宁 · m1'}).click();
+  await byName('owner_member_id').fill('wn');await page.getByRole('button',{name:/^王宁\s+m1$/}).click();
   await byName('start_at').fill('2026-11-19');await byName('due_at').fill('2026-11-18');await save.click();
   assert.equal(await page.evaluate(()=>document.activeElement.name),'due_at');
   await byName('due_at').fill('2026-11-20');await byName('status').selectOption('blocked');await save.click();
