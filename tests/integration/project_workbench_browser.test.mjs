@@ -769,7 +769,8 @@ test('任务字段、条件校验、草稿、冲突及活动', {skip: !moduleNam
   await byName('title').fill('本地草稿');
   await byName('owner_member_id').fill('wangning');await save.click();
   assert.equal(await page.evaluate(()=>document.activeElement.name),'owner_member_id');
-  await byName('owner_member_id').fill('wn');await page.getByRole('button',{name:'王宁 · m1'}).click();
+  await byName('owner_member_id').fill('wn');
+  await page.getByRole('button', {name: '王宁 m1', exact: true}).click();
   await byName('start_at').fill('2026-11-19');await byName('due_at').fill('2026-11-18');await save.click();
   assert.equal(await page.evaluate(()=>document.activeElement.name),'due_at');
   await byName('due_at').fill('2026-11-20');await byName('status').selectOption('blocked');await save.click();
@@ -856,7 +857,9 @@ test('两项目分别保留搜索、负责人、里程碑和任务视图', { ski
     await page.getByLabel('筛选里程碑').selectOption(sample.milestone);
     await page.getByRole('button', { name: '查询' }).click();
     await page.getByRole('link', { name: sample.q + '验收' }).waitFor();
-    await page.getByRole('link', { name: sample.view, exact: true }).click();
+    const view = page.getByRole('link', { name: sample.view, exact: true });
+    await view.click();
+    await view.and(page.locator('[aria-current="page"]')).waitFor();
   }
   for (const sample of samples) {
     await enter(sample);
