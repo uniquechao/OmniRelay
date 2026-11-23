@@ -270,6 +270,11 @@ func historyMessage(query chat.HistoryQuery, item *im.Message) (orchestrator.Cha
 	msg.Deleted = item.Deleted != nil && *item.Deleted
 	if item.Body != nil && !msg.Deleted {
 		msg.Body = value(item.Body.Content)
+		for _, mention := range item.Mentions {
+			if mention != nil {
+				addMentionName(&msg, value(mention.Key), value(mention.Id), value(mention.Name))
+			}
+		}
 	}
 	if item.Sender != nil {
 		msg.SenderKind, msg.SenderName = value(item.Sender.SenderType), value(item.Sender.SenderName)
@@ -279,6 +284,24 @@ func historyMessage(query chat.HistoryQuery, item *im.Message) (orchestrator.Cha
 		}
 	}
 	return msg, nil
+}
+
+// Mention keys are local to one message. Post nodes can also reference an ID directly.
+func addMentionName(msg *orchestrator.ChatMessage, key, id, name string) {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\x00", ""))
+	if (msg.Type != "text" && msg.Type != "post") || name == "" || (key == "" && id == "") ||
+		strings.ContainsRune(key, 0) || strings.ContainsRune(id, 0) {
+		return
+	}
+	if msg.MentionNames == nil {
+		msg.MentionNames = make(map[string]string)
+	}
+	if key != "" {
+		msg.MentionNames[key] = name
+	}
+	if id != "" {
+		msg.MentionNames[id] = name
+	}
 }
 
 func providerTime(raw string) time.Time {

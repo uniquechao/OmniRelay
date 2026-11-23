@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,6 +17,36 @@ import (
 )
 
 type chatTransport func(*http.Request) (*http.Response, error)
+
+func TestArchiveMentionNamesFromHistoryAndLiveEvent(t *testing.T) {
+	var item im.Message
+	if err := json.Unmarshal([]byte(`{"message_id":"om_test","chat_id":"oc_fixture","create_time":"1700000000000","msg_type":"text","body":{"content":"{\"text\":\"@_user_1\"}"},"mentions":[null,{"key":"@_user_1","id":"ou_one","name":"林一"}]}`), &item); err != nil {
+		t.Fatal(err)
+	}
+	history, err := historyMessage(chat.HistoryQuery{ChatID: "oc_fixture"}, &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var incoming im.P2MessageReceiveV1
+	if err := json.Unmarshal([]byte(fixtureEvent), &incoming); err != nil {
+		t.Fatal(err)
+	}
+	m := incoming.Event.Message
+	m.Content = item.Body.Content
+	if err := json.Unmarshal([]byte(`[null,{"key":"@_user_1","id":{"open_id":"ou_one"},"name":"林一"}]`), &m.Mentions); err != nil {
+		t.Fatal(err)
+	}
+	live := mapArchive(fixtureConfig, &incoming, time.Now())
+	if live == nil || live.Message == nil {
+		t.Fatal("missing archived event")
+	}
+	want := map[string]string{"@_user_1": "林一", "ou_one": "林一"}
+	for _, msg := range []orchestrator.ChatMessage{history, *live.Message} {
+		if msg.Body != `{"text":"@_user_1"}` || !maps.Equal(msg.MentionNames, want) {
+			t.Fatalf("archive lost raw body or mention names: %+v", msg)
+		}
+	}
+}
 
 func (f chatTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 

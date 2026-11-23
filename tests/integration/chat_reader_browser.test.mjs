@@ -114,6 +114,25 @@ async function mountFixture(page, {
   };
 }
 
+test('群聊正文和搜索摘要显示消息本身的提及姓名', { skip: !packageName }, async t => {
+  const browser = await require(packageName).chromium.launch({executablePath: process.env.OMNIRELAY_CHROME});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await mountFixture(page);
+  const message = {...oldMessage, body: JSON.stringify({text: '配送@_user_1，复核@_user_10'}),
+    display_text: '配送@林一，复核@陈十'};
+  const reply = route => route.fulfill({json: {items: [message], total: 1}});
+  await page.route(origin + base + '/oc_group/messages*', reply);
+  await page.route(origin + base + '/search?*', reply);
+  await page.goto(origin + '/#/feishu/bot-chats/oc_group');
+  await page.locator('.chat-message').getByText(message.display_text, {exact: true}).waitFor();
+  await page.getByRole('searchbox', {name: '搜索会话或消息'}).fill('林一');
+  const snippet = page.locator('.chat-result .chat-conversation-preview');
+  await snippet.waitFor();
+  assert.equal(await snippet.textContent(), message.display_text);
+  assert.equal(await snippet.locator('mark').textContent(), '林一');
+});
+
 test('机器人记录切换、搜索、成员、回执及分隔栏', { skip: !packageName }, async t => {
   const { chromium } = require(packageName);
   const browser = await chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });

@@ -67,6 +67,7 @@ type ChatMessage struct {
 	ID, ChatID, ThreadID, ParentID   string
 	SenderID, SenderKind, SenderName string
 	Type, Body                       string
+	MentionNames                     map[string]string `json:",omitempty"`
 	SentAt, UpdatedAt                time.Time
 	Deleted, VisibleInChat           bool
 }

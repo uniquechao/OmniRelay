@@ -92,6 +92,7 @@ function receiptLink(receipt) {
 
 function messageBody(item) {
   if (item.state === 'deleted') return '这条消息已撤回。';
+  if (item.display_text) return item.display_text;
   if (item.body) {
     try {
       const parts = [];
@@ -481,7 +482,7 @@ export function mountChatReader(host, api, {
       const scrollTop = timeline.scrollTop;
       const changed = messages.some(item => {
         const update = updates.get(item.id);
-        return update && (update.state !== item.state || update.body !== item.body ||
+        return update && (update.state !== item.state || update.body !== item.body || update.display_text !== item.display_text ||
           JSON.stringify(update.resources) !== JSON.stringify(item.resources));
       });
       if (changed) {

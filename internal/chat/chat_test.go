@@ -171,6 +171,51 @@ func exampleMessage(chatID, id, text string, seconds int) orchestrator.ChatMessa
 		SenderID: "ou_alice", SenderName: "林晓", SenderKind: "user", SentAt: time.Date(2024, 1, 1, 0, 0, seconds, 0, time.UTC)}
 }
 
+func TestMessageMentionDisplayText(t *testing.T) {
+	names := map[string]string{"@_user_1": "甲", "@_user_10": "乙", "ou_b": "乙"}
+	for _, tc := range []struct{ kind, body, want string }{
+		{"text", `{"text":"配送@_user_10，@_user_1\n@_user_1、@_user_12，@手写"}`, "配送@乙，@甲\n@甲、@_user_12，@手写"},
+		{"post", `{"zh_cn":{"content":[[{"tag":"at","user_id":"@_user_1"},{"tag":"at","user_id":"ou_b"},{"tag":"at","user_name":"丙"},{"tag":"at","user_id":"all"},{"tag":"at","user_id":"ou_unknown"}]]}}`, "@甲 @乙 @丙 @所有人 @成员"},
+		{"interactive", `{"text":"@_user_1"}`, "@_user_1"},
+	} {
+		if got := searchableText(tc.kind, tc.body, names); got != tc.want {
+			t.Errorf("%s display: got %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestArchiveMentionReplayAndRecall(t *testing.T) {
+	s, ctx := testChat(t, &fakeSource{})
+	msg := exampleMessage("oc_group", "om_mention", "@_user_1、@_user_2", 1)
+	save := func(names map[string]string) {
+		t.Helper()
+		msg.MentionNames = names
+		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: msg.ChatID, Kind: orchestrator.ChatGroup, Message: &msg})
+	}
+	check := func(wantBody, wantText string, nameCount int) {
+		t.Helper()
+		var body, search string
+		var names map[string]string
+		err := s.pool.QueryRow(ctx, `SELECT body,search_text,mention_names FROM feishu_chat_messages WHERE message_id=$1`, msg.ID).Scan(&body, &search, &names)
+		if err != nil || body != wantBody || search != wantText || len(names) != nameCount {
+			t.Fatalf("stored %q, %q, %v, err %v", body, search, names, err)
+		}
+	}
+	save(nil) // An archived message from before mention names were stored.
+	save(map[string]string{"@_user_2": "乙"})
+	save(map[string]string{"@_user_1": "甲"})
+	save(nil)
+	check(msg.Body, "@甲、@乙", 2)
+	msg.UpdatedAt = msg.SentAt.Add(time.Minute)
+	save(map[string]string{"@_user_1": "丙", "@_user_2": "丁"})
+	check(msg.Body, "@丙、@丁", 2)
+	msg.Deleted = true
+	save(nil)
+	msg.Deleted = false
+	save(map[string]string{"@_user_1": "甲"})
+	check("", "", 0)
+}
+
 func applyEvent(t *testing.T, ctx context.Context, s *Service, event orchestrator.ArchiveEvent) {
 	t.Helper()
 	if err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error { return s.AcceptEvent(ctx, tx, event) }); err != nil {
@@ -305,6 +350,10 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 		{"om_e", "ou_bob", "oc_bob", orchestrator.ChatPrivate},
 	} {
 		msg := exampleMessage(record.chatID, record.id, "会议纪要", i+1)
+		if record.id == "om_a" {
+			msg.Body = `{"text":"会议纪要交给@_user_1"}`
+			msg.MentionNames = map[string]string{"@_user_1": "提及对象"}
+		}
 		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: record.chatID, PeerOpenID: record.peer, Kind: record.kind, Message: &msg})
 	}
 	mux := http.NewServeMux()
@@ -342,6 +391,13 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(request("alice", "GET", "/search?q=会议", 200), "total", "3")
 	expect(request("alice", "GET", "/search?q=会议&kind=p2p", 200), "total", "1")
 	expect(request("alice", "GET", "/search?q=会议&kind=group", 200), "total", "2")
+	mentioned := request("alice", "GET", "/search?q=提及对象", 200)
+	expect(mentioned, "total", "1")
+	var mentionResults []messageItem
+	if err := json.Unmarshal(mentioned["items"], &mentionResults); err != nil || len(mentionResults) != 1 ||
+		mentionResults[0].DisplayText != "会议纪要交给@提及对象" || mentionResults[0].Body != `{"text":"会议纪要交给@_user_1"}` {
+		t.Fatalf("mention search result: %s (%v)", mentioned["items"], err)
+	}
 	count := request("alice", "GET", "/messages/count", 200)
 	expect(count, "total", "3")
 	if len(count) != 1 {

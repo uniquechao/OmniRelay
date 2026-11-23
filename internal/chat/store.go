@@ -3,6 +3,9 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"maps"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,18 +100,23 @@ func (s *Service) saveMessage(ctx context.Context, tx pgx.Tx, msg orchestrator.C
 	var search string
 	if msg.Deleted {
 		msg.Body = ""
+		msg.MentionNames = nil
 	} else {
-		search = searchableText(msg.Type, msg.Body)
+		search = searchableText(msg.Type, msg.Body, msg.MentionNames)
 	}
 	if msg.UpdatedAt.IsZero() {
 		msg.UpdatedAt = msg.SentAt
 	}
 	// A tombstone wins even if the recall arrived before the original message.
 	// Deleted history pages and live callbacks share this conflict key.
-	_, err := tx.Exec(ctx, `INSERT INTO feishu_chat_messages AS m
+	if msg.MentionNames == nil {
+		msg.MentionNames = map[string]string{}
+	}
+	var storedNames map[string]string
+	err := tx.QueryRow(ctx, `INSERT INTO feishu_chat_messages AS m
 		(tenant_key,app_id,message_id,chat_id,sent_at,updated_at,sender_id,sender_kind,sender_name,
-		message_type,thread_id,parent_id,body,search_text,deleted,visible_in_chat)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		message_type,thread_id,parent_id,body,search_text,deleted,visible_in_chat,mention_names)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (tenant_key,app_id,message_id) DO UPDATE SET
 			sent_at=CASE WHEN EXCLUDED.deleted AND EXCLUDED.message_type='' THEN m.sent_at ELSE EXCLUDED.sent_at END,
 			updated_at=GREATEST(m.updated_at,EXCLUDED.updated_at),
@@ -120,24 +128,52 @@ func (s *Service) saveMessage(ctx context.Context, tx pgx.Tx, msg orchestrator.C
 			parent_id=COALESCE(NULLIF(EXCLUDED.parent_id,''),m.parent_id),
 			body=CASE WHEN m.deleted OR EXCLUDED.deleted THEN '' ELSE EXCLUDED.body END,
 			search_text=CASE WHEN m.deleted OR EXCLUDED.deleted THEN '' ELSE EXCLUDED.search_text END,
+			mention_names=CASE WHEN m.deleted OR EXCLUDED.deleted THEN '{}'::jsonb
+				WHEN m.updated_at=EXCLUDED.updated_at AND m.body=EXCLUDED.body THEN m.mention_names || EXCLUDED.mention_names
+				ELSE EXCLUDED.mention_names END,
 			deleted=m.deleted OR EXCLUDED.deleted,
 			visible_in_chat=m.visible_in_chat OR EXCLUDED.visible_in_chat
 		WHERE m.chat_id=EXCLUDED.chat_id AND (
 			(m.deleted AND m.message_type='' AND EXCLUDED.message_type<>'')
 			OR (NOT m.deleted AND (EXCLUDED.deleted OR EXCLUDED.updated_at >= m.updated_at))
-		)`,
+		) RETURNING mention_names,deleted`,
 		s.tenant, s.app, msg.ID, msg.ChatID, msg.SentAt, msg.UpdatedAt, msg.SenderID, msg.SenderKind, cleanText(msg.SenderName),
-		msg.Type, msg.ThreadID, msg.ParentID, cleanText(msg.Body), cleanText(search), msg.Deleted, msg.VisibleInChat)
+		msg.Type, msg.ThreadID, msg.ParentID, cleanText(msg.Body), cleanText(search), msg.Deleted, msg.VisibleInChat, msg.MentionNames).Scan(&storedNames, &msg.Deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // A newer version or a recall already won.
+	}
+	if err != nil || msg.Deleted || maps.Equal(storedNames, msg.MentionNames) {
+		return err
+	}
+	// History and live delivery may each know only some names. Publish their
+	// combined projection while this transaction still holds the message lock.
+	_, err = tx.Exec(ctx, `UPDATE feishu_chat_messages SET search_text=$4
+		WHERE tenant_key=$1 AND app_id=$2 AND message_id=$3`, s.tenant, s.app, msg.ID,
+		cleanText(searchableText(msg.Type, msg.Body, storedNames)))
 	return err
 }
 
 func cleanText(text string) string { return strings.ReplaceAll(text, "\x00", "") }
 
-func searchableText(kind, body string) string {
+var mentionToken = regexp.MustCompile(`@_user_[0-9]+|@_all\b`)
+
+func resolveMentionText(text string, names map[string]string) string {
+	if len(names) == 0 {
+		return text
+	}
+	return mentionToken.ReplaceAllStringFunc(text, func(key string) string {
+		if name := names[key]; name != "" {
+			return "@" + name
+		}
+		return key
+	})
+}
+
+func searchableText(kind, body string, mentions map[string]string) string {
 	var content any
 	if json.Unmarshal([]byte(body), &content) != nil {
 		if kind == "text" {
-			return body
+			return resolveMentionText(body, mentions)
 		}
 		return ""
 	}
@@ -150,6 +186,20 @@ func searchableText(kind, body string) string {
 				collect(child)
 			}
 		case map[string]any:
+			if kind == "post" && node["tag"] == "at" {
+				id, _ := node["user_id"].(string)
+				name, _ := node["user_name"].(string)
+				switch {
+				case id == "all":
+					name = "所有人"
+				case mentions[id] != "":
+					name = mentions[id]
+				case name == "":
+					name = "成员"
+				}
+				parts = append(parts, "@"+name)
+				return
+			}
 			for _, key := range []string{"text", "title", "content", "file_name", "name", "elements", "header"} {
 				collect(node[key])
 			}
@@ -158,6 +208,9 @@ func searchableText(kind, body string) string {
 				collect(node[key])
 			}
 		case string:
+			if kind == "text" {
+				node = resolveMentionText(node, mentions)
+			}
 			parts = append(parts, node)
 		}
 	}
