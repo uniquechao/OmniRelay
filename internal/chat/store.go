@@ -2,10 +2,8 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"maps"
-	"regexp"
 	"strings"
 	"time"
 
@@ -102,6 +100,12 @@ func (s *Service) saveMessage(ctx context.Context, tx pgx.Tx, msg orchestrator.C
 		msg.Body = ""
 		msg.MentionNames = nil
 	} else {
+		if len(msg.MentionOpenIDs) > 0 {
+			msg.MentionNames = maps.Clone(msg.MentionNames)
+			if err := s.resolveMentionNames(ctx, tx, &msg); err != nil {
+				return err
+			}
+		}
 		search = searchableText(msg.Type, msg.Body, msg.MentionNames)
 	}
 	if msg.UpdatedAt.IsZero() {
@@ -155,67 +159,36 @@ func (s *Service) saveMessage(ctx context.Context, tx pgx.Tx, msg orchestrator.C
 
 func cleanText(text string) string { return strings.ReplaceAll(text, "\x00", "") }
 
-var mentionToken = regexp.MustCompile(`@_user_[0-9]+|@_all\b`)
-
-func resolveMentionText(text string, names map[string]string) string {
-	if len(names) == 0 {
-		return text
+// Only resolve open IDs explicitly attached to this message's mention keys.
+func (s *Service) resolveMentionNames(ctx context.Context, tx pgx.Tx, msg *orchestrator.ChatMessage) error {
+	rows, err := tx.Query(ctx, `SELECT ref.key,ref.value,coalesce(nullif(p.name,''),nullif(g.member_names->>ref.value,''),a.name,'')
+		FROM jsonb_each_text($4::jsonb) ref
+		LEFT JOIN directory_sources d ON (d.tenant_key,d.app_id)=($1,$2) AND d.visible
+		LEFT JOIN directory_people p ON (p.tenant_key,p.app_id,p.snapshot_version,p.open_id)=($1,$2,d.active_version,ref.value)
+		LEFT JOIN feishu_drive_group_memberships g ON (g.tenant_key,g.app_id,g.chat_id)=($1,$2,$3)
+		LEFT JOIN accounts a ON (a.tenant_key,a.app_id,a.open_id)=($1,$2,ref.value)`, s.tenant, s.app, msg.ChatID, msg.MentionOpenIDs)
+	if err != nil {
+		return err
 	}
-	return mentionToken.ReplaceAllStringFunc(text, func(key string) string {
-		if name := names[key]; name != "" {
-			return "@" + name
+	defer rows.Close()
+	for rows.Next() {
+		var key, id, name string
+		if err := rows.Scan(&key, &id, &name); err != nil {
+			return err
 		}
-		return key
-	})
-}
-
-func searchableText(kind, body string, mentions map[string]string) string {
-	var content any
-	if json.Unmarshal([]byte(body), &content) != nil {
-		if kind == "text" {
-			return resolveMentionText(body, mentions)
-		}
-		return ""
-	}
-	var parts []string
-	var collect func(any)
-	collect = func(node any) {
-		switch node := node.(type) {
-		case []any:
-			for _, child := range node {
-				collect(child)
+		if name = strings.TrimSpace(name); name != "" {
+			if msg.MentionNames == nil {
+				msg.MentionNames = make(map[string]string)
 			}
-		case map[string]any:
-			if kind == "post" && node["tag"] == "at" {
-				id, _ := node["user_id"].(string)
-				name, _ := node["user_name"].(string)
-				switch {
-				case id == "all":
-					name = "所有人"
-				case mentions[id] != "":
-					name = mentions[id]
-				case name == "":
-					name = "成员"
-				}
-				parts = append(parts, "@"+name)
-				return
+			if msg.MentionNames[key] == "" {
+				msg.MentionNames[key] = name
 			}
-			for _, key := range []string{"text", "title", "content", "file_name", "name", "elements", "header"} {
-				collect(node[key])
+			if msg.MentionNames[id] == "" {
+				msg.MentionNames[id] = name
 			}
-			// Rich text can wrap its elements in a language key.
-			for _, key := range []string{"zh_cn", "en_us", "ja_jp"} {
-				collect(node[key])
-			}
-		case string:
-			if kind == "text" {
-				node = resolveMentionText(node, mentions)
-			}
-			parts = append(parts, node)
 		}
 	}
-	collect(content)
-	return strings.Join(parts, " ")
+	return rows.Err()
 }
 
 func (s *Service) listConversations(ctx context.Context, id, project string) ([]conversation, error) {

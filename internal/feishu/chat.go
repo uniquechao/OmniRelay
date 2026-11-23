@@ -289,8 +289,17 @@ func historyMessage(query chat.HistoryQuery, item *im.Message) (orchestrator.Cha
 // Mention keys are local to one message. Post nodes can also reference an ID directly.
 func addMentionName(msg *orchestrator.ChatMessage, key, id, name string) {
 	name = strings.TrimSpace(strings.ReplaceAll(name, "\x00", ""))
-	if (msg.Type != "text" && msg.Type != "post") || name == "" || (key == "" && id == "") ||
+	if (msg.Type != "text" && msg.Type != "post") || (key == "" && id == "") ||
 		strings.ContainsRune(key, 0) || strings.ContainsRune(id, 0) {
+		return
+	}
+	if name == "" {
+		if key != "" && validIMID(id, "ou_") {
+			if msg.MentionOpenIDs == nil {
+				msg.MentionOpenIDs = make(map[string]string)
+			}
+			msg.MentionOpenIDs[key] = id
+		}
 		return
 	}
 	if msg.MentionNames == nil {

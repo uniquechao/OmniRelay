@@ -174,8 +174,14 @@ func exampleMessage(chatID, id, text string, seconds int) orchestrator.ChatMessa
 func TestMessageMentionDisplayText(t *testing.T) {
 	names := map[string]string{"@_user_1": "甲", "@_user_10": "乙", "ou_b": "乙"}
 	for _, tc := range []struct{ kind, body, want string }{
-		{"text", `{"text":"配送@_user_10，@_user_1\n@_user_1、@_user_12，@手写"}`, "配送@乙，@甲\n@甲、@_user_12，@手写"},
+		{"text", `{"text":"配送@_user_10，@_user_1\n@_user_1、@_user_12，@手写"}`, "配送@乙，@甲\n@甲、@成员，@手写"},
 		{"post", `{"zh_cn":{"content":[[{"tag":"at","user_id":"@_user_1"},{"tag":"at","user_id":"ou_b"},{"tag":"at","user_name":"丙"},{"tag":"at","user_id":"all"},{"tag":"at","user_id":"ou_unknown"}]]}}`, "@甲 @乙 @丙 @所有人 @成员"},
+		{"text", `{"text":"<p>@_user_1 @_user_10</p><p>5或者8<br>9 &amp; 10</p>"}`, "@甲 @乙\n5或者8\n9 & 10"},
+		{"text", `{"text":"<p>5或者8</p>"}`, "5或者8"},
+		{"text", `{"text":"<p>第一行</p>\n  <p>第二行</p>"}`, "第一行\n第二行"},
+		{"text", `{"text":"示例 <p>原样保留</p>，3 < 5"}`, "示例 <p>原样保留</p>，3 < 5"},
+		{"text", `{"text":"<p><script>bad()</script><b>提醒</b>@_all</p>"}`, "提醒@所有人"},
+		{"post", `{"content":[[{"tag":"text","text":"<p>@_user_10</p>"}]]}`, "@乙"},
 		{"interactive", `{"text":"@_user_1"}`, "@_user_1"},
 	} {
 		if got := searchableText(tc.kind, tc.body, names); got != tc.want {
@@ -202,10 +208,18 @@ func TestArchiveMentionReplayAndRecall(t *testing.T) {
 		}
 	}
 	save(nil) // An archived message from before mention names were stored.
+	check(msg.Body, "@成员、@成员", 0)
+	if _, err := s.pool.Exec(ctx, "UPDATE accounts SET name='乙' WHERE open_id='ou_bob'"); err != nil {
+		t.Fatal(err)
+	}
+	msg.MentionOpenIDs = map[string]string{"@_user_2": "ou_bob"}
+	save(nil)
+	check(msg.Body, "@成员、@乙", 2)
+	msg.MentionOpenIDs = nil
 	save(map[string]string{"@_user_2": "乙"})
 	save(map[string]string{"@_user_1": "甲"})
 	save(nil)
-	check(msg.Body, "@甲、@乙", 2)
+	check(msg.Body, "@甲、@乙", 3)
 	msg.UpdatedAt = msg.SentAt.Add(time.Minute)
 	save(map[string]string{"@_user_1": "丙", "@_user_2": "丁"})
 	check(msg.Body, "@丙、@丁", 2)
@@ -214,6 +228,57 @@ func TestArchiveMentionReplayAndRecall(t *testing.T) {
 	msg.Deleted = false
 	save(map[string]string{"@_user_1": "甲"})
 	check("", "", 0)
+}
+
+func TestReplayLegacyChatDisplayText(t *testing.T) {
+	source := &fakeSource{}
+	s, ctx := testChat(t, source)
+	first := exampleMessage("oc_group", "om_first", "<p>@_user_1 @_user_2</p><p>5或者8</p>", 1)
+	second := exampleMessage("oc_group", "om_second", "请确认 @_user_1", 2)
+	for _, msg := range []orchestrator.ChatMessage{first, second} {
+		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: msg.ChatID, Kind: orchestrator.ChatGroup, Message: &msg})
+	}
+	applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: "oc_other", Kind: orchestrator.ChatGroup})
+	// Recreate the prior release's index and completed cursors in this isolated schema.
+	_, err := s.pool.Exec(ctx, `UPDATE feishu_chat_messages SET search_text=body::jsonb->>'text';
+		UPDATE feishu_chat_sync SET full_at=now(),next_at=now()+interval '1 day';
+		DELETE FROM omnirelay_schema_migrations WHERE version=42`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrations.Apply(ctx, s.pool); err != nil {
+		t.Fatal(err)
+	}
+	var scheduled []string
+	if err := s.pool.QueryRow(ctx, "SELECT array_agg(chat_id) FROM feishu_chat_sync WHERE full_at IS NULL AND next_at<=now()").Scan(&scheduled); err != nil || len(scheduled) != 1 || scheduled[0] != "oc_group" {
+		t.Fatalf("scheduled histories %v: %v", scheduled, err)
+	}
+	first.MentionNames = map[string]string{"@_user_1": "甲", "@_user_2": "乙"}
+	second.MentionNames = map[string]string{"@_user_1": "丙"}
+	source.history = func(q HistoryQuery) (Page[orchestrator.ChatMessage], error) {
+		if q.ChatID != first.ChatID || q.Start != nil || q.Cursor != "" {
+			t.Fatalf("unexpected history range: %+v", q)
+		}
+		return Page[orchestrator.ChatMessage]{Items: []orchestrator.ChatMessage{first, second}}, nil
+	}
+	for range 2 { // discovery, then the scheduled group
+		if worked, err := s.runPage(ctx); !worked || err != nil {
+			t.Fatalf("history worker: %v %v", worked, err)
+		}
+	}
+	for id, want := range map[string]string{first.ID: "@甲 @乙\n5或者8", second.ID: "请确认 @丙"} {
+		var indexed string
+		if err := s.pool.QueryRow(ctx, "SELECT search_text FROM feishu_chat_messages WHERE message_id=$1", id).Scan(&indexed); err != nil || indexed != want {
+			t.Fatalf("index for %s: %q, want %q (%v)", id, indexed, want, err)
+		}
+		rows, err := s.pool.Query(ctx, "SELECT "+messageColumns+" FROM feishu_chat_messages WHERE message_id=$1", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item, err := pgx.CollectExactlyOneRow(rows, scanMessage); err != nil || item.DisplayText != want {
+			t.Fatalf("message for %s: %q, want %q (%v)", id, item.DisplayText, want, err)
+		}
+	}
 }
 
 func applyEvent(t *testing.T, ctx context.Context, s *Service, event orchestrator.ArchiveEvent) {
@@ -351,7 +416,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	} {
 		msg := exampleMessage(record.chatID, record.id, "会议纪要", i+1)
 		if record.id == "om_a" {
-			msg.Body = `{"text":"会议纪要交给@_user_1"}`
+			msg.Body = `{"text":"<p>会议纪要交给@_user_1</p><p>5或者8</p>"}`
 			msg.MentionNames = map[string]string{"@_user_1": "提及对象"}
 		}
 		applyEvent(t, ctx, s, orchestrator.ArchiveEvent{ChatID: record.chatID, PeerOpenID: record.peer, Kind: record.kind, Message: &msg})
@@ -395,7 +460,7 @@ func TestChatReadAuthorizationAndPagination(t *testing.T) {
 	expect(mentioned, "total", "1")
 	var mentionResults []messageItem
 	if err := json.Unmarshal(mentioned["items"], &mentionResults); err != nil || len(mentionResults) != 1 ||
-		mentionResults[0].DisplayText != "会议纪要交给@提及对象" || mentionResults[0].Body != `{"text":"会议纪要交给@_user_1"}` {
+		mentionResults[0].DisplayText != "会议纪要交给@提及对象\n5或者8" || mentionResults[0].Body != `{"text":"<p>会议纪要交给@_user_1</p><p>5或者8</p>"}` {
 		t.Fatalf("mention search result: %s (%v)", mentioned["items"], err)
 	}
 	count := request("alice", "GET", "/messages/count", 200)

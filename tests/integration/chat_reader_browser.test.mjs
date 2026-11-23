@@ -119,13 +119,19 @@ test('群聊正文和搜索摘要显示消息本身的提及姓名', { skip: !pa
   t.after(() => browser.close());
   const page = await browser.newPage();
   await mountFixture(page);
-  const message = {...oldMessage, body: JSON.stringify({text: '配送@_user_1，复核@_user_10'}),
-    display_text: '配送@林一，复核@陈十'};
+  const message = {...oldMessage, body: JSON.stringify({text: '<p>配送@_user_1，复核@_user_10</p><p>5或者8</p>'}),
+    display_text: '配送@林一，复核@陈十\n5或者8'};
   const reply = route => route.fulfill({json: {items: [message], total: 1}});
   await page.route(origin + base + '/oc_group/messages*', reply);
   await page.route(origin + base + '/search?*', reply);
   await page.goto(origin + '/#/feishu/bot-chats/oc_group');
-  await page.locator('.chat-message').getByText(message.display_text, {exact: true}).waitFor();
+  const bubble = page.locator('[data-message="om_old"] .chat-bubble');
+  await bubble.waitFor();
+  assert.equal(await bubble.innerText(), message.display_text);
+  if (process.env.OMNIRELAY_CHAT_EVIDENCE) {
+    await mkdir(process.env.OMNIRELAY_CHAT_EVIDENCE, {recursive:true});
+    await page.locator('[data-message="om_old"]').screenshot({path: process.env.OMNIRELAY_CHAT_EVIDENCE + '/chat-paragraph-mentions.png'});
+  }
   await page.getByRole('searchbox', {name: '搜索会话或消息'}).fill('林一');
   const snippet = page.locator('.chat-result .chat-conversation-preview');
   await snippet.waitFor();

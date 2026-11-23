@@ -92,7 +92,7 @@ function receiptLink(receipt) {
 
 function messageBody(item) {
   if (item.state === 'deleted') return '这条消息已撤回。';
-  if (item.display_text) return item.display_text;
+  if ((item.type === 'text' || item.type === 'post') && typeof item.display_text === 'string') return item.display_text;
   if (item.body) {
     try {
       const parts = [];
