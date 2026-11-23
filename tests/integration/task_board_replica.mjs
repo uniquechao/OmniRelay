@@ -275,10 +275,6 @@ try{
  await page.getByRole('dialog',{name:'任务详情'}).waitFor({state:'hidden'});
  await page.locator('#board-task-'+disposable.id).waitFor({state:'detached'});
  await api('GET','/tasks/'+disposable.id,undefined,404);
- assert.deepEqual(errors,[]);
-} catch(error){
- console.error(page.url(),await page.locator('body').innerText(),errors);
- throw error;
  // New task, lost-response replay, stale edit and deletion use the same attachment transaction.
  const aid=crypto.randomUUID(), aurl=root+'/task-attachments/'+aid;
  const command={request_key:crypto.randomUUID(),title:'附件事务',description:'[样本]('+aurl+')'};
@@ -294,4 +290,8 @@ try{
  assert.equal(stale.status(),409);assert.ok(!(await context.request.get(origin+otherURL)).ok());
  await api('DELETE','/tasks/'+withFile.id,{expected_version:withFile.version,change_reason:'完成附件验收',request_key:crypto.randomUUID()});
  assert.ok(!(await context.request.get(origin+aurl)).ok());
+ assert.deepEqual(errors,[]);
+} catch(error){
+ console.error(page.url(),await page.locator('body').innerText(),errors);
+ throw error;
 } finally {await browser.close()}
