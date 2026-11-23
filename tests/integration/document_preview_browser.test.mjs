@@ -9,7 +9,7 @@ const policy="default-src 'self'; script-src 'self'; style-src 'self'; img-src '
 const fixture=`import {renderResult,renderDocumentImages} from '/drive-preview.js';
 window.OmniRelayUI={escape:v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')};
 const c=document.createElement('canvas');c.width=80;c.height=40;c.getContext('2d').fillRect(0,0,80,40);
-const data={document:[{type:'heading',level:2,runs:[{text:'会议总结',bold:true}]},{type:'text',runs:[{text:'保留加粗',bold:true},{text:' 与斜体',italic:true}]},{type:'text',runs:[{text:'参会人：'},{text:'@张宁 ',kind:'person',bold:true},{text:'@<img src=x onerror=alert(1)> ',kind:'person'},{text:'验收文档',kind:'document',link:'https://example.feishu.cn/docx/doc'},{text:'危险链接',link:'javascript:alert(1)'}]},{type:'bullet',runs:[{text:'整改项一'}]},{type:'bullet',runs:[{text:'整改项二'}]},{type:'image',image:{mime:'image/png',data:c.toDataURL().split(',')[1]}},{type:'table',rows:[[[{type:'text',runs:[{text:'负责人'}]}],[{type:'text',runs:[{text:'张宁'}]}]]]}]};
+const data={document:[{type:'heading',level:2,runs:[{text:'会议总结',bold:true}]},{type:'text',runs:[{text:'保留加粗',bold:true},{text:' 与斜体',italic:true}]},{type:'text',runs:[{text:'参会人：'},{text:'@张宁 ',kind:'person',bold:true},{text:'@<img src=x onerror=alert(1)> ',kind:'person'},{text:'验收文档',kind:'document',link:'https://example.feishu.cn/docx/doc'},{text:'危险链接',link:'javascript:alert(1)'}]},{type:'bullet',runs:[{text:'整改项一'}]},{type:'bullet',runs:[{text:'整改项二'}]},{type:'image',image:{mime:'image/png',data:c.toDataURL().split(',')[1]}},{type:'image',image:{mime:'image/webp',data:'UklGRhwAAABXRUJQVlA4TA8AAAAvAQAAAAcQ/Y/+ByKi/wEA'}},{type:'table',rows:[[[{type:'text',runs:[{text:'负责人'}]}],[{type:'text',runs:[{text:'张宁'}]}]]]}]};
 const root=document.querySelector('main');root.innerHTML=renderResult('docs',data,{});await renderDocumentImages(root,data,new AbortController().signal);window.ready=true;`;
 test('图文预览在 CSP 下保留格式并绘出同步图片，兼容桌面手机及浅深主题',async()=>{
  const server=createServer(async(req,res)=>{
@@ -39,7 +39,8 @@ test('图文预览在 CSP 下保留格式并绘出同步图片，兼容桌面手
    assert.equal(await page.locator('a').getAttribute('href'),'https://example.feishu.cn/docx/doc');
    assert.equal(await page.locator('li').count(),2);
    assert.equal(await page.locator('td').count(),2);
-   assert.equal(await page.locator('[data-document-image]').evaluate(c=>c.width),80);
+   assert.equal(await page.locator('[data-document-image]').first().evaluate(c=>c.width),80);
+   assert.equal(await page.locator('[data-document-image]').nth(1).evaluate(c=>c.width),2);
    assert.equal(await page.locator('figcaption:not([hidden])').count(),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    assert.equal(violations.filter(v=>v.includes('Content Security Policy')).length,0);

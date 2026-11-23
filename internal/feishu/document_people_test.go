@@ -2,7 +2,9 @@ package feishu
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,5 +99,48 @@ func TestDocumentUnresolvableUserIsExplicit(t *testing.T) {
 	_ = json.Unmarshal(snap.Content, &doc)
 	if run := doc.Blocks[0].Runs[0]; !run.Unresolved || run.Text != "[未解析用户] " || run.PersonKey == "" {
 		t.Fatal(run)
+	}
+}
+
+func TestDocumentWebPImage(t *testing.T) {
+	image, err := base64.StdEncoding.DecodeString("UklGRhwAAABXRUJQVlA4TA8AAAAvAQAAAAcQ/Y/+ByKi/wEA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprint(broken), func(t *testing.T) {
+			getter := fileGetter{get: func(_ context.Context, path string) (*http.Response, error) {
+				body := `{"code":0,"data":{"document":{"title":"WebP 文档","revision_id":1}}}`
+				if strings.Contains(path, "/blocks?") {
+					body = `{"code":0,"data":{"items":[{"block_id":"img","block_type":27,"image":{"token":"image","width":2,"height":1}}],"has_more":false}}`
+				}
+				if strings.Contains(path, "/download?") {
+					data := image
+					if broken {
+						data = data[:12]
+					}
+					return &http.Response{Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+				}
+				return &http.Response{Body: io.NopCloser(strings.NewReader(body))}, nil
+			}}
+			snap, err := getter.readDocument(t.Context(), "Doc", false)
+			if broken {
+				if !errors.Is(err, drive.ErrPartial) {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc drive.DocumentSnapshot
+			if err = json.Unmarshal(snap.Content, &doc); err != nil {
+				t.Fatal(err)
+			}
+			saved := doc.Blocks[0].Image
+			if saved == nil || saved.MIME != "image/webp" || string(saved.Data) != string(image) {
+				t.Fatal("WebP image not preserved")
+			}
+		})
 	}
 }

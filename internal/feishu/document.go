@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	_ "golang.org/x/image/webp"
+
 	"github.com/uniquechao/OmniRelay/internal/drive"
 
 	"github.com/uniquechao/OmniRelay/internal/identity"
