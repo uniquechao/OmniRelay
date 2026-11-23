@@ -16,7 +16,7 @@ export function userChoice(user, value, attribute = 'data-user-choice') {
 
 export function navigateUserChoices(event, box) {
   const input = box.querySelector('input[type=search]');
-  const list = box.querySelector('[data-user-results], [data-results]');
+  const list = box.querySelector('[data-results]');
   if (!input || !list || list.hidden) return;
   const buttons = [...list.querySelectorAll('button:not(:disabled)')];
   const index = buttons.indexOf(event.target);

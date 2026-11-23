@@ -297,7 +297,9 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	}
 	call(t, "manager", "task_create", `{"title":"群内分派","owner_member_id":"feishu:ou_group"}`, 200)
 	call(t, "manager", "task_create", `{"title":"无效分派","owner_member_id":"feishu:ou_someone"}`, 400)
-	call(t, "manager", "member_add", `{"account_id":"feishu:ou_group","role":"member"}`, 200)
+	if got := call(t, "manager", "member_list", `{"q":"王甲"}`, 200); !strings.Contains(got, "feishu:ou_group") {
+		t.Fatalf("bound group member missing from project: %s", got)
+	}
 	call(t, "manager", "member_add", `{"account_id":"feishu:ou_group","role":"member"}`, 409)
 	slices.Sort(covered)
 	if !slices.Equal(covered, pmtools.Names()) {

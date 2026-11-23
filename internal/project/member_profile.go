@@ -17,14 +17,13 @@ func (s *Service) findMemberCandidates(ctx context.Context, k taskScope, actor i
 	if err := s.require(ctx, actor, "project.settings", k.project); err != nil {
 		return nil, err
 	}
-	rows, err := s.reader().Query(ctx, groupPeople+`, candidates AS (SELECT jsonb_build_object(`+userChoiceJSON+`,'version',coalesce(m.version,0)) AS item, `+userChoiceSearch+` AS searchable, 1 AS rank
- FROM accounts a `+userChoiceJoins+` LEFT JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id) AND m.project_id=$3
- WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.active AND (m.role IS NULL OR m.role='revoked')
- AND ($4<>'' OR NOT EXISTS (SELECT FROM project_chat_assignments c WHERE c.tenant_key=$1 AND c.app_id=$2 AND c.project_id=$3))
- AND NOT EXISTS (SELECT FROM people p WHERE p.account=a.id)
- UNION ALL SELECT jsonb_build_object('account_id',CASE WHEN role='revoked' THEN account ELSE id END,'display_name',display_name,'avatar_url',avatar,
- 'username',username,'version',version),lower(concat_ws(' ',display_name,username,open_id,account)),0 FROM people WHERE role IS NULL OR role='revoked')
- SELECT item FROM candidates WHERE strpos(searchable,lower($4))>0 ORDER BY rank,item->>'display_name',item->>'account_id' LIMIT 25 OFFSET $5`, k.args(strings.TrimSpace(q), (page-1)*25)...)
+	rows, err := s.reader().Query(ctx, systemPeople+` SELECT jsonb_build_object(
+		'account_id',coalesce(p.account,'feishu:'||p.open_id),'display_name',p.name,
+		'avatar_url',p.avatar,'username',p.username,'version',coalesce(m.version,0))
+		FROM system_people p LEFT JOIN project_members m
+		ON (m.tenant_key,m.app_id,m.project_id,m.account_id)=($1,$2,$3,p.account)
+		WHERE (m.role IS NULL OR m.role='revoked') AND strpos(p.searchable,lower($4))>0
+		ORDER BY p.name,p.open_id LIMIT 25 OFFSET $5`, k.args(strings.TrimSpace(q), (page-1)*25)...)
 	if err != nil {
 		return nil, err
 	}

@@ -213,8 +213,6 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .drive-document .doc-color-7 { color: var(--or-text-secondary); }
 .drive-document [class*="doc-background-"] { background: var(--or-surface-hover, rgba(101,83,244,.12)); }
 
-.user-choice-list { max-height:16rem; overflow:auto; margin-block:8px; border:1px solid var(--or-border); border-radius:8px; background:var(--or-surface); }
-.user-choice-list:empty { display:none; }
 .button.user-choice { display:flex; align-items:center; gap:10px; width:100%; justify-content:flex-start; text-align:start; border:0; border-radius:0; padding:10px 12px; min-height:48px; white-space:normal; }
 .user-choice .person-avatar { flex:none; }
 .user-choice-copy { min-width:0; display:grid; gap:2px; }
@@ -223,6 +221,27 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .user-choice-pages { display:flex; justify-content:space-between; gap:8px; }
 
 .task-detail [data-results] .user-choice { display:flex; }
+
+.project-member-fields { display: grid; gap: 18px; }
+.project-member-fields .pr-form { margin: 0; }
+.project-member-fields :is(.pr-form > span,.member-picker > label) { font-weight: 600; }
+.or-drawer:has(.project-member-fields) .dialog-symbol { display: none; }
+.or-drawer:has(.project-member-fields) .dialog-head { grid-template-columns: minmax(0,1fr) auto; align-items: center; }
+.member-search-control { position: relative; }
+.member-search-control > .icon { position: absolute; inset-inline-start: 11px; top: 50%; transform: translateY(-50%); width: 16px; color: var(--or-text-muted); pointer-events: none; }
+.member-picker .member-search-control input { padding-inline-start: 35px; }
+.member-search-picked { position: absolute; inset-inline-end: 11px; top: 50%; transform: translateY(-50%); font-size: .75rem; color: var(--or-success-text); pointer-events: none; }
+.member-search-control:has(.member-search-picked:not(:empty)) input { padding-inline-end: 44px; }
+.member-picker .combo-box { max-height: none; padding: 4px; }
+.member-picker [role=listbox] { max-height: min(15rem,35dvh); overflow-y: auto; overscroll-behavior: contain; }
+.member-picker .member-option { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px 8px; border-radius: 4px; }
+.member-option .person-avatar { inline-size: 26px; block-size: 26px; flex: none; font-size: .625rem; background: color-mix(in srgb,var(--person-avatar-fill,var(--or-avatar-indigo)) 14%,var(--or-surface)); color: var(--or-text-secondary); }
+.member-option small { margin-inline-start: auto; color: var(--or-text-secondary); font-size: .75rem; overflow-wrap: anywhere; }
+.member-search-status { padding: 8px; color: var(--or-text-secondary); }
+.member-picker .user-choice-pages { justify-content: flex-end; padding: 3px 4px 0; border-top: 1px solid var(--or-border); }
+.member-picker .user-choice-pages button { padding: 4px 8px; border: 0; background: transparent; color: var(--or-link); }
+.member-picker .user-choice-pages button:disabled { color: var(--or-text-muted); cursor: default; }
+@media (pointer: coarse) { .member-picker :is(.member-option,.user-choice-pages button) { min-height: 44px; } }
 
 .document-person { color:var(--or-link); white-space:pre-wrap; }
 

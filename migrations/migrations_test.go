@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const latestMigration = 40
+const latestMigration = 41
 
 func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	versions, err := readMigrations()
@@ -26,6 +26,73 @@ func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 			t.Fatalf("unexpected migration metadata: %d", change.version)
 		}
 	}
+}
+
+func TestGroupDefaultMembersUpgrade(t *testing.T) {
+	dsn := os.Getenv("OMNIRELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("requires isolated PostgreSQL")
+	}
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	run := func(sql string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(project, want string) {
+		t.Helper()
+		var got string
+		err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(a.open_id||':'||m.role,',' ORDER BY a.open_id),'')
+			FROM project_members m JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
+			WHERE (m.tenant_key,m.app_id,m.project_id)=('tenant','app',$1)`, project).Scan(&got)
+		if err != nil || got != want {
+			t.Fatalf("%s members: %q, want %q (%v)", project, got, want, err)
+		}
+	}
+	changes, err := readMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run("CREATE SCHEMA group_defaults_upgrade; SET LOCAL search_path=group_defaults_upgrade")
+	for _, change := range changes[:40] {
+		run(change.sql)
+	}
+	run(`INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES ('tenant','app',2,true);
+		INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind)
+		SELECT 'tenant','app',x,'group' FROM unnest(ARRAY['first','overlap','pending']) x;
+		INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id) VALUES ('tenant','app','first','north');
+		INSERT INTO accounts(id,tenant_key,app_id,open_id,active) VALUES ('owner','tenant','app','ou_owner',true),
+			('removed','tenant','app','ou_removed',true),('disabled','tenant','app','ou_disabled',false);
+		INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES
+			('tenant','app','north','owner','owner','manager'),('tenant','app','north','removed','removed','revoked');
+		INSERT INTO feishu_drive_group_memberships(tenant_key,app_id,chat_id,generation,verified_at,members) VALUES
+			('tenant','app','first',2,now(),ARRAY['ou_a','ou_owner','ou_removed','ou_disabled']),
+			('tenant','app','overlap',2,now(),ARRAY['ou_a','ou_b']),
+			('tenant','app','pending',1,now(),ARRAY['ou_old'])`)
+	run(changes[40].sql)
+	check("north", "ou_a:member,ou_owner:manager,ou_removed:revoked")
+	run(`INSERT INTO project_chat_links(tenant_key,app_id,chat_id,project_id) VALUES
+		('tenant','app','overlap','north'),('tenant','app','pending','south')`)
+	check("north", "ou_a:member,ou_b:member,ou_owner:manager,ou_removed:revoked")
+	check("south", "")
+	run(`UPDATE feishu_drive_group_memberships SET generation=2,verified_at=now(),members=ARRAY['ou_new'] WHERE chat_id='pending'`)
+	check("south", "ou_new:member")
+	run(`UPDATE project_members SET role='revoked' WHERE project_id='south';
+		UPDATE feishu_drive_group_memberships SET verified_at=now(),members=ARRAY['ou_new','ou_later'] WHERE chat_id='pending'`)
+	check("south", "ou_new:revoked")
+	run(`UPDATE project_chat_links SET project_id='west' WHERE chat_id='pending'`)
+	check("west", "ou_later:member,ou_new:member")
 }
 
 func TestProjectProfileTimestampUpgrade(t *testing.T) {
