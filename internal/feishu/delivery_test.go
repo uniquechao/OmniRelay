@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -79,7 +80,7 @@ func TestDeliveryFeishuCreateAndConfirm(t *testing.T) {
 			got := source.Deliver(t.Context(), target, bot, "text", body, uuid)
 			message := got.Message
 			got.Message = orchestrator.ChatMessage{}
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("create response: %#v, want %#v", got, tc.want)
 			}
 			wantVerifies := 3

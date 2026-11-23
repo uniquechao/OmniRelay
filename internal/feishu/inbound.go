@@ -118,6 +118,15 @@ func mapArchive(cfg workerConfig, incoming *im.P2MessageReceiveV1, received time
 		SenderID: openID, SenderKind: senderKind, Type: value(m.MessageType), Body: value(m.Content),
 		SentAt: sentAt, UpdatedAt: providerTime(value(m.UpdateTime)),
 	}
+	for _, mention := range m.Mentions {
+		if mention != nil {
+			var id string
+			if mention.Id != nil {
+				id = value(mention.Id.OpenId)
+			}
+			addMentionName(event.Message, value(mention.Key), id, value(mention.Name))
+		}
+	}
 	return event
 }
 

@@ -139,6 +139,7 @@ type messageItem struct {
 	ParentID             string                     `json:"parent_id,omitempty"`
 	Type                 string                     `json:"type"`
 	Body                 string                     `json:"body,omitempty"`
+	DisplayText          string                     `json:"display_text,omitempty"`
 	State                string                     `json:"state"`
 	SentAt               time.Time                  `json:"sent_at"`
 	Sender               directory.PersonProjection `json:"sender"`
@@ -148,12 +149,14 @@ type messageItem struct {
 }
 
 const messageColumns = `message_id,chat_id,thread_id,parent_id,message_type,body,
+	CASE WHEN message_type='post' OR (message_type='text' AND mention_names<>'{}'::jsonb)
+		THEN search_text ELSE '' END AS display_text,
 	sent_at,sender_id,sender_name,sender_kind,deleted`
 
 func scanMessage(row pgx.CollectableRow) (messageItem, error) {
 	var item messageItem
 	var deleted bool
-	err := row.Scan(&item.ID, &item.ChatID, &item.ThreadID, &item.ParentID, &item.Type, &item.Body,
+	err := row.Scan(&item.ID, &item.ChatID, &item.ThreadID, &item.ParentID, &item.Type, &item.Body, &item.DisplayText,
 		&item.SentAt, &item.senderID, &item.senderName, &item.SenderKind, &deleted)
 	item.SentAt = item.SentAt.UTC()
 	item.State = "available"
