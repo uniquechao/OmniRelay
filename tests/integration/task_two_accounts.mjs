@@ -35,7 +35,7 @@ try {
   await manager.api('PUT', '/members/manager/access', { role: 'manager', member_id: 'u' });
   await member('reader');
   const second = await login('second');
-  const task = await manager.api('POST', '/tasks', { title: '初始标题', owner_member_id: 'v' });
+  const task = await manager.api('POST', '/tasks', { title: '初始标题', owner_member_id: 'v', participant_ids: ['v'] });
   const sibling = await manager.api('POST', '/tasks', { title: '初始标题' });
   const path = '/tasks/' + task.id;
   const detail = origin + '/#/projects/h3' + path;
@@ -46,19 +46,22 @@ try {
   });
   await manager.api('PUT', path + '/evidence/document/doc');
   const a = manager.page, b = second.page;
-  const field = (page, key) => page.locator('.task-edit-grid [name="' + key + '"]');
+  const field = (page, key) => page.locator('#task-inspector-form [name="' + key + '"]');
   const button = (page, name) => page.getByRole('button', { name, exact: true });
   const saved = page => page.getByText('任务已保存。', { exact: true }).waitFor();
   await Promise.all([a.goto(detail), b.goto(detail)]);
   await button(a, '保存任务').waitFor();
   await button(b, '保存任务').waitFor();
   assert.ok(await button(a, '保存任务').isDisabled());
-  assert.ok(await field(b, 'title').isDisabled());
-  await a.getByText('受限依据', { exact: true }).click();
+  assert.equal(await field(b, 'title').isEditable(),false);
+  const evidence = page => page.locator('.project-candidate-evidence');
+  await evidence(a).locator('summary').first().click();
+  await evidence(b).locator('summary').first().click();
+  await evidence(a).locator('summary').filter({hasText:'受限依据'}).click();
   await a.getByText('仅负责人可见的正文').waitFor();
-  await b.locator('[data-evidence] p').waitFor();
+  await evidence(b).locator('p').filter({hasNotText:'正在'}).waitFor();
   assert.deepEqual((await second.api('GET', path + '/evidence')).items.map(i => i.accessible), [false]);
-  assert.doesNotMatch(await b.locator('[data-evidence]').innerText(), /受限依据|仅负责人/);
+  assert.doesNotMatch(await evidence(b).innerText(), /受限依据|仅负责人/);
   await second.api('PUT', path, { title: '不可编辑', expected_task_version: 1 }, 404);
 
   // 第二人获得编辑权，在第一人仍持有原版本时提交。
@@ -70,20 +73,25 @@ try {
   await button(b, '保存任务').click();
   await saved(b);
   await button(a, '保存任务').click();
+  await button(a, '读取最新版本').click();
   await button(a, '应用比对结果').click();
   assert.equal(await field(a, 'description').inputValue(), '第二人保存的正文');
   assert.equal(await field(a, 'title').inputValue(), '两账号核验');
   await field(a, 'priority').selectOption('P0');
   await field(a, 'milestone_id').selectOption(node.id);
-  await field(a, 'start_at').fill('2026-11-19');
-  await field(a, 'due_at').fill('2026-11-23');
+  await field(a, 'start').fill('2026-11-19');
+  await field(a, 'due').fill('2026-11-23');
   await a.getByRole('button',{name:'编辑验收条件'}).click();
   await field(a, 'acceptance').fill('以同一任务为准');
-  for (const [key, term, id] of [['owner_member_id','项目负责人','u'], ['participant_ids','项目成员','v'], ['tag_ids','联验','check']]) {
-    if (key === 'tag_ids') await a.getByRole('button',{name:'添加标签',exact:true}).click();
-    await field(a, key).fill(term);
-    await a.locator('[data-picker="' + key + '"] [data-pick="' + id + '"]').click();
-  }
+  const owner = a.getByRole('combobox',{name:'负责人'});
+  await owner.fill('项目负责人');
+  await a.getByRole('option',{name:/项目负责人/}).click();
+  await a.getByRole('button',{name:/^参与人，/}).click();
+  await a.getByRole('checkbox',{name:/项目成员/}).check();
+  await a.keyboard.press('Escape');
+  await button(a,'添加或移除标签').click();
+  await a.getByRole('checkbox',{name:'联验'}).check();
+  await button(a,'完成').click();
   await button(a, '保存任务').click();
   await saved(a);
   assert.equal(a.url(), detail);
@@ -91,16 +99,16 @@ try {
   assert.equal(record.version, 3);
   assert.equal(record.title, '两账号核验');
   assert.equal(record.description, '第二人保存的正文');
-  assert.equal(record.start_at, '2026-11-19');
-  assert.equal(record.due_at, '2026-11-23');
+  assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'}).format(new Date(record.start_at)), '2026-11-19');
+  assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'}).format(new Date(record.due_at)), '2026-11-23');
   assert.equal(record.updated_by, 'manager');
   assert.equal(record.owner_member_id, 'u');
   assert.equal(record.priority, 'P0');
   assert.equal(record.milestone_id, node.id);
-  assert.deepEqual(record.participant_ids, ['v']);
+  assert.ok([...record.participant_ids, ...record.interaction_participants.map(person => person.id)].includes('v'));
   assert.deepEqual(record.tag_ids, ['check']);
   assert.equal(record.acceptance, '以同一任务为准');
-  for (const route of ['tasks','tasks/list','overview']) {
+  for (const route of ['tasks','tasks?task_layout=list','overview']) {
     await b.goto(origin + '/#/projects/h3/' + route);
     await b.reload();
     const link = route !== 'overview'?b.locator('#board-task-'+task.id):b.locator('a[href="#/projects/h3' + path + '"]').first();
@@ -109,7 +117,7 @@ try {
     assert.match(await row.innerText(), /项目负责人/);
     if (route !== 'overview') assert.match(await row.innerText(), /联验/);
     if (route !== 'overview') assert.match(await link.innerText(), /两账号核验/);
-    await b.locator('time[datetime="2026-11-23"]').first().waitFor();
+    await row.getByText(/11[月/-]23|11\.23/).first().waitFor();
     await link.click();
     if(route !== 'overview'){assert.equal(await b.getByLabel('任务标题',{exact:true}).inputValue(),record.title);assert.equal(await b.getByLabel('任务正文',{exact:true}).inputValue(),record.description)}else{assert.equal(await field(b, 'title').inputValue(), record.title);assert.equal(await field(b, 'description').inputValue(), record.description)}
   }
@@ -133,10 +141,10 @@ try {
   await b.reload();
   // Members may edit collaboration fields of tasks they own or participate in.
   assert.ok(await field(b, 'title').isEnabled());
-  assert.ok(await field(b, 'status').isEnabled());
+  assert.ok(await field(b, 'column').isEnabled());
   await b.getByPlaceholder('留下评论…').fill('第二人的评论');
   await button(b, '提交评论').click();
-  await b.getByText('评论已发送。').waitFor();
+  await b.getByText('评论已保存。').waitFor();
   await a.reload();
   await button(a,'评论').click();
   const comment = a.locator('li[data-kind="comment"]').filter({hasText:'第二人的评论'});
@@ -145,9 +153,10 @@ try {
   const events = (await second.api('GET', path + '/activity?kind=comment')).items;
   assert.equal(events.length, 1);
   assert.equal(events[0].actor_id, 'second');
-  assert.equal(await comment.locator('time').textContent(), events[0].created_at);
-  await button(b,'提交进展反馈').click();
-  await b.locator('[name="proposed_status"]').selectOption('done');
+  assert.equal(await comment.locator('time').getAttribute('datetime'), events[0].created_at);
+  await b.getByText('进展反馈与审核',{exact:true}).click();
+  await button(b,'提交本人进展').click();
+  await b.locator('[name="status"]').selectOption('done');
   await b.locator('[name="note"]').fill('已完成联合核验');
   await button(b,'确认提交').click();
   await b.getByText('已完成联合核验', {exact:true}).waitFor();
@@ -155,24 +164,25 @@ try {
   await second.api('POST', '/task-update-suggestions/' + item.id + '/review',
     {expected_version:item.version,action:'accept',reason:'自行审核'},404);
   await a.reload();
-  await button(a,'采纳').click();
+  await a.getByText('进展反馈与审核',{exact:true}).click();
+  await button(a,'审核并采用进展').click();
   await a.locator('[name="note"]').fill('负责人核对完成结果');
   await button(a,'确认提交').click();
-  await a.getByText('审核说明　负责人核对完成结果').waitFor();
+  await a.getByText('审核说明：负责人核对完成结果').waitFor();
   await b.reload();
-  assert.equal(await field(b,'status').inputValue(),'done');
+  assert.equal(await field(b,'column').inputValue(),'done');
   const done = await second.api('GET',path);
   assert.equal(done.completion_note, '已完成联合核验');
   await manager.api('PUT',path,{title:done.title,status:'in_progress',expected_task_version:done.version},400);
   assert.deepEqual(await second.api('GET',path),done);
   const leave = {
-    '关闭': () => a.getByRole('link', {name:'收起任务详情'}).click(),
+    '关闭': () => button(a,'收起任务详情').click(),
     'Escape': () => a.keyboard.press('Escape'),
-    '外点': () => a.locator('.head').click({position:{x:1,y:1}}),
-    '切页': () => a.getByRole('tab',{name:'成员',exact:true}).click(),
+    '外点': () => a.mouse.click(2,Math.round(a.viewportSize().height/2)),
+    '切页': () => a.evaluate(()=>{location.hash='#/projects/h3/members'}),
   };
   for (const [entry, exit] of Object.entries(leave)) {
-    for (const choice of ['继续编辑','不保存','保存并关闭']) {
+    for (const choice of ['继续编辑','放弃更改','保存并关闭']) {
       await a.goto(detail);
       const before = await second.api('GET',path);
       const draft = entry + '／' + choice;
@@ -184,7 +194,7 @@ try {
         await a.waitForURL(detail);
         assert.equal(a.url(), detail);
         await exit();
-        await button(a,'不保存').click();
+        await button(a,'放弃更改').click();
       }
       await field(a,'title').waitFor({state:'detached'});
       const after = await second.api('GET',path);
@@ -196,7 +206,7 @@ try {
 
   const version = (await second.api('GET',path)).version;
   const expected = ['第二人的评论'];
-  for (let i=1; i<=25; i++) {
+  for (let i=1; i<=50; i++) {
     const body = '分页核验 ' + i;
     await manager.api('POST',path+'/comments',{expected_version:version,request_key:'page-'+i,body});
     expected.unshift(body);
@@ -204,10 +214,10 @@ try {
   await b.reload();
   await button(b,'评论').click();
   const comments = b.locator('li[data-kind="comment"] p');
-  await button(b,'加载更多').waitFor();
-  assert.deepEqual(await comments.allTextContents(),expected.slice(0,25));
+  await button(b,'加载更多动态').waitFor();
+  assert.deepEqual(await comments.allTextContents(),expected.slice(0,50));
   await manager.api('POST',path+'/comments',{expected_version:version,request_key:'insert',body:'翻页期间新增'});
-  await button(b,'加载更多').click();
+  await button(b,'加载更多动态').click();
   await comments.last().getByText('第二人的评论',{exact:true}).waitFor();
   assert.deepEqual(await comments.allTextContents(),expected);
   await b.reload();

@@ -5,6 +5,8 @@
 
 #project-panel:has(> .dsh-project-chat) { padding: 0; margin: 0; overflow: hidden; }
 #project-panel > .dsh-project-chat {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   container-type: inline-size;

@@ -449,11 +449,7 @@ func matchPathPattern(pattern, path string, valid func(string) bool) bool {
 	}
 	return true
 }
-func chatTarget(raw string) (string, bool) {
-	path := raw
-	if raw == "/#/bot-chats" || strings.HasPrefix(raw, "/#/bot-chats/") {
-		path = botChatsPath + strings.TrimPrefix(raw, "/#/bot-chats")
-	}
+func chatTarget(path string) (string, bool) {
 	for _, suffix := range []string{"", "/:chat", "/:chat/:message"} {
 		if matchPathPattern(botChatsPath+suffix, path, chatIdentifier.MatchString) {
 			return path, true
@@ -470,7 +466,7 @@ var projectIDPattern = regexp.MustCompile("^" + projectSegment + "$")
 // ValidProjectID 检查项目深链中使用的稳定标识。
 func ValidProjectID(id string) bool { return projectIDPattern.MatchString(id) }
 
-var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|feishu|bot|brief)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
+var projectReturn = regexp.MustCompile(`^/#/projects(/` + projectSegment + `(/(overview|members|chats|meetings|docs|reports|tasks|bot)(/` + projectSegment + `){0,3})?)?(\?[a-zA-Z0-9_=%+.&-]*)?$`)
 
 func (a WorkbenchAccess) canReturnTo(path string) bool {
 	if _, ok := projectTarget(path); ok {
@@ -563,12 +559,6 @@ func projectTarget(raw string) (string, bool) {
 	if len(parts) >= 5 {
 		tab, tail := parts[4], parts[5:]
 		switch tab {
-		case "brief":
-			if len(tail) > 1 {
-				return "", false
-			}
-			parts[4] = "reports/brief"
-			return strings.Join(parts, "/"), true
 		case "reports":
 			if len(tail) > 0 && (tail[0] != "brief" || len(tail) > 2) {
 				return "", false
@@ -578,6 +568,9 @@ func projectTarget(raw string) (string, bool) {
 				return "", false
 			}
 		case "tasks":
+			if len(tail) > 0 && tail[0] == "list" {
+				return "", false
+			}
 			if len(tail) > 1 {
 				if len(tail) != 3 || tail[0] != "source" {
 					return "", false
@@ -619,10 +612,6 @@ func localReturnPath(raw string) (string, error) {
 		return "/", nil
 	case "/", "/#/feishu/drive", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
 		return raw, nil
-	case "/#/settings":
-		return "/#/system/settings", nil
-	case "/#/system/bot":
-		return "/#/system/feishu-bot", nil
 	default:
 		return "", errors.New("invalid workbench return path")
 	}

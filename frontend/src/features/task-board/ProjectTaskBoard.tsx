@@ -60,15 +60,13 @@ export function ProjectTaskBoard({
   const [milestone, setMilestone] = useHashState<string>('task_milestone', '')
   const [owner, setOwner] = useHashState<string>('task_owner', '')
   const [status, setStatus] = useHashState<string>('task_status', '')
-  const [legacyTag] = useHashState<string>('task_tag', '')
   const [rawTags] = useHashState<string>('task_tags', '')
-  const tagIds = taskTagIds(rawTags, legacyTag)
+  const tagIds = taskTagIds(rawTags)
   const [due, setDue] = useHashState<string>('task_due', '')
   const [column, setColumn] = useHashState<string>('task_column', '')
   const [priority, setPriority] = useHashState<string>('task_priority', '')
-  const [overdue] = useHashState<boolean>('task_overdue', false)
-  const [dueFrom, setDueFrom] = useHashState<string>('task_due_from', '')
-  const [dueBefore, setDueBefore] = useHashState<string>('task_due_before', '')
+  const [dueFrom, setDueFrom] = useHashState<string>('task_start_date', '')
+  const [dueBefore, setDueBefore] = useHashState<string>('task_end_date', '')
   const [sort, setSort] = useHashState<TaskSort>('task_sort', 'manual', [
     'manual',
     'priority',
@@ -119,7 +117,7 @@ export function ProjectTaskBoard({
       active.current = false
     }
   }, [])
-  const query = boardQuery({ q, sort, owner, milestone, status: '', column: '', tags: tagIds, overdue, dueFrom, dueBefore, due, timezone: project?.business_timezone, priority })
+  const query = boardQuery({ q, sort, owner, milestone, status: '', column: '', tags: tagIds, dueFrom, dueBefore, due, timezone: project?.business_timezone, priority })
   const queryString = query.toString()
   const listParams = new URLSearchParams(query)
   if (column) listParams.set('filter_column_id', column)
@@ -389,9 +387,9 @@ export function ProjectTaskBoard({
   function selectTab(id:string) {
     updateHashParams({task_column:id && id!==cancelledId ? id : null,task_status:id===cancelledId ? 'cancelled' : null})
   }
-  const filtered = Boolean(q || owner || milestone || status || column || tagIds.length || due || overdue || dueFrom || dueBefore || priority)
+  const filtered = Boolean(q || owner || milestone || status || column || tagIds.length || due || dueFrom || dueBefore || priority)
   const clear = () => {
-    updateHashParams(Object.fromEntries(['task_q','task_owner','task_milestone','task_status','task_column','task_tag','task_tags','task_due','task_due_from','task_due_before','task_overdue','task_priority'].map(key => [key, null])))
+    updateHashParams(Object.fromEntries(['task_q','task_owner','task_milestone','task_status','task_column','task_tags','task_due','task_start_date','task_end_date','task_priority'].map(key => [key, null])))
     requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
   }
   const people = [{ id: '', name: '全部负责人', organization: '' }, { id: 'unassigned', name: '未分配', organization: '' }, ...(project?.members ?? []).map(member => ({ id: member.id, name: member.display_name, organization: member.organization_path }))]
@@ -410,9 +408,9 @@ export function ProjectTaskBoard({
           {project?.milestones?.map(node => <option key={node.id} value={node.id}>{node.title}</option>)}
           {milestone && milestone !== '@none' && !project?.milestones?.some(node => node.id === milestone) && <option value={milestone}>{milestone}</option>}
         </NativeSelect>
-        <NativeSelect aria-label="按截止日期筛选" value={due || (overdue ? 'overdue' : '')} onChange={event => { updateHashParams({ task_due: event.target.value || null, task_overdue: null, task_due_from: null, task_due_before: null }) }}><option value="">全部期限</option><option value="overdue">已逾期</option><option value="today">今天截止</option><option value="week">未来 7 天</option><option value="none">无截止日期</option></NativeSelect>
-        <TaskTagPicker tags={board?.tags ?? []} value={tagIds} onChange={values => updateHashParams({ task_tags: values.length ? JSON.stringify(values) : null, task_tag: null })} label="按标签筛选" />
-<label>优先级<NativeSelect value={priority} onChange={event => setPriority(event.target.value)}><option value="">全部优先级</option><option value="unset">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</NativeSelect></label><label>截止开始（UTC）<Input type="date" value={dueFrom} onChange={event => { setDueFrom(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label><label>截止结束（UTC，不含）<Input type="date" value={dueBefore} onChange={event => { setDueBefore(event.target.value); setDue(''); updateHashParams({task_overdue:null}) }} /></label>
+        <NativeSelect aria-label="按截止日期筛选" value={due} onChange={event => { updateHashParams({ task_due: event.target.value || null, task_start_date: null, task_end_date: null }) }}><option value="">全部期限</option><option value="overdue">已逾期</option><option value="today">今天截止</option><option value="week">未来 7 天</option><option value="none">无截止日期</option></NativeSelect>
+        <TaskTagPicker tags={board?.tags ?? []} value={tagIds} onChange={values => updateHashParams({ task_tags: values.length ? JSON.stringify(values) : null })} label="按标签筛选" />
+<label>优先级<NativeSelect value={priority} onChange={event => setPriority(event.target.value)}><option value="">全部优先级</option><option value="unset">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</NativeSelect></label><label>截止开始日期<Input type="date" value={dueFrom} onChange={event => { setDueFrom(event.target.value); setDue('') }} /></label><label>截止结束日期（不含）<Input type="date" value={dueBefore} onChange={event => { setDueBefore(event.target.value); setDue('') }} /></label>
             {filtered && <Button variant="outline" onClick={clear}>清空筛选</Button>}
             {layout === 'board' && <details><summary>移动操作说明</summary>拖动卡片或按 Alt + 方向键移动任务。</details>}
           </PopoverContent></Popover>

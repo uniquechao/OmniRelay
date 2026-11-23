@@ -12,14 +12,15 @@ const sent_at = '2026-11-19T16:14:00Z';
 const person = { name: '林晓', person_key: 'person_alice', source: 'feishu', organization_paths: [['研发中心', '平台组']] };
 const group = { id: 'oc_group', kind: 'group', name: '北辰项目群', last_message_at: sent_at };
 const direct = { id: 'oc_direct', kind: 'p2p', name: person.name, person, last_message_at: sent_at };
-const oldMessage = { id: 'om_old', chat_id: group.id, sender: person, type: 'text', body: '{"text":"会议纪要"}', sent_at, state: 'available' };
-const recentMessage = { ...oldMessage, id: 'om_recent', sender: { name: '黄利利', source: 'feishu', resigned: true }, body: '会议安排' };
-const task = { id: 'om_task', chat_id: group.id, sender: { name: '飞书 Bot' }, sender_kind: 'app', type: 'interactive',
+const oldMessage = { id: 'om_old', chat_id: group.id, sender: person, type: 'text', display_text:'会议纪要', body: '{"text":"会议纪要"}', sent_at, state: 'available' };
+const recentMessage = { ...oldMessage, id: 'om_recent', sender: { name: '黄利利', source: 'feishu', resigned: true }, display_text:'会议安排', body: '会议安排' };
+const task = { id: 'om_task', chat_id: group.id, sender: { name: '飞书 Bot' }, sender_kind: 'app', type: 'interactive', display_text:'', state:'available',
   body: '{"header":{"title":{"content":"任务已分派"}}}',
   business_receipt: { id: 'rc_1', project_id: 'beichen', target_kind: 'task', target_id: 'task_1' }, sent_at };
 const briefing = { ...task, id: 'om_brief', body: '{"title":"项目简报"}',
   business_receipt: { id: 'rc_2', project_id: 'beichen', target_kind: 'briefing', target_id: 'brief_1' } };
-const p2pMessage = { ...oldMessage, id: 'om_direct', chat_id: direct.id, body: '收到，谢谢' };
+const p2pMessage = { ...oldMessage, id: 'om_direct', chat_id: direct.id, display_text:'收到，谢谢', body: '收到，谢谢' };
+const sending = {can_send:true,mentions:true,max_attachments:8,max_image_bytes:10485760,max_file_bytes:31457280};
 const packageName = process.env.OMNIRELAY_PLAYWRIGHT_MODULE;
 
 async function mountFixture(page, {
@@ -86,7 +87,7 @@ async function mountFixture(page, {
       if (relative === '/oc_direct/messages/om_direct/context') return route.fulfill(items([p2pMessage]));
       if (relative === '/oc_group/search') {
         await new Promise(resolve => { releaseSearch = resolve; });
-        return route.fulfill(items([{ ...oldMessage, body: '迟到的北辰搜索' }])).catch(() => {});
+        return route.fulfill(items([{ ...oldMessage, display_text:'迟到的北辰搜索', body: '迟到的北辰搜索' }])).catch(() => {});
       }
       if (relative === '/oc_group/members' && query.get('offset') === '0' && !releaseMembers) {
         await new Promise(resolve => { releaseMembers = resolve; });
@@ -180,7 +181,7 @@ test('机器人记录切换、搜索、成员、回执及分隔栏', { skip: !pa
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   const fixture = await mountFixture(page, { syncScope: 'all_authorized_bot_chats' });
-  await page.goto(origin + '/#/bot-chats');
+  await page.goto(origin + '/#/feishu/bot-chats');
   await page.getByRole('heading', { name: group.name }).waitFor();
   assert.equal(new URL(page.url()).hash, '#/feishu/bot-chats');
   const departed = page.locator('[data-message="om_recent"]');
@@ -308,7 +309,7 @@ test('同步断网保留记录，撤权即时清理，窄屏还焦到重绘后�
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   const fixture = await mountFixture(page);
-  await page.goto(origin + '/#/bot-chats');
+  await page.goto(origin + '/#/feishu/bot-chats');
   const directory = page.locator('.chat-directory');
   const timeline = page.locator('.chat-timeline');
   const refresh = page.getByRole('button', { name: '刷新会话' });
@@ -390,7 +391,7 @@ test('手机飞书登录回跳、深链失权与触摸返回', { skip: !packageN
   const fixture = await mountFixture(page, { signedIn: false });
   const releaseDirectory = fixture.holdDirectory();
   t.after(releaseDirectory);
-  await page.goto(origin + '/#/bot-chats/oc_group/om_old');
+  await page.goto(origin + '/#/feishu/bot-chats/oc_group/om_old');
   await page.locator('#feishu-login').tap();
   await page.locator('[data-source-message]').waitFor();
   assert.ok(fixture.queries.some(([type, target]) => type === '/auth/feishu/start' && target === '/#/feishu/bot-chats/oc_group/om_old'));
@@ -427,9 +428,9 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
     const path=new URL(route.request().url()).pathname.slice(projectAPI.length);
     if(path==='/overview')return route.fulfill({json:{data:{workspace:{project:{id:'embed',name:'嵌入测试'}}}}});
     if(path==='/chat-reader')return route.fulfill({json:{items:records,total:records.length}});
-    if(path.endsWith('/send-capabilities'))return route.fulfill({json:{can_send:false}});
+    if(path.endsWith('/send-capabilities'))return route.fulfill({json:{can_send:false,reason:'send_disabled'}});
     if(path==='/chat-reader/'+second.id+'/messages') {
-      const messages=Array.from({length:30},(_,i)=>({...task,id:'history_'+i,chat_id:second.id,type:'text',body:'第二群记录 '+i}));
+      const messages=Array.from({length:30},(_,i)=>({...task,id:'history_'+i,chat_id:second.id,type:'text',display_text:'第二群记录 '+i,body:'第二群记录 '+i}));
       return route.fulfill({json:{items:[{...task,chat_id:second.id},...messages]}});
     }
     return route.fulfill({json:{items:records.filter(record=>path.endsWith('/'+record.id))}});
@@ -452,7 +453,7 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   await page.getByText('第二群记录 29').waitFor();
   await page.locator('[data-project-chat] .chat-card').getByRole('heading', { name: '任务已分派' }).waitFor();
   await page.evaluate(message => window.lateProjectMessages({ items: [message] }),
-    { ...oldMessage, body: '迟到的项目会话' });
+    { ...oldMessage, display_text:'迟到的项目会话', body: '迟到的项目会话' });
   assert.equal(await page.getByText('迟到的项目会话').count(), 0);
   assert.ok(await page.locator('.chat-timeline').evaluate(node => node.scrollHeight > node.clientHeight));
   assert.ok(await page.locator('.chat-conversations').evaluate(node => node.scrollHeight > node.clientHeight));
@@ -555,11 +556,11 @@ test('飞书卡片保留标题、正文、操作和说明，并适配主题和�
     ] }
   }) };
   const summary = { ...task, id:'om_legacy', business_receipt:undefined,
-    body:JSON.stringify({title:'旧卡片',elements:[[{tag:'img',image_key:'cover'},{tag:'text',text:'请升级至最新版本客户端，以查看内容'}]]}),
-    resources:[{kind:'image',key:'cover'}] };
+    body:JSON.stringify({title:'旧卡片',elements:[[{tag:'img',image_key:'cover',name:''},{tag:'text',text:'请升级至最新版本客户端，以查看内容'}]]}),
+    resources:[{kind:'image',key:'cover',name:''}] };
   const illustrated = { ...task, id:'om_picture', business_receipt:undefined,
-    body:JSON.stringify({schema:'2.0',header:{title:{content:'原始卡片'}},body:{elements:[{tag:'img',img_key:'picture'}]}}),
-    resources:[{kind:'image',key:'picture'}] };
+    body:JSON.stringify({schema:'2.0',header:{title:{content:'原始卡片'}},body:{elements:[{tag:'img',img_key:'picture',name:''}]}}),
+    resources:[{kind:'image',key:'picture',name:''}] };
   const malformed = { ...task, id: 'om_bad_card', body: '{', business_receipt: undefined };
   const deleted = { ...card, id: 'om_deleted_card', state: 'deleted' };
   const headers = [];
@@ -635,7 +636,7 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
   const png = await readFile(new URL('../../design/prototype/omni-relay-avatar.png', import.meta.url));
   const messages = [
     {...oldMessage, id:'om_pdf', type:'file', body:'{"file_name":"操作手册.pdf"}', resources:[{kind:'attachment', key:'pdf', name:'操作手册.pdf'}]},
-    {...oldMessage, id:'om_image', type:'image', body:'{"image_key":"img"}', resources:[{kind:'image', key:'img'}]},
+    {...oldMessage, id:'om_image', type:'image', body:'{"image_key":"img"}', resources:[{kind:'image', key:'img',name:''}]},
     ...['wiki', 'sheets', 'minutes', 'docx'].map(kind => {
       const url = 'https://example.feishu.cn/' + kind + '/example';
       const titles = {wiki:'知识库周报',sheets:'费用明细',minutes:'评审会议',docx:'操作指南'};
@@ -645,7 +646,7 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
         {kind, key:'missing-scope', name:'', url:url + '-scope', state:'application_scope_missing'},
       );
       const links = resources.map(resource => resource.url).join(' ');
-      return {...oldMessage, id:'om_' + kind, body:JSON.stringify({text:kind === 'minutes' ? '请查看 ' + links : links}), resources};
+      return {...oldMessage, id:'om_' + kind, display_text:kind === 'minutes' ? '请查看 ' + links : links, body:JSON.stringify({text:kind === 'minutes' ? '请查看 ' + links : links}), resources};
     }),
     {...oldMessage, id:'om_unsupported', type:'file', body:'{"file_name":"工具.exe"}', resources:[{kind:'attachment', key:'exe', name:'工具.exe'}]},
     {...oldMessage, id:'om_deleted', type:'file', state:'deleted', resources:[{kind:'attachment', key:'gone', name:'已撤回.pdf'}]}
@@ -669,7 +670,7 @@ test('两个消息入口展示独立飞书文档卡片并直接预览同步正�
       const success = json => route.fulfill({json});
       const failure = (status, error, kind) => route.fulfill({status, json:{error, kind}});
       if (pathname.endsWith('/sync')) return success({items:[]});
-      if (pathname.endsWith('/send-capabilities')) return success({can_send:false});
+      if (pathname.endsWith('/send-capabilities')) return success({can_send:false,reason:'send_disabled'});
       if (!pathname.includes('/messages')) return success({items:[group], total:1});
       if (!pathname.includes('/resources/')) {
         const items = [...messages].reverse().map(item => item.id === 'om_sheets' && pending ?
@@ -766,7 +767,7 @@ test('共享发送框按会话保存草稿并按原操作对账', { skip: !packa
       message_id: result === 'success' ? 'om_image' : undefined }
   ];
   await page.route('**/send-capabilities', route => route.fulfill({ json: {
-    can_send: true, sender: { kind: 'bot', name: '测试机器人' }, mentions: true,
+    ...sending, sender: { kind: 'bot', name: '测试机器人' }, mentions: true,
     max_file_bytes: 10000, max_image_bytes: 10000, max_attachments: 5
   } }));
   await page.route('**/members?purpose=mention*', route => route.fulfill({ json: {
@@ -863,10 +864,10 @@ test('私聊发信确认后直接出现在列表，刷新后仍只有一条', { 
       let sends = 0;
       const sent = {
         ...p2pMessage, id: 'om_bot_sent', sender: { name: '测试机器人' }, sender_kind: 'app',
-        body: JSON.stringify({ text: '发送后无需手动同步' }), sent_at: '2026-11-19T16:15:00Z'
+        display_text:'发送后无需手动同步', body: JSON.stringify({ text: '发送后无需手动同步' }), sent_at: '2026-11-19T16:15:00Z'
       };
       await page.route('**/oc_direct/send-capabilities', route => route.fulfill({ json: {
-        can_send: true, sender: { kind: 'bot', name: '测试机器人' }
+        ...sending, sender: { kind: 'bot', name: '测试机器人' }
       } }));
       await page.route('**/oc_direct/messages', route => {
         if (route.request().method() === 'POST') {
@@ -905,7 +906,7 @@ test('群聊输入 @ 可筛选和选择成员，私聊按普通文本处理', { 
     await mountFixture(page);
     const sends = [], memberRequests = [];
     await page.route('**/send-capabilities', route => route.fulfill({ json: {
-      can_send: true, sender: { name: '测试机器人' }, mentions: route.request().url().includes('/oc_group/')
+      ...sending, sender: { name: '测试机器人' }, mentions: route.request().url().includes('/oc_group/')
     } }));
     await page.route('**/members?purpose=mention*', route => {
       const { pathname, searchParams } = new URL(route.request().url());
@@ -1016,7 +1017,7 @@ test('分栏与切会话保留草稿，超时后并发恢复只投递一次', { 
   let release;
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/send-capabilities', route => route.fulfill({ json: {
-    can_send: true, sender: { name: '回归机器人' }
+    ...sending, sender: { name: '回归机器人' }
   } }));
   await page.route('**/oc_group/messages', async route => {
     if (route.request().method() !== 'POST') return route.fallback();
@@ -1227,6 +1228,12 @@ test('项目群主群替换、改绑、失败重试和清除在两个入口即�
   await global.locator('.chat-project-meta').getByText('未关联项目').waitFor();
 });
 
+const driveFileDefaults = {
+  project_version:1, manual_project_ids:[], inherited_project_ids:[], version_id:null,
+  updated_at:null, size_bytes:null, size_source:'unknown'
+};
+const driveSyncDefaults = {history_pending:0,history_attention:0,unindexed_messages:0,unresolved_wiki:0,attention_sources:0};
+
 test('网盘显示未关联项目的文件，按真实同步状态刷新列表', { skip: !packageName }, async t => {
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -1244,8 +1251,8 @@ test('网盘显示未关联项目的文件，按真实同步状态刷新列表',
       await page.route(origin + '/api/v1/feishu/files?*', route => {
         return route.fulfill({json:{
           projects:{}, total:1, items:[{
-            id:71, name:'未关联群的手册.pdf', category:'files', format_key:'pdf', format:'PDF',
-            project_ids:[], inherited_project_ids:[], sources:[{chat_id:'oc_group',message_id:'om_old',chat_name:'北辰项目群'}],
+            ...driveFileDefaults, id:71, name:'未关联群的手册.pdf', category:'files', format_key:'pdf', format:'PDF',
+            project_ids:[], inherited_project_ids:[], sources:[{chat_id:'oc_group',message_id:'om_old',chat_name:'北辰项目群',sender_name:person.name,sent_at}],
             sync_state:completed ? 'complete' : 'pending', version_id:completed ? 1 : null
           }]
         }});
@@ -1274,7 +1281,7 @@ test('网盘的每个来源分别定位对应群的原消息', {skip:!packageNam
   const browser = await require(packageName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
   t.after(() => browser.close());
   const second = {id:'oc_second_group', kind:'group', name:'启明试点群'};
-  const secondMessage = {...oldMessage, id:'om_second_group', chat_id:second.id, body:JSON.stringify({text:'来自启明的分享'})};
+  const secondMessage = {...oldMessage, id:'om_second_group', chat_id:second.id, display_text:'来自启明的分享',body:JSON.stringify({text:'来自启明的分享'})};
   for (const mobile of [false,true]) {
     const page = await browser.newPage({viewport:{width:mobile ? 390 : 1366,height:850}, isMobile:mobile, hasTouch:mobile});
     await mountFixture(page);
@@ -1282,7 +1289,7 @@ test('网盘的每个来源分别定位对应群的原消息', {skip:!packageNam
     await page.route(origin + base + '/' + second.id + '/messages/' + secondMessage.id + '/context',
       route => route.fulfill({json:{items:[secondMessage], anchor_id:secondMessage.id}}));
     await page.route(origin + '/api/v1/feishu/files?*', route => route.fulfill({json:{total:1,projects:{},items:[{
-      id:31,name:'同一文件.pdf',category:'files',format:'PDF',format_key:'pdf',project_ids:[],sync_state:'pending',
+      ...driveFileDefaults, id:31,name:'同一文件.pdf',category:'files',format:'PDF',format_key:'pdf',project_ids:[],sync_state:'pending',
       sources:[{chat_id:group.id,chat_name:group.name,message_id:oldMessage.id,sender_name:person.name,sent_at},
         {chat_id:second.id,chat_name:second.name,message_id:secondMessage.id,sender_name:person.name,sent_at}]
     }]}}));
@@ -1306,7 +1313,7 @@ test('文件网盘仅滚动文件行，短页的分页紧跟列表', { skip: !pa
   const browser = await require(packageName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
   const files = Array.from({length:51}, (_, i) => ({
-    id:i + 1, name:'文件 ' + (i + 1), category:'files', format:'PDF', format_key:'pdf',
+    ...driveFileDefaults, id:i + 1, name:'文件 ' + (i + 1), category:'files', format:'PDF', format_key:'pdf',
     sync_state:'complete', project_ids:[], sources:[]
   }));
   for (const width of [1366,390]) {
@@ -1362,7 +1369,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     const act = target => mobile ? target.tap() : target.click();
     const fixture = await mountFixture(page);
     let second = '启明';
-    const row = {id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
+    const row = {...driveFileDefaults, id:17,name:'验收签字单.pdf',category:'files',format:'PDF',format_key:'pdf',
       manual_project_ids:[], inherited_project_ids:['a'], project_ids:['a'],project_version:3,version_id:1,sync_state:'complete',sources:[oldMessage,oldMessage,task].map(message =>
         ({chat_id:group.id,message_id:message.id,chat_name:group.name,sender_name:person.name,sent_at}))};
     const other = {...row, id:18, name:'会议安排.pdf', project_ids:['a'],
@@ -1380,7 +1387,7 @@ test('文件来源回焦、多项目单次保存、改名筛选和抽屉同步',
     await page.route(origin + '/api/v1/feishu/files**', route => {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname.endsWith('/sync')) return route.fulfill({json:{groups:2,pending_sources:0,complete_sources:2}});
+      if (url.pathname.endsWith('/sync')) return route.fulfill({json:{...driveSyncDefaults,groups:2,pending_sources:0,complete_sources:2}});
       if (url.pathname.endsWith('/projects')) {
         const change = request.postDataJSON();
         patches.push(change);
@@ -1524,12 +1531,12 @@ test('文件预览分页、工作表、目录、转换重试与撤权', {skip:!p
   page.setDefaultTimeout(6000);
   await mountFixture(page);
   let access = true, attempts = 0, releaseOldPage;
-  const file = {id:8,version_id:53,category:'files',format:'ZIP',format_key:'zip',name:'归档.zip',
+  const file = {...driveFileDefaults, id:8,version_id:53,category:'files',format:'ZIP',format_key:'zip',name:'归档.zip',
     project_ids:[],sources:[],sync_state:'partial'};
   await page.route(origin + '/api/v1/feishu/files**', async route => {
     const url = new URL(route.request().url());
     const respond = json => route.fulfill({json});
-    if (url.pathname.endsWith('/sync')) return respond({groups:Number(access),pending_sources:0,complete_sources:Number(access)});
+    if (url.pathname.endsWith('/sync')) return respond({...driveSyncDefaults,groups:Number(access),pending_sources:0,complete_sources:Number(access)});
     if (!url.pathname.includes('/previews')) return respond({items:access ? [file] : [],total:access ? 1 : 0,projects:{}});
     if (!access) return route.fulfill({status:403,json:{error:'forbidden'}});
     const params = url.searchParams;
@@ -1607,17 +1614,17 @@ test('文件预览格式失败后刷新列表并打开新版本', {skip:!package
     page.setDefaultTimeout(6000);
     await mountFixture(page);
     let version = 11, result;
-    const file = {id:7,category:'files',format:'PDF',format_key:'pdf',name:'验收签字单.pdf',
+    const file = {...driveFileDefaults, id:7,category:'files',format:'PDF',format_key:'pdf',name:'验收签字单.pdf',
       project_ids:[],sources:[],sync_state:'complete'};
     await page.route(origin + '/api/v1/feishu/files**', async route => {
       const path = new URL(route.request().url()).pathname;
-      if (path.endsWith('/sync')) return route.fulfill({json:{groups:1,pending_sources:0,complete_sources:1}});
+      if (path.endsWith('/sync')) return route.fulfill({json:{...driveSyncDefaults,groups:1,pending_sources:0,complete_sources:1}});
       if (!path.includes('/previews')) {
         const row = result.stage === 'unsupported' ? {...file,name:'验收名单.csv',format:'其他文件',format_key:'generic'} : file;
         return route.fulfill({json:{items:[{...row,version_id:version}],total:1,projects:{}}});
       }
       const root = '/api/v1/feishu/files/7/versions/' + version + '/previews';
-      if (path === root) return route.fulfill({json:{task_id:'sample',version_id:version,stage:result.stage,meta:result.meta}});
+      if (path === root) return route.fulfill({json:{task_id:'sample',version_id:version,stage:result.stage,meta:result.meta ?? null}});
       if (result.stage === 'ready' && path === root + '/sample/result') {
         return route.fulfill({contentType:result.mime,body:Buffer.from(result.body,'base64')});
       }
@@ -1655,9 +1662,9 @@ test('群图片和视频使用已授权的版本地址预览和下载', {skip:!p
   t.after(() => browser.close());
   const page = await browser.newPage();
   await mountFixture(page);
-  const source = {chat_id:group.id, message_id:oldMessage.id, chat_name:group.name};
+  const source = {chat_id:group.id, message_id:oldMessage.id, chat_name:group.name,sender_name:person.name,sent_at};
   const rows = ['image','video'].map((kind,i) => ({
-    id:i+1, version_id:10+i, format_key:kind, name:i ? '项目视频' : '项目图片', format:i ? '视频' : '图片',
+    ...driveFileDefaults, id:i+1, version_id:10+i, format_key:kind, name:i ? '项目视频' : '项目图片', format:i ? '视频' : '图片',
     category:i ? 'videos' : 'images', sync_state:'complete', project_ids:['p'], inherited_project_ids:['p'], manual_project_ids:[], sources:[source]
   }));
   const pdf = {...rows[0], id:3, name:'普通附件.pdf', category:'files', format_key:'pdf', format:'PDF', version_id:12};

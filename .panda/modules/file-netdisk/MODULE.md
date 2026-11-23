@@ -6,7 +6,8 @@
 
 ## 关联源码路径
 
-- `frontend/src/features/workbench/Workbench.tsx` 选择工作台布局，`web/drive.js` 挂载网盘页面和共享列表。
+- `frontend/src/features/workbench/Workbench.tsx` 选择工作台布局，`frontend/src/features/drive/DrivePage.tsx` 挂载网盘，项目文件和系统网盘使用同一套列表、预览和文件归属操作。
+- `drive-contracts.ts` 校验网盘列表、预览状态和文档结构。列表行键在接口边界统一转为字符串，保留本地文档前缀。
 - `design/prototype/omni-relay-drive.css` 由原型与正式网盘共用。
 
 ## 长期设计约束

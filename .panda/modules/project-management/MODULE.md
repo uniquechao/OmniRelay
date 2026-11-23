@@ -10,7 +10,7 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 - `internal/access/roles.go` 和 `internal/access/local_projects.go` 提供创建权限和现行项目成员授权。
 - `migrations/0021_local_project_directory.sql`、`migrations/0024_project_profile_dates.sql` 定义项目档案和计划日期，业务时区保存在 `project_task_boards`。
 - `frontend/src/features/projects/ProjectListPage.tsx` 和 `ProjectMembers.tsx` 共用工作台的 React `DataList`。项目目录在服务端筛选、排序和分页，成员沿用接口返回的角色、发言时间顺序。成员的组织路径来自已发布的组织快照，读取接口按当前账号的通讯录权限返回。
-- `frontend/src/features/projects/ProjectWorkspacePage.jsx` 负责项目标题、标签导航和请求生命周期。项目群聊、文件、任务看板与 Bot 分别复用其功能目录的组件。
+- `frontend/src/features/projects/ProjectWorkspacePage.tsx` 负责项目标题、标签导航和请求生命周期。项目群聊、文件、任务看板与 Bot 分别复用其功能目录的组件。
 
 ## 长期设计约束
 
@@ -31,7 +31,7 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 
 ## 接口与测试
 
-- 项目 Bot 按需挂载与 Runtime 版本对应的 DSH 官方会话容器、输入栏和消息组件，工作台负责对接已授权的站内消息。升级 Runtime 时同步核对前端组件与输入、主题及消息协议。
+- 项目 Bot 按需加载项目对话组件，使用 DSH 的公开消息和 Markdown 组件、品牌图形与样式。工作台从已授权的站内接口校验消息，自主管理草稿、发送、重试及撤权后清理。升级 DSH 时联验输入、主题与消息协议。
 - 项目概览与 Bot 共用工作台的 1753px 最大宽度和居中规则。项目标题与标签使用同一左边线，空对话从内容区左上方排起，有历史时输入框停靠底部。
 - 工作台项目 Bot 通过 `GET/POST /api/v1/projects/{projectID}/bot/messages` 读写本人的项目对话。Gateway 从登录会话和有效会籍确定身份与项目，DSH 按成员及授权代次续接会话。模型返回后，Gateway 再次核验工具回执与当前权限并生成项目署名。飞书接入管理位于 Bot 页的「飞书接入」入口。
 - `GET /api/v1/projects` 返回 `can_create`。`GET /api/v1/projects/{projectID}/overview` 返回 `can_manage_profile` 与档案版本。`POST /api/v1/projects` 支持以 `Idempotency-Key` 重试创建。档案修改和归档分别使用 `PUT /api/v1/projects/{projectID}/profile` 与 `POST /api/v1/projects/{projectID}/archive`。
@@ -66,7 +66,7 @@ last_used_ts: 1795349556499
 
 项目简报按租户、应用、项目和业务日期唯一。PM 插件按版本写入成员可见的标题和正文。概览和简报列表按业务日期倒序，历史生成记录按其原始授权展示，群投递使用单独回执。会议纪要的手动标记按项目和来源引用保存，展示时重新检查当前成员的来源阅读权。
 
-- 工作台 `#/projects/{id}/tasks` 挂载独立 React 看板，按当前登录会话和会籍读取任务。旧列表书签 `tasks/list` 转到同一工作区的列表视图，保留搜索、负责人及里程碑筛选。单任务管理入口 `tasks/{taskID}` 支持里程碑及软删除。
+- 工作台 `#/projects/{id}/tasks` 挂载独立 React 看板，按当前登录会话和会籍读取任务。列表视图使用 `tasks?task_layout=list`，筛选参数和布局按项目保存。看板、独立任务链接 `tasks/{taskID}` 和 `tasks/new` 均挂载 ProjectTaskInspector，共用里程碑、附件、并发编辑及删除操作。
 - 项目简称在全库唯一且在项目改名后保留。用户可见任务编号由三位项目简称、`-T` 和至少三位项目内序号组成，API 的 task_code 用于展示和搜索，详情及关联仍使用原任务主键。
 - 业务阶段与展示列分开，修改设置按版本校验，在同一事务中迁移整列任务。看板的列计数反映筛选后的全量，续页游标绑定筛选条件、项目、列和版本。
 - 列表通过 `tasks/query` 在整个筛选结果内排序和分页。“全部”包含已取消任务。认领由服务端根据当前会籍确定负责人，仅开放且未分配的任务可认领，同一次认领重试复用回执。

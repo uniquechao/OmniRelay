@@ -3,13 +3,13 @@ import {useQueryClient} from '@tanstack/react-query';
 import {client} from '../../api/session';
 import {DataList, Drawer, type Column, type PageState, type RemotePage} from '../../ui/components/Widgets';
 import {Status} from '../../ui/components/Elements';
-import {eventKinds as kinds,eventResults as results,showTime} from './audit-display.js';
-import {listAudit} from '../../api/system-api.js';
+import {eventKinds as kinds,eventResults as results,showTime} from './audit-display';
+import {listAudit} from '../../api/system-api.ts';
 
 type Entry = {id:string;time:string;actor:string;kind:string;action:string;target:string;result:string;
-  before:string;after:string;directorySyncRunId?:string};
+  before:string;after:string;directorySyncRunId?:number};
 const filters = [{key:'kind',label:'事件类型',options:kinds},{key:'result',label:'结果',options:results}];
-const defaultSort:PageState['sort'] = {key:'time',direction:'desc'};
+const defaultSort:NonNullable<PageState['sort']> = {key:'time',direction:'desc'};
 const time = (entry:Entry)=>showTime(entry.time);
 const rowLabel = (row:Entry)=>row.action;
 const columns:Column<Entry>[] = [
@@ -35,7 +35,7 @@ export function AuditPage(){
     const cursors:string[]=[];
     return async ({page,pageSize,query,filters,sort},signal)=>{
       const params={limit:pageSize,q:query,kind:filters.kind || '',result:filters.result || '',
-        sort:sort.key,direction:sort.direction,...(page ? {cursor:cursors[page]} : {})};
+        sort:sort?.key ?? defaultSort.key,direction:sort?.direction ?? defaultSort.direction,...(page ? {cursor:cursors[page]} : {})};
       const queryKey=['audit-events',params];
       const cancel=()=>{void queries.cancelQueries({queryKey,exact:true});};
       signal.addEventListener('abort',cancel,{once:true});
@@ -64,7 +64,7 @@ export function AuditPage(){
       restoreFocus={()=>trigger.current?.isConnected ? trigger.current : heading.current}>
       <section className="drawer-section"><h3>事件信息</h3><Details items={[
         ['操作时间',time(entry)+' (UTC+08:00)'],['操作者',entry.actor],['事件类型',kinds[entry.kind] ?? entry.kind],['操作',entry.action],
-        ['对象',entry.target],['结果',results[entry.result] ?? entry.result],...(entry.directorySyncRunId?[['同步批次',entry.directorySyncRunId]]:[])]}/></section>
+        ['对象',entry.target],['结果',results[entry.result] ?? entry.result],...(entry.directorySyncRunId?[['同步批次',String(entry.directorySyncRunId)]]:[])]}/></section>
       <section className="drawer-section"><h3>变更摘要</h3><div className="admin-diff"><Details items={[['变更前',entry.before],['变更后',entry.after]]}/></div></section>
     </Drawer>}
   </main>;

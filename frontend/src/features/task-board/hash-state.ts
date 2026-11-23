@@ -16,6 +16,10 @@ export function updateHashParams(patch: Record<string, string | null>, targetRou
   const next = !targetRoute && !rawRoute && !params.size ? '' : `${route}${params.size ? `?${params}` : ''}`
   if (next === window.location.hash) return
   if (!window.dispatchEvent(new CustomEvent('omni-grid:before-route-change', { cancelable: true, detail: { hash: next } }))) return
+  replaceTaskHash(next)
+}
+
+export function replaceTaskHash(next:string) {
   window.history.replaceState(history.state, '', next)
   window.dispatchEvent(new Event(changeEvent))
 }

@@ -1,5 +1,8 @@
+import * as loadingUI from '../loading';
+import {mountLoginMotion} from './login-motion';
+import {syncThemeControls,toggleTheme} from './theme';
 import {useId, useLayoutEffect, useMemo, useRef, type ComponentProps, type ReactNode} from 'react';
-import {mountRail} from '../rail.js';
+import {mountRail} from '../rail';
 import symbols from './symbols.svg?raw';
 import avatar from '../../../../design/prototype/omni-relay-avatar.png';
 import {ui, type Tone, type Wait} from './runtime';
@@ -14,12 +17,12 @@ export function VisualResources() {
 }
 export function notify(level: Tone, message: string) { ui.toast(level,message); }
 export function ThemeToggle() {
-  useLayoutEffect(() => { window.OmniRelayTheme.syncControls(); }, []);
-  return <button type="button" className="button neutral theme-toggle" data-theme-toggle="" data-theme-icon="" aria-label="切换主题"/>;
+  useLayoutEffect(() => { syncThemeControls(); }, []);
+  return <button type="button" className="button neutral theme-toggle" data-theme-toggle="" data-theme-icon="" onClick={event=>toggleTheme(event.currentTarget)} aria-label="切换主题"/>;
 }
 export function Loading(props: Wait) {
   const {size,label,progress} = props;
-  const markup = useMemo(() => window.OmniRelayLoading.markup({size,label,progress}),[size,label,progress]);
+  const markup = useMemo(() => loadingUI.markup({size,label,progress}),[size,label,progress]);
   const Host = size === 'inline' ? 'span' : 'div';
   return <Host dangerouslySetInnerHTML={{__html:markup}}/>;
 }
@@ -72,7 +75,7 @@ export function DateStrip({mode,value,onChange}: {mode:'day'|'week';value:string
 }
 export function BrandMotion({children,tagline}: {children?:ReactNode;tagline?:string}) {
   const ref=useRef<HTMLDivElement>(null);
-  useLayoutEffect(()=>window.OmniRelayLoginMotion(ref.current!),[]);
+  useLayoutEffect(()=>mountLoginMotion(ref.current!),[]);
   return <div ref={ref} className="login-brand"><canvas className="login-motion" aria-hidden="true"/>
     {tagline && <p className="login-tagline">{tagline}</p>}<div className="login-visual"><div className="login-orbit" aria-hidden="true">
     {Array.from({length:4},(_,i)=><span key={i}/>)}<img src={avatar} width="160" height="160" alt=""/></div>{children}</div></div>;
@@ -84,7 +87,7 @@ export function WorkbenchLayout({brand,navigation,mobileNavigation,breadcrumb,ac
   const rail=useId();
   useLayoutEffect(()=>{
     const lifetime=new AbortController();
-    mountRail(ref.current!,ref.current!.querySelectorAll('.nav details'),lifetime.signal);
+    mountRail(ref.current!,ref.current!.querySelectorAll<HTMLDetailsElement>('.nav details'),lifetime.signal);
     return ()=>lifetime.abort();
   },[navigation]);
   return <div className="shell" ref={ref}><aside className="rail" id={rail}>{brand}<nav className="nav">{navigation}</nav>

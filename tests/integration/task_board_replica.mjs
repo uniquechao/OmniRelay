@@ -30,7 +30,7 @@ try{
  const projectCode=(await api('GET','/overview')).data.workspace.project.short_code;
  assert.match(projectCode,/^[A-Z]{3}$/);
  const number=n=>projectCode+'-T'+String(n).padStart(3,'0');
- await page.goto(origin+'/#/projects/board-test/tasks/list?q=T-001&owner_member_id=manager&milestone_unassigned=true');
+ await page.goto(origin+'/#/projects/board-test/tasks?task_layout=list&task_q=T-001&task_owner=manager&task_milestone=%40none');
  await page.locator('.task-list-layout').waitFor();
  assert.equal(await page.getByRole('button',{name:'列表',exact:true}).getAttribute('aria-pressed'),'true');
  assert.equal(await page.getByRole('searchbox',{name:'搜索任务'}).inputValue(),'T-001');
@@ -416,7 +416,7 @@ try{
  assert.equal(await page.getByRole('link',{name:/交付进展/}).count(),0);
  await page.getByRole('link',{name:'查看全部简报'}).click();
  const briefs=page.locator('.pr-brief-link');
- await briefs.first().waitFor();
+ await briefs.filter({hasText:'交付进展'}).waitFor();
  assert.deepEqual(await briefs.locator('strong').allTextContents(),['验收进展','交付进展']);
  await briefs.first().click();
  await page.getByRole('heading',{name:'验收进展'}).waitFor();

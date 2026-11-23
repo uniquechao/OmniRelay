@@ -3,7 +3,7 @@ import {BotPage,ConnectionSettings} from '../connections/Pages';
 import {AuditPage} from '../audit/AuditPage';
 import {useLayoutEffect,useRef,useState} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
-import {projectFollowsChanged} from '../projects/projects.js';
+import {projectFollowsChanged} from '../projects/projects';
 import {client} from '../../api/session';
 import {routes,destination,permitted,remember,returnPath,type Route} from '../../routes/targets';
 import {Account,AccountTrigger,type Guard,type User} from './Account';

@@ -6,11 +6,13 @@
 
 ## 关联源码路径
 
-- `web/admin.js` 和 `web/system-api.js` 提供用户管理界面与接口适配。
+- `frontend/src/features/users/UsersPage.tsx` 和 `admin.ts` 提供角色权限与用户管理界面，`frontend/src/api/system-api.ts` 对接并校验系统接口。
 - `internal/access/admin.go` 和 `internal/access/user_page.go` 负责账号写入与用户列表读取。
 - `internal/directory/feishu.go` 和 `internal/directory/service.go` 负责飞书状态识别和快照发布。
 
 ## 长期设计约束
+
+- 角色授予按目录返回的角色定义和目标会籍的 generation 提交。generation 是服务端签发的字符串，同一账号重新加入项目后，旧会籍的提交会被拒绝。
 
 - 通讯录同步只更新目录。管理员通过「标记为普通用户」开通本地账号。启用账号自动获得 `system_user`，飞书登录要求身份匹配已启用的本地账号。
 - 当前可见通讯录中的在职人员和明确未激活人员可开通。冻结、退出、未加入、离职及未知状态不具备开通资格。通讯录快照以 `unactivated` 补充 `directory_status`，既有合并状态需在下一次同步后重新识别。

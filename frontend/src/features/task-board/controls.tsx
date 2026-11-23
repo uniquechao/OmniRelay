@@ -1,8 +1,8 @@
-import {useRef} from 'react'
+import {useLayoutEffect} from 'react'
 import type {ComponentProps, ReactNode, RefObject} from 'react'
 import * as Pop from '@radix-ui/react-popover'
 import * as Menu from '@radix-ui/react-dropdown-menu'
-import * as Sheet from '@radix-ui/react-dialog'
+import {Dialog, Modal as AriaModal, ModalOverlay} from 'react-aria-components'
 import {X} from 'lucide-react'
 import './controls.css'
 
@@ -20,15 +20,24 @@ export const DropdownMenu=Menu.Root, DropdownMenuTrigger=Menu.Trigger, DropdownM
 export function DropdownMenuContent(props:ComponentProps<typeof Menu.Content>) {
   return <Menu.Portal><Menu.Content sideOffset={4} data-board-menu="" {...props}/></Menu.Portal>
 }
-export const DialogHeader='header', DialogTitle=Sheet.Title
+export const DialogHeader='header', DialogTitle='h2'
 export const Icon=(_: {name:string})=><X size={16} aria-hidden/>
 export function Modal({children,className,labelledBy,busy,onClose,initialFocus,presentation,returnTo}:{
   children:ReactNode;className:string;labelledBy:string;busy?:boolean;onClose:()=>void;
   returnTo?:HTMLElement|null;initialFocus?:RefObject<HTMLElement|null>;presentation?:string;backdropClassName?:string
 }) {
-  const opener=useRef(returnTo ?? (document.activeElement instanceof HTMLElement?document.activeElement:null))
-  return <Sheet.Root open onOpenChange={open=>{if(!open&&!busy)onClose()}}>
-    <Sheet.Portal><Sheet.Overlay className="task-settings-overlay"/><Sheet.Content className={'task-board-modal '+className} data-presentation={presentation} aria-labelledby={labelledBy} aria-describedby={undefined} onCloseAutoFocus={e=>{e.preventDefault();opener.current?.focus({preventScroll:true})}}
-      onOpenAutoFocus={e=>{if(initialFocus?.current){e.preventDefault();initialFocus.current.focus()}}}>{children}</Sheet.Content></Sheet.Portal>
-  </Sheet.Root>
+  useLayoutEffect(() => {
+    initialFocus?.current?.focus({preventScroll:true})
+    return () => {
+      if (returnTo) requestAnimationFrame(() => {
+        if (returnTo.isConnected) returnTo.focus({preventScroll:true})
+      })
+    }
+  }, [initialFocus, returnTo])
+  return <ModalOverlay isOpen isDismissable={!busy} isKeyboardDismissDisabled={busy}
+    className="task-settings-overlay" onOpenChange={open => { if(!open && !busy) onClose() }}>
+    <AriaModal>
+      <Dialog className={'task-board-modal '+className} data-presentation={presentation} aria-labelledby={labelledBy}>{children}</Dialog>
+    </AriaModal>
+  </ModalOverlay>
 }

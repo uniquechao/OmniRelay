@@ -11,8 +11,9 @@ export async function browserAsset(target, { setup = false } = {}) {
     return { status: 404 };
   }
   const prototype = path.startsWith('/prototype/');
+  const vendor = path.startsWith('/frontend/vendor/');
   const origin = process.env.OMNIRELAY_ASSET_ORIGIN;
-  if (!prototype && origin) {
+  if (!prototype && !vendor && origin) {
     const res = await fetch(new URL(origin).origin + target, { redirect: 'manual' });
     const headers = {};
     for (const key of ['content-type', 'content-security-policy', 'location']) {
@@ -26,6 +27,7 @@ export async function browserAsset(target, { setup = false } = {}) {
   const name = setup && (path === '/setup' || path === '/') ? 'setup.html' : path.slice(1) || 'index.html';
   let file;
   if (prototype) file = resolve(root, 'design', '.' + path);
+  else if (vendor) file = resolve(root, '.' + path);
   else {
     if (path !== '/' && !(setup && path === '/setup') && !path.startsWith('/assets/')) return { status: 404 };
     file = resolve(process.env.OMNIRELAY_BROWSER_DIST || resolve(root, 'internal/webui/dist'), './' + name);
@@ -33,7 +35,7 @@ export async function browserAsset(target, { setup = false } = {}) {
   try {
     return { status: 200, body: await readFile(file), headers: {
       'content-type': types[extname(file)] || 'application/octet-stream',
-      ...(prototype ? {} : { 'content-security-policy': policy })
+      ...(prototype || vendor ? {} : { 'content-security-policy': policy })
     }};
   } catch (error) {
     if (['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error.code)) return { status: 404 };

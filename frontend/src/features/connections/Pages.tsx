@@ -1,13 +1,15 @@
+import {z} from '../../api/validation.ts';
+import {errorStatus} from '../../api/session-client';
+import * as workbenchUI from '../../ui/widgets';
 import {useLayoutEffect,useMemo,useRef,useState,type ReactNode,type RefObject} from 'react';
 import {client} from '../../api/session';
 import {Button, Facts, Loading, notify} from '../../ui/components/Elements';
 import type {Guard,User} from '../workbench/Account';
-import {feishuBotAPI} from '../../api/system-api.js';
-import {connectionStates,checkStates,checkErrors,time} from './feishu-bot.js';
+import {feishuBotAPI, type BotConfig as Config} from '../../api/system-api.ts';
+import {connectionStates,checkStates,checkErrors,time} from './bot-status';
 import {useBotCheck} from './useBotCheck';
 
 const requestSignal=(signal:AbortSignal)=>AbortSignal.any([signal,AbortSignal.timeout(15000)]);
-function errorStatus(error:unknown){return (error as {status?:number})?.status;}
 function Page({title,action,children}:{title:string;action?:ReactNode;children:ReactNode}){
   const heading=useRef<HTMLHeadingElement>(null);
   useLayoutEffect(()=>heading.current?.focus({preventScroll:true}),[]);
@@ -25,7 +27,7 @@ export function ConnectionSettings({locked}:{locked:boolean}){
     const controller=new AbortController();
     setStates(undefined);setError(undefined);
     void client.bind()('/api/v1/system/connections',{signal:requestSignal(controller.signal)}).then(response=>{
-      if(!controller.signal.aborted)setStates(new Map((response as {items:{id:string;state:string}[]}).items.map((item)=>[item?.id,item?.state])));
+      if(!controller.signal.aborted)setStates(new Map(z.object({items:z.array(z.object({id:z.string(),state:z.string()}))}).parse(response).items.map(item=>[item.id,item.state])));
     }).catch(error=>{if(!controller.signal.aborted)setError(errorStatus(error) || 503);});
     return ()=>controller.abort();
   },[attempt,locked]);
@@ -37,8 +39,6 @@ export function ConnectionSettings({locked}:{locked:boolean}){
   </section></Page>;
 }
 
-type Config={enabled:boolean;app_id:string;tenant_key:string;credentials_configured:boolean;bot_name:string;oauth_callback_url:string;
-  connection?:{state:string;last_heartbeat_at?:string;last_message_at?:string}};
 function chip(field:string,[tone,label]:string[]){return <span className="chip" data-bot={field} data-tone={tone}>{label}</span>;}
 export function BotPage({user,guard,locked}:{user:User;guard:RefObject<Guard>;locked:boolean}){
   const api=useMemo(()=>feishuBotAPI(client.bind()),[]);
@@ -123,7 +123,7 @@ export function BotPage({user,guard,locked}:{user:User;guard:RefObject<Guard>;lo
       if(!active() || operation.current==='save')return false;
       if(!dirty)return true;
       return new Promise(resolve=>{
-        dialog.current=window.OmniRelayUI.openDialog({title:'保存修改？',variant:'confirm',tone:'warning',
+        dialog.current=workbenchUI.openDialog({title:'保存修改？',variant:'confirm',tone:'warning',
           body:'<p class="dialog-note">有未保存的修改，直接离开会丢失本次更改。</p>',cancelLabel:'继续编辑',discard:'不保存',confirm:'保存并关闭',
           restoreFocus:()=>toggle.current,onClose:async(confirmed,result)=>{
             dialog.current=null;resolve(active() && (result==='discard' || (confirmed && await save())));

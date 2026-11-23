@@ -12,7 +12,7 @@ export function Dialog({children,title,description,variant,tone,confirm,drawer,c
     let active=true;
     const dialog=ui.openDialog({title,description,variant,tone,confirm,drawer,body:'<div data-react-body></div>',
       isDirty:form=>latest.current.isDirty?.(form) ?? false,
-      onSubmit:form=>latest.current.onSubmit?.(form),
+      onSubmit:(form,submitter)=>latest.current.onSubmit?.(form,submitter),
       onClose:confirmed=>{ if(active) latest.current.onClose?.(confirmed); },
       restoreFocus:()=>active?(latest.current.restoreFocus?.() ?? trigger):null});
     setHost(dialog.querySelector('[data-react-body]'));
@@ -80,7 +80,7 @@ export function OrganizationPicker({nodes,value,onChange,label='所属组织',na
 
 export type Column<Row>={key:string;label:string;text?:(row:Row)=>string;render?:(row:Row)=>ReactNode;sort?:(row:Row)=>string;secondary?:boolean};
 export type RowAction<Row>={label:string;run:(row:Row,trigger:HTMLButtonElement)=>void;visible?:(row:Row)=>boolean};
-export type PageState = {page:number;pageSize:number;query:string;filters:Record<string,string>;sort:{key:string;direction:'asc'|'desc'}};
+export type PageState = {page:number;pageSize:number;query:string;filters:Record<string,string>;sort:{key:string;direction:'asc'|'desc'} | null};
 export type RemotePage<Row> = (state:PageState,signal:AbortSignal)=>Promise<{items:Row[];total:number;options?:Record<string,Record<string,string>>}>;
 export function DataList<Row extends {id:string}>({label,itemLabel,rows,columns,rowLabel,search,filters,actions,onSelection,loadPage,defaultSort,initial,defaultFilters,selection,toolbar=true,revision,actionLabel="操作"}: {
   label:string;itemLabel:string;rows:Row[];columns:Column<Row>[];rowLabel:(row:Row)=>string;search:(row:Row)=>string;

@@ -1,3 +1,4 @@
+import { replaceTaskHash } from './hash-state'
 import { useProjectRevision } from './project-state'
 import { Textarea } from './controls'
 import { Input } from './controls'
@@ -18,10 +19,10 @@ import { ProjectBoardSettings } from './ProjectBoardSettings'
 import { ProjectTaskBoard } from './ProjectTaskBoard'
 import { ProjectDialog } from './ProjectDialog'
 import { ProjectTaskInspector, type TaskEditIntent } from './ProjectTaskInspector'
-import { ProjectTaskEditor } from './ProjectTasks'
+import { CandidateReviewForm } from './CandidateReviewForm'
 import { getProjectBoard, type ProjectBoardPage, type TaskSort, getProjectCandidates, getProjectTask, getProjectTasks, reviewProjectCandidate, type ProjectDetail, type ProjectTask, type TaskCandidate, type TaskFields } from './api'
 
-function viewFromUrl() { const query = new URLSearchParams(window.location.hash.split('?')[1]); return !query.get('task') && (query.get('task_view') === 'discovery' || (!query.has('task_view') && query.has('candidate'))) ? 'discovery' : 'confirmed' }
+function viewFromUrl() { const query = new URLSearchParams(window.location.hash.split('?')[1]); return !query.get('task') && query.get('task_view') === 'discovery' ? 'discovery' : 'confirmed' }
 
 export function ProjectTaskWorkspace({ project, canManage }: { project: ProjectDetail; canManage: boolean }) {
   const stateRevision = useProjectRevision('tasks')
@@ -63,7 +64,7 @@ export function ProjectTaskWorkspace({ project, canManage }: { project: ProjectD
     const query = new URLSearchParams(window.location.hash.split('?')[1])
     if (id) query.set('task', id); else { query.delete('task'); boardPosition.current = null }
     query.set('task_view', 'confirmed')
-    window.history.replaceState(history.state, '', `${location.hash.split('?')[0]}?${query}`)
+    replaceTaskHash(`${location.hash.split('?')[0]}?${query}`)
     setView('confirmed')
   }
   useEffect(() => { const sync = () => { setView(viewFromUrl()); setTaskId(new URLSearchParams(window.location.hash.split('?')[1]).get('task') ?? '') }; window.addEventListener('hashchange', sync); return () => window.removeEventListener('hashchange', sync) }, [canManage])
@@ -72,7 +73,7 @@ export function ProjectTaskWorkspace({ project, canManage }: { project: ProjectD
     setView(next)
     const query = new URLSearchParams(window.location.hash.split('?')[1]); query.set('task_view', next)
     if (next === 'discovery') { query.delete('task'); setTaskId('') }
-    window.history.replaceState(history.state, '', `${location.hash.split('?')[0]}?${query}`)
+    replaceTaskHash(`${location.hash.split('?')[0]}?${query}`)
   }
   const navigation = <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" id="task-scope-menu" aria-label="选择任务范围">
     {view === 'confirmed' ? '全部任务' : '待确认任务'}<ChevronDown size={14} aria-hidden />
@@ -102,8 +103,8 @@ function DiscoveryPanel({ project, canManage, onTask, onReviewed, navigation }: 
   const [creating, setCreating] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
   const sortTrigger = useRef<HTMLButtonElement>(null)
-  const tagIds = taskTagIds(rawTags,'')
-  const filters = boardQuery({q,owner,due,sort,tags:tagIds,status:'',column:'',overdue:false,dueFrom:'',dueBefore:'',timezone:project.business_timezone})
+  const tagIds = taskTagIds(rawTags)
+  const filters = boardQuery({q,owner,due,sort,tags:tagIds,status:'',column:'',dueFrom:'',dueBefore:'',timezone:project.business_timezone})
   const filterQuery = filters.toString()
   useEffect(() => {
     const controller = new AbortController()
@@ -137,7 +138,7 @@ function DiscoveryPanel({ project, canManage, onTask, onReviewed, navigation }: 
   useEffect(() => { const sync = () => { setFilter(candidateStatusFromHash()); setCursor(new URLSearchParams(window.location.hash.split('?')[1]).get('candidate_cursor') ?? ''); setSelected(null); setRetry((value) => value + 1) }; window.addEventListener('hashchange', sync); return () => window.removeEventListener('hashchange', sync) }, [])
   const selectedId = selected?.id
   useEffect(() => { if (selectedId) requestAnimationFrame(() => document.getElementById('candidate-detail-title')?.focus()) }, [selectedId])
-  function candidateUrl(status = filter, page = cursor, id = selected?.id ?? '') { const query = new URLSearchParams(window.location.hash.split('?')[1]); for (const [key, value] of Object.entries({ candidate_status: status, candidate_cursor: page, candidate: id })) { if (value) query.set(key, value); else query.delete(key) }; window.history.replaceState(history.state, '', `${location.hash.split('?')[0]}?${query}`) }
+  function candidateUrl(status = filter, page = cursor, id = selected?.id ?? '') { const query = new URLSearchParams(window.location.hash.split('?')[1]); for (const [key, value] of Object.entries({ candidate_status: status, candidate_cursor: page, candidate: id })) { if (value) query.set(key, value); else query.delete(key) }; replaceTaskHash(`${location.hash.split('?')[0]}?${query}`) }
   const candidateLabels: Record<string,string> = {pending_review:'待确认',confirmed:'已确认',ignored:'已忽略',merged:'已合并',superseded:'来源已修订'}
   return <section className="project-discovery task-review-board" aria-label="待确认任务建议">
     <div className="board-tools"><div className="board-toolbar">{navigation}<div className="board-toolbar-group">
@@ -155,7 +156,7 @@ function DiscoveryPanel({ project, canManage, onTask, onReviewed, navigation }: 
     </div>
     {boardSettings && board && <ProjectBoardSettings projectId={project.id} board={board} onClose={()=>setBoardSettings(false)} onDenied={cause=>{setError(cause instanceof Error?cause.message:"看板配置读取失败。");if(cause instanceof ApiError && [401,403,404].includes(cause.status)){setBoard(null);setSelected(null);setDialog(null);setBoardSettings(false)}}} onSaved={()=>{setBoardSettings(false);setRetry(value=>value+1)}} />}
     {creating && <ProjectTaskInspector project={project} taskId="" mode="create" canManage={canManage} onChanged={()=>onReviewed()} onClose={()=>setCreating(false)} onCreated={task=>{setCreating(false);onTask(task.id)}} />}
-    {dialog?.mode === 'confirm' && <ProjectTaskEditor project={project} task={null} title="确认候选任务" initial={{ ...dialog.candidate.fields, owner_member_id: dialog.candidate.fields.owner_member_id ?? '' }} requireShare onClose={() => setDialog(null)} onCreate={async (fields: TaskFields) => { try { const result = await reviewProjectCandidate(project.id, dialog.candidate, { action: 'confirm', fields, share_ack: true }); if (!result.task_id) throw new Error('未创建正式任务，请重新核对。'); return getProjectTask(project.id, result.task_id) } catch (cause) { const latest = await getProjectCandidates(project.id).catch(() => null); if (!latest?.items.some(item => item.id === dialog.candidate.id)) { setItems([]); setSelected(null); onReviewed() }; throw cause } }} onSaved={(task) => { setDialog(null); onReviewed(); onTask(task.id) }} />}
+    {dialog?.mode === 'confirm' && <CandidateReviewForm project={project} initial={{ ...dialog.candidate.fields, owner_member_id: dialog.candidate.fields.owner_member_id ?? '' }} onClose={() => setDialog(null)} onCreate={async (fields: TaskFields) => { try { const result = await reviewProjectCandidate(project.id, dialog.candidate, { action: 'confirm', fields, share_ack: true }); if (!result.task_id) throw new Error('未创建正式任务，请重新核对。'); return getProjectTask(project.id, result.task_id) } catch (cause) { const latest = await getProjectCandidates(project.id).catch(() => null); if (!latest?.items.some(item => item.id === dialog.candidate.id)) { setItems([]); setSelected(null); onReviewed() }; throw cause } }} onSaved={(task) => { setDialog(null); onReviewed(); onTask(task.id) }} />}
     {dialog && dialog.mode !== 'confirm' && <CandidateReviewDialog project={project} candidate={dialog.candidate} mode={dialog.mode} onClose={() => setDialog(null)} onSaved={(taskId) => { setDialog(null); onReviewed(); setSelected(null); setRetry((value) => value + 1); if (taskId) onTask(taskId) }} />}
   </section>
 }

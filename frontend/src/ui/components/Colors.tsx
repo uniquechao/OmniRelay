@@ -1,13 +1,10 @@
 import {useRef,useSyncExternalStore} from 'react';
-import '../../../../design/prototype/omni-relay-palette.js';
+import {swatchGroups,states} from './palette';
 import tokens from '../../../../design/prototype/omni-relay-colors.css?url';
 import {Panel,notify} from './Elements';
 import {ui} from './runtime';
 import './palette.css';
 
-declare global {
-  interface Window { OmniRelayPalette: {swatchGroups:Record<string,[string,string][]>;states:[string,string,string][]}; }
-}
 function subscribe(fn:()=>void) {
   document.addEventListener('omni-relay:theme',fn);
   return ()=>document.removeEventListener('omni-relay:theme',fn);
@@ -32,7 +29,6 @@ export function ColorSwatch({label,tokens}: {label:string;tokens:string[]}) {
 }
 const groups:Record<string,string>={neutrals:'界面基础色',interaction:'交互色','rail-colors':'侧栏色','data-colors':'数据色','avatar-colors':'人员头像色'};
 export function ColorPalette() {
-  const {swatchGroups,states}=window.OmniRelayPalette;
   return <div className="stack"><a className="button" download="omni-relay-colors.css" href={tokens}>下载 CSS 色彩变量</a>
     <Panel title="品牌色"><div className="palette-group">{['indigo','teal'].map((color,i)=>
       [50,100,200,300,400,500,600,700,800,900].map(step=><ColorSwatch key={color+step} label={(i?'青绿色':'亮靛蓝')+' '+step} tokens={[`--or-${color}-${step}`]}/>))}</div></Panel>

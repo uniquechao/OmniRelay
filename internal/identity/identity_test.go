@@ -28,16 +28,9 @@ func TestReturnPathStaysOnWorkbench(t *testing.T) {
 			t.Errorf("valid path %q was rejected", path)
 		}
 	}
-	for alias, canonical := range map[string]string{"/#/settings": "/#/system/settings", "/#/system/bot": "/#/system/feishu-bot"} {
-		path, err := localReturnPath(alias)
-		if err != nil || path != canonical {
-			t.Errorf("alias %q resolved to %q, want %q: %v", alias, path, canonical, err)
-		}
-		if (WorkbenchAccess{Admin: map[string]bool{"audit": true}}).canReturnTo(path) {
-			t.Errorf("audit access authorized alias %q", alias)
-		}
-		if !(WorkbenchAccess{Navigation: map[string]bool{"system": true}, Admin: map[string]bool{"settings": true, "feishu_bot": true}}).canReturnTo(path) {
-			t.Errorf("system access did not authorize alias %q", alias)
+	for _, old := range []string{"/#/settings", "/#/system/bot", "/#/bot-chats", "/#/projects/p/tasks/list", "/#/projects/p/feishu", "/#/projects/p/brief/r1"} {
+		if _, err := localReturnPath(old); err == nil {
+			t.Errorf("retired route %q accepted", old)
 		}
 	}
 	if (WorkbenchAccess{Navigation: map[string]bool{"workbench": true}}).canReturnTo("/#/feishu/drive") ||
@@ -46,10 +39,8 @@ func TestReturnPathStaysOnWorkbench(t *testing.T) {
 	}
 	for _, suffix := range []string{"", "/oc_example", "/oc_example/om_example"} {
 		target := "/#/feishu/bot-chats" + suffix
-		for _, raw := range []string{target, "/#/bot-chats" + suffix} {
-			if got, err := localReturnPath(raw); err != nil || got != target {
-				t.Errorf("chat path %q resolved to %q, want %q: %v", raw, got, target, err)
-			}
+		if got, err := localReturnPath(target); err != nil || got != target {
+			t.Errorf("chat path %q resolved to %q: %v", target, got, err)
 		}
 		if !(WorkbenchAccess{Navigation: map[string]bool{"bot_chats": true}}).canReturnTo(target) ||
 			(WorkbenchAccess{Navigation: map[string]bool{"workbench": true}}).canReturnTo(target) {
@@ -559,7 +550,7 @@ func TestSharedWorkbenchTargets(t *testing.T) {
 func TestReturnRechecksResourceAccess(t *testing.T) {
 	access := WorkbenchAccess{Navigation: map[string]bool{"workbench": true, "bot_chats": true}, DefaultRoute: "/#/workbench"}
 	for _, tc := range []struct{ path, project, chat string }{
-		{"/#/projects/p/overview", "p", ""}, {"/#/projects/p/chats/c/m", "p", "c"}, {"/#/bot-chats/c/m", "", "c"},
+		{"/#/projects/p/overview", "p", ""}, {"/#/projects/p/chats/c/m", "p", "c"}, {"/#/feishu/bot-chats/c/m", "", "c"},
 	} {
 		s := &Service{}
 		for _, granted := range []bool{false, true} {

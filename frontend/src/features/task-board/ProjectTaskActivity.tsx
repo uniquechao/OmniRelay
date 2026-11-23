@@ -113,6 +113,7 @@ export function ProjectTaskActivity({
               variant="ghost"
               aria-pressed={kind === key}
               onClick={() => {
+                if (key === kind) return
                 setKind(key)
                 setCursor('')
                 setPage(null)

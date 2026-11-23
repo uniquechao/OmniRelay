@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { QueryClient } from '@tanstack/react-query';
-import { client } from './session-client.js';
+import { client } from './session-client';
 
 let scope = client.scope;
 let queries = new QueryClient();

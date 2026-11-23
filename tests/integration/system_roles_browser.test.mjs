@@ -141,7 +141,7 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
   const accountId = actor => actor.session.principal.account_id;
 
   const entry = await admin.context.newPage();
-  await entry.goto(origin + '/#/settings');
+  await entry.goto(origin + '/#/system/settings');
   await entry.waitForURL('**/#/system/settings');
   await entry.getByText('未接入', { exact: true }).first().waitFor();
   assert.equal(await entry.locator('#system-nav').getAttribute('open'), '');
@@ -181,7 +181,7 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
 
   const returning = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } });
   const mobile = await returning.newPage();
-  await mobile.goto(origin + '/#/system/bot');
+  await mobile.goto(origin + '/#/system/feishu-bot');
   await mobile.waitForURL('**/#/login');
   await login(mobile, 'admin', 'system/feishu-bot');
   await mobile.locator('#bot-form').waitFor();

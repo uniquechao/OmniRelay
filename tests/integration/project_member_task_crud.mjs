@@ -145,26 +145,29 @@ try{
  await dialog.getByRole('button',{name:'保存修改',exact:true}).click();await page.getByRole('cell',{name:'最终验收职责',exact:true}).waitFor();
  await mkdir('.runtime/evidence',{recursive:true});await page.screenshot({path:'.runtime/evidence/members-1440-light.png'});
  await page.goto(origin+'/#/projects/h3/tasks/new');
- await page.getByLabel('标题',{exact:true}).fill('浏览器创建任务');await page.getByRole('button',{name:'编辑任务详情'}).click();await page.getByLabel('正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
+ await page.getByLabel('任务标题',{exact:true}).fill('浏览器创建任务');await page.getByRole('button',{name:'编辑任务详情'}).click();await page.getByLabel('任务正文',{exact:true}).fill('验证任务创建与删除');await page.getByLabel('截止日期').fill('2026-12-01');
  // Owner and participants select the same system identities, within project membership.
- await page.getByLabel('主负责人',{exact:true}).fill('second');
- await page.locator('[data-picker=owner_member_id] [data-pick=second]').waitFor();
- await page.getByLabel('主负责人',{exact:true}).press('ArrowDown');await page.keyboard.press('Enter');
+ await page.getByRole('combobox',{name:'负责人'}).fill('项目成员');
+ await page.getByRole('option',{name:/项目成员/}).waitFor();
+ await page.getByRole('combobox',{name:'负责人'}).press('ArrowDown');await page.keyboard.press('Enter');
  await page.getByRole('button',{name:'编辑验收条件'}).click();
- await page.getByLabel('参与人',{exact:true}).fill('manager');
- await page.locator('[data-picker=participant_ids] [data-pick=manager]').click();
+ await page.getByRole('button',{name:/^参与人，/}).click();
+ await page.getByRole('checkbox',{name:/项目负责人/}).check();
+ await page.keyboard.press('Escape');
 
- await page.getByRole('button',{name:'创建任务',exact:true}).click();await page.getByRole('button',{name:'保存任务',exact:true}).waitFor();
- const taskId=page.url().split('/').at(-1);let task=await api('GET','/tasks/'+taskId);assert.equal(task.due_at,'2026-12-01');assert.equal(task.owner_member_id,'second');assert.deepEqual(task.participant_ids,['manager']);
- await page.getByLabel('标题',{exact:true}).fill('浏览器修改任务');await page.getByRole('button',{name:'保存任务',exact:true}).click();await page.getByText('任务已保存。',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'创建任务',exact:true}).click();await page.getByRole('button',{name:'保存任务',exact:true}).waitFor().catch(async error=>{
+   throw new Error([error.message,new URL(page.url()).hash,await page.locator('.task-inspector-notice, [role=alert]').allTextContents()].join('\n'));
+ });
+ const taskId=page.url().split('/').at(-1);let task=await api('GET','/tasks/'+taskId);assert.equal(task.due_at.slice(0,10),'2026-12-01');assert.equal(task.owner_member_id,'second');assert.deepEqual(task.participant_ids,['manager']);
+ await page.getByLabel('任务标题',{exact:true}).fill('浏览器修改任务');await page.getByRole('button',{name:'保存任务',exact:true}).click();await page.getByText('任务已保存。',{exact:true}).waitFor();
  task=await api('GET','/tasks/'+taskId);assert.equal(task.title,'浏览器修改任务');
  for(const width of [1440,390])for(const theme of ['light','dark']){
    await page.setViewportSize({width,height:1000});await page.evaluate(t=>{document.documentElement.dataset.theme=t;},theme);await page.screenshot({path:`.runtime/evidence/task-${width}-${theme}.png`});
    assert.ok(await page.getByRole('button',{name:'删除任务',exact:true}).isVisible());
-   const pathBox=await page.locator('.task-inspector-path').boundingBox(),deleteBox=await page.locator('[data-delete]').boundingBox();
+   const pathBox=await page.locator('.task-inspector-path').boundingBox(),deleteBox=await page.getByRole('button',{name:'删除任务',exact:true}).boundingBox();
    assert.ok(pathBox.x+pathBox.width<=deleteBox.x || pathBox.y+pathBox.height<=deleteBox.y,'任务路径不得与操作按钮重叠');
  }
- await page.getByRole('button',{name:'删除任务',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('删除原因').fill('验收样本清理');await dialog.getByRole('button',{name:'删除任务',exact:true}).click();
+ await page.getByRole('button',{name:'删除任务',exact:true}).click();dialog=page.getByRole('dialog',{name:'删除任务',exact:true});await dialog.getByLabel('删除原因').fill('验收样本清理');await dialog.getByRole('button',{name:'确认删除',exact:true}).click();
  await page.getByRole('button',{name:'新建任务',exact:true}).waitFor();await api('GET','/tasks/'+taskId,undefined,404);
  let board=(await api('GET','/tasks')).data;assert.equal(board.total,0);
  // Membership removal must not orphan unfinished tasks.

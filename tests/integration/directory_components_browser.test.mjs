@@ -24,18 +24,18 @@ const roster = [
   ] },
   { ...pending, name, person_key: 'chen-yue', departments: [{ id: 'od_delivery_1', path: paths[1] }] }
 ];
-const account = { id: registered.account_id, name, source: 'feishu', active: true, personKey: roster[0].person_key };
+const account = { id: registered.account_id, name, source: 'feishu', active: true, personKey: roster[0].person_key, avatarUrl:'',systemRoles:['system_user'],createdAt:'2026-11-17T20:00:00Z',updatedAt:'2026-11-17T20:00:00Z' };
 const departments = {
-  '': [{ ...visible.departments.items[0], name: team }, { id: 'od_delivery', name: '交付中心', has_children: true }],
-  od_eng: [{ id: 'od_ops', parent_id: 'od_eng', name: '运维' }],
-  od_delivery: [{ id: 'od_delivery_1', parent_id: 'od_delivery', name: '交付一组' }]
+  '': [{ ...visible.departments.items[0], name: team }, { id: 'od_delivery', parent_id:'', name: '交付中心', has_children: true }],
+  od_eng: [{ id: 'od_ops', parent_id: 'od_eng', has_children:false,name: '运维' }],
+  od_delivery: [{ id: 'od_delivery_1', parent_id: 'od_delivery', has_children:false,name: '交付一组' }]
 };
 
 async function mountFixture(page) {
   let state = visible;
   const writes = [];
   const reads = [];
-  const extra = Array.from({length:1000},(_,i)=>({id:'directory:extra-'+i,name:'成员'+i,source:'飞书',
+  const extra = Array.from({length:1000},(_,i)=>({id:'directory:extra-'+i,personKey:'extra-'+i,name:'成员'+i,source:'飞书',
     status:'unprovisioned',org:'',roleNames:[]}));
   let monitorFailure = false;
   let run;
@@ -75,7 +75,7 @@ async function mountFixture(page) {
           : [{id:account.id,name,personKey:account.personKey,status:'active',source:'飞书',roleNames:[],org:''}];
         if (!dept && state === visible) people.push(...extra);
         const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'));
-        return route.fulfill({json:{...state.people,snapshot_version:state.people.visible ? snapshot : null,total:people.length,items:people.slice(offset,offset+limit)}});
+        return route.fulfill({json:{...state.people,snapshot_version:state.people.visible ? snapshot : null,total:people.length,items:people.slice(offset,offset+limit).map(person=>({directoryStatus:null,directoryUnactivated:false,resignedAt:null,disableProtected:false,...person}))}});
       }
       if (path === system + '/accounts/'+account.id) return route.fulfill({json:account});
       if (path === system + '/accounts') return route.fulfill({ json: { items: [account] } });
@@ -174,7 +174,9 @@ test('UI01 与 UI02 共享组件通过目录身份和路径回归', { skip: !pro
           assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
           const tree = page.locator('[data-directory-tree] .dev-tree');
           const ready = page.locator('tbody tr[data-row]');
-          await page.locator('tbody .person-name').first().waitFor();
+          await page.locator('tbody .person-name').first().waitFor().catch(async reason=>{
+            throw new Error([String(reason),...errors,await page.locator('main').innerText(),fixture.reads.map(url=>url.pathname).join(',')].join('\n'));
+          });
           const business = () => fixture.reads.filter(url=>url.pathname.startsWith(system));
           const userRequests = () => business().filter(url=>url.pathname === system+'/user-page');
           const branches = () => business().filter(url=>url.pathname === directory+'departments');

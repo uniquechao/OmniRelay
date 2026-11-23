@@ -15,8 +15,8 @@ test('首次配置、授权回跳和服务切换', { skip: !origin || !code }, a
     page.on('request', req => seen.push(req.url()));
     page.on('console', msg => seen.push(msg.text()));
     const violations = [];
-    await page.exposeFunction('recordViolation', () => violations.push(true));
-    await page.addInitScript(() => document.addEventListener('securitypolicyviolation', window.recordViolation));
+    await page.exposeFunction('recordViolation', directive => violations.push(directive));
+    await page.addInitScript(() => document.addEventListener('securitypolicyviolation', event => window.recordViolation(event.effectiveDirective + ' ' + event.blockedURI)));
     await page.goto(origin);
     assert.equal(page.url(), origin + '/setup');
     await page.getByText(origin + '/auth/feishu/callback', { exact: true }).waitFor();

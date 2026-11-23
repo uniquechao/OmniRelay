@@ -55,7 +55,7 @@ async function respond(request, response) {
     fixture.meChecks++;
     if (fixture.probeStatus) return json(response, fixture.probeStatus, {});
     return fixture.signedIn ? json(response, 200, {
-      principal: { account_id: fixture.accountId ?? 1, name: '测试账号', auth_method: fixture.method },
+      principal: { account_id: fixture.accountId ?? 'account-1', name: '测试账号', auth_method: fixture.method },
       csrf_token: fixture.csrfMissing ? '' : mockCSRF,
       access: fixture.access ?? { admin: { feishu_bot: fixture.botAllowed }, roles: ['system_admin'], navigation: { workbench:true, system:fixture.botAllowed },
         permissions: { 'system.operate':fixture.botAllowed }, default_route:'/#/workbench' }
@@ -226,7 +226,7 @@ test('窗口聚焦复核失败后锁定表单，联网后恢复同账号草稿�
   await enabled.waitFor();
   assert.equal(await enabled.isChecked(),false);
   await enabled.check();
-  fixture.accountId=2;
+  fixture.accountId='account-2';
   await page.evaluate(() => dispatchEvent(new Event('focus')));
   await page.waitForFunction(()=>document.querySelector('#bot-enabled')?.checked===false);
 }));
@@ -280,7 +280,8 @@ test('拒绝未知或外部目标，401 与退出后重新确认会话', { skip:
   await page.goto(origin + '/#/workbench');
   await page.locator('#page-heading').waitFor();
   fixture.signedIn = false;
-  await page.locator('#page a[href="' + botHash + '"]').click();
+  await page.locator('#system-nav > summary').click();
+  await page.getByRole('link',{name:'飞书 Bot 配置',exact:true}).click();
   await page.locator('#feishu-login:enabled').waitFor();
   await startFeishu(page);
   assert.equal(fixture.target, '/' + botHash);
@@ -387,7 +388,7 @@ test('React 书签与草稿保护、刷新和键盘焦点', {skip:!!goOrigin || 
   fixture.method='password';
   fixture.access={navigation:{system:true,workbench:true},admin:{settings:true,feishu_bot:true},
     permissions:{'system.configure':true},default_route:'/#/workbench'};
-  await page.goto(origin+'/#/settings');
+  await page.goto(origin+'/#/system/settings');
   await page.waitForURL('**/#/system/settings');
   await page.getByRole('link',{name:'飞书 Bot 配置',exact:true}).click();
   const toggle=page.locator('#bot-enabled');
@@ -447,7 +448,7 @@ test('Bot 版本复核、检测重试与跨页轮询', {skip:!!goOrigin || !proc
     return route.fulfill({json:{...tasks.find(task=>task.name===state).body,id:'check-1'}});
   });
   await page.route('**/api/v1/system/connections',r=>r.fulfill({json:{items:[{id:'omnirelay',state:'local'},{id:'deepseek_harness',state:'other'}]}}));
-  await page.goto(origin+'/#/system/bot');
+  await page.goto(origin+'/#/system/feishu-bot');
   const toggle=page.locator('#bot-enabled'),save=page.locator('#bot-save'),check=page.locator('#bot-test');
   await toggle.check();
   assert.equal(await save.isDisabled(),true);
@@ -498,7 +499,7 @@ test('Bot 版本复核、检测重试与跨页轮询', {skip:!!goOrigin || !proc
 test('配置、检测与目录同步分别检查能力，连接设置区分读取失败与拒绝访问', {skip:!!goOrigin || !process.env.OMNIRELAY_BROWSER_DIST},()=>withPage(async page=>{
   fixture.signedIn=true;
   fixture.access={navigation:{system:true},admin:{feishu_bot:true,settings:true,users:true},permissions:{}};
-  await page.goto(origin+'/#/system/bot');
+  await page.goto(origin+'/#/system/feishu-bot');
   const configure=page.locator('#bot-form'),detect=page.locator('#bot-test');
   const sync=page.getByRole('link',{name:'前往用户管理同步组织与用户'});
   for(const capability of ['system.read','system.configure','system.operate','directory.sync']){

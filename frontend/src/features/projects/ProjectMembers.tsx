@@ -2,13 +2,13 @@ import {useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {Pencil} from 'lucide-react';
 import {DataList,type Column} from '../../ui/components/Widgets';
 import {ui} from '../../ui/components/runtime';
-import {canRemoveMember,projectMemberDialogs} from './project-members.js';
+import {canRemoveMember,projectMemberDialogs} from './project-members';
 import type {Guard} from '../workbench/Account';
 
-type Member={id:string;account_id:string;display_name:string;project_role:string;role:string;version:number;
-  responsibility?:string;last_spoke_at?:string;organization_paths?:string[][]};
-type Directory={members:Member[];project_roles?:{id:string;name:string;scope:string}[];can_manage:boolean;can_delegate:boolean};
-type Props={data:Directory;projectId:string;request:(url:string,options:object)=>Promise<{data:Directory}>;
+import {z} from '../../api/validation.ts';
+import {errorStatus} from '../../api/session-client.ts';
+import {directorySchema,type ProjectRequest,type Member,type Directory} from './project-contracts';
+type Props={data:Directory;projectId:string;request:ProjectRequest;
   signal:AbortSignal;navigation:Guard;query:string};
 const stamp=new Intl.DateTimeFormat('zh-CN',{dateStyle:'short',timeStyle:'short'});
 const nameOf=(person:Member)=>person.display_name;
@@ -45,7 +45,7 @@ export function ProjectMembers(props:Props) {
       const result=await request('/api/v1/projects/'+projectId+'/members',{signal});
       if(signal.aborted || ticket!==revision.current)return;
       nextFocus.current=selector;
-      setData(result.data);
+      setData(z.object({data:directorySchema}).parse(result).data);
     } catch {if(!signal.aborted)ui.toast('error','成员列表读取失败，请刷新重试。');}
   },[projectId,signal,request]);
   const dialogs=useMemo(()=>projectMemberDialogs({data,projectId,request,signal,navigation,refresh}),[data,projectId,request,signal,navigation,refresh]);
@@ -62,7 +62,7 @@ export function ProjectMembers(props:Props) {
             await dialogs.updateMember(member,{project_role:role});
             if(!signal.aborted)ui.toast('success','项目角色已更新。');
           } catch(error) {
-            const status=(error as {status:number}).status;
+            const status=errorStatus(error);
             if(!signal.aborted)ui.toast('error',status===409?'无法更改角色，请核对最新角色，并保留至少一位项目负责人。':
               [403,404].includes(status)?'当前账号无权修改该角色。':'角色保存失败，请重试。');
           }

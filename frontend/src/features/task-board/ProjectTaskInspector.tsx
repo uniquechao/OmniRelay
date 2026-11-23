@@ -51,6 +51,7 @@ export function ProjectTaskInspector({
   mode = 'edit',
   initialColumnId,
   onCreated,
+  closeAfterSave = true,
 }: {
   project: ProjectDetail
   taskId: string
@@ -59,6 +60,7 @@ export function ProjectTaskInspector({
   onChanged: () => void
   mode?: 'create' | 'edit'
   initialColumnId?: string
+  closeAfterSave?: boolean
   onCreated?: (task: ProjectTask) => void
 }) {
   const uploads=useRef(new Map<string,File>())
@@ -69,7 +71,7 @@ export function ProjectTaskInspector({
   const draftDirty = useRef(false)
   const visibleVersion = useRef<number | null>(null)
   const [formEpoch, setFormEpoch] = useState(0)
-  const [task, setTask] = useState<ProjectTask | null>(() => isNew ? { id: '', task_code: '', project_id: project.id, title: '', description: '', owner_member_id: canManage ? null : project.current_member_id, participant_ids: [], priority: null, due_at: null, start_at: null, tag_ids: [], acceptance: '', status: 'todo', column_id: initialColumnId, blocked_from: null, blocked_reason: '', completion_note: '', version: 0, created_by: '', updated_by: '', created_at: '', updated_at: '', overdue: false } : null)
+  const [task, setTask] = useState<ProjectTask | null>(() => isNew ? { id: '', task_code: '', project_id: project.id, title: '', description: '', owner_member_id: canManage ? null : project.current_member_id, participant_ids: [], priority: null, due_at: null, start_at: null, tag_ids: [], acceptance: '', status: 'todo', column_id: initialColumnId, blocked_reason: '', completion_note: '', version: 0, created_by: '', updated_by: '', created_at: '', updated_at: '', overdue: false } : null)
   const [selectedOwner, setSelectedOwner] = useState<string | null>(isNew && !canManage ? project.current_member_id : null)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [selectedColumn, setSelectedColumn] = useState(initialColumnId ?? '')
@@ -102,6 +104,7 @@ export function ProjectTaskInspector({
   const closeButton = useRef<HTMLButtonElement>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
   const active = useRef(true)
+  const leaving = useRef(false)
   const busy = useRef(false)
   const attempts = useRef<Record<string, { signature: string; key: string }>>(
     {},
@@ -246,13 +249,13 @@ export function ProjectTaskInspector({
   }, [closing])
   useEffect(() => {
     const guard = (event: Event) => {
-      if (unsaved || pending) {
+      if (!leaving.current && (unsaved || pending)) {
         event.preventDefault()
         requestClose()
       }
     }
     const unload = (event: BeforeUnloadEvent) => {
-      if (unsaved || pending) event.preventDefault()
+      if (!leaving.current && (unsaved || pending)) event.preventDefault()
     }
     window.addEventListener('omni-grid:before-route-change', guard)
     window.addEventListener('beforeunload', unload)
@@ -271,6 +274,7 @@ export function ProjectTaskInspector({
     setClosing(false)
     requestAnimationFrame(() => { if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true }) })
   }
+  function leave() { leaving.current=true; onClose() }
   function close() {
     if (busy.current) return
     if (unsaved) requestClose()
@@ -293,7 +297,7 @@ export function ProjectTaskInspector({
     setError('')
     try {
       await deleteProjectTask(project.id, task.id, deleteVersion, reason, key('delete', JSON.stringify([task.id, deleteVersion, reason])))
-      if (active.current && !revoked.current) { onChanged(); onClose() }
+      if (active.current && !revoked.current) { onChanged(); leave() }
     } catch (cause) {
       if (cause instanceof ApiError && [401,403,404,409].includes(cause.status)) setDeleteVersion(null)
       failure(cause)
@@ -302,7 +306,7 @@ export function ProjectTaskInspector({
       if (active.current) setPending(false)
     }
   }
-  async function save(event: FormEvent) {
+  async function save(event: FormEvent, dismissAfterSave = false) {
     event.preventDefault()
     if (!task || busy.current || conflict) return
     const data = new FormData(form.current!)
@@ -342,13 +346,14 @@ export function ProjectTaskInspector({
             acceptance: String(data.get('acceptance') ?? ''),
             start_at: date('start', task.start_at),
             due_at: date('due', task.due_at, true),
+            milestone_id: draftValues.milestone_id,
             tag_ids:
               tags === null ? task.tag_ids : selectedTags,
           }
         : {
             title: String(data.get('title') ?? task.title).trim(),
             description: String(data.get('description') ?? task.description),
-            start_at:task.start_at,tag_ids:task.tag_ids,
+            milestone_id:task.milestone_id,start_at:task.start_at,tag_ids:task.tag_ids,
             owner_member_id: task.owner_member_id,
             participant_ids: task.participant_ids,
             priority: task.priority,
@@ -378,9 +383,9 @@ export function ProjectTaskInspector({
           setRevision((n) => n + 1)
         setNotice(isNew ? '任务已创建。' : '任务已保存。')
         onChanged()
-        if (isNew) { if (onCreated) onCreated(saved); else onClose() }
+        if (isNew) { leaving.current=true; if (onCreated) onCreated(saved); else onClose() }
         else if (comment.trim()) requestAnimationFrame(() => commentInput.current?.focus({ preventScroll: true }))
-        else onClose()
+        else if(closeAfterSave || dismissAfterSave) leave()
       }
     } catch (cause) {
       failure(cause)
@@ -494,7 +499,12 @@ export function ProjectTaskInspector({
                   >
                     继续编辑
                   </Button>
-                  <Button variant="outline" disabled={pending} onClick={onClose}>
+                  {dirty && !comment.trim() && <Button disabled={pending || conflict} onClick={event => {
+                    if (!form.current?.reportValidity()) return
+                    setClosing(false)
+                    void save(event, true)
+                  }}>保存并关闭</Button>}
+                  <Button variant="outline" disabled={pending} onClick={leave}>
                     放弃更改
                   </Button></div>
                 </div>
@@ -569,21 +579,33 @@ export function ProjectTaskInspector({
                             </div>
                           ))}
                         </dl>
-                        <p>核对后将按当前版本提交保留的草稿，请确认各字段。</p>
+                        <p>应用后会保留你修改的字段，其余字段采用当前版本。同一字段若双方都修改，请核对后再保存。</p>
                       </div>
                       <Button
                         onClick={() => {
-                          setTask((current) =>
-                            current
-                              ? { ...current, version: latest.version, status: latest.status }
-                              : current,
-                          )
+                          const base = taskEditValues(task, timezone)
+                          const remote = taskEditValues(latest, timezone)
+                          const merged = {...draftValues}
+                          function merge<K extends keyof typeof base>(key: K) {
+                            if (JSON.stringify(draftValues[key]) === JSON.stringify(base[key])) merged[key] = remote[key]
+                          }
+                          for (const key of Object.keys(base) as (keyof typeof base)[]) merge(key)
+                          if (selectedOwner === task.owner_member_id) setSelectedOwner(latest.owner_member_id)
+                          if (JSON.stringify(selectedTags) === JSON.stringify(task.tag_ids ?? [])) setSelectedTags(latest.tag_ids ?? [])
+                          const previousColumn = task.status === 'cancelled' ? 'cancelled' : task.column_id ?? task.status
+                          if (selectedColumn === previousColumn && draftStatus === task.status) {
+                            setSelectedColumn(latest.status === 'cancelled' ? 'cancelled' : latest.column_id ?? latest.status)
+                            setDraftStatus(latest.status)
+                          }
+                          setDraftValues(merged)
+                          setTask(latest)
+                          setFormEpoch(value => value + 1)
                           setConflict(false)
                           setLatest(null)
                           setError('')
                         }}
                       >
-                        已核对，保留草稿重试
+                        应用比对结果
                       </Button>
                     </>
                   )}
@@ -610,24 +632,28 @@ export function ProjectTaskInspector({
                   >
                     <section className="task-inspector-copy">
                       <h2 className="sr-only">{isNew ? '新建任务' : task.title}</h2>
-                      <label><span className="sr-only">任务标题</span><Input aria-label="任务标题" name="title" defaultValue={task.title} placeholder="输入任务名称" required maxLength={200} readOnly={(!canManage && !own && !isNew) || pending} /></label>
-                      <TaskMarkdownField projectId={project.id} name="description" label="任务详情" value={task.description} readOnly={!canManage && !own && !isNew} pending={pending} files={uploads.current} onInput={description => setDraftValues(v => ({...v,description}))} />
-                      <label hidden={draftStatus !== 'blocked'} className="task-blocker-field">受阻原因<Textarea aria-label="受阻原因" name="blocked_reason" disabled={draftStatus !== 'blocked'} required={draftStatus === 'blocked'} defaultValue={task.blocked_reason} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
-                      {!isNew && <label hidden={draftStatus !== 'done' && !task.completion_note}>完成结果<Textarea aria-label="完成结果" name="completion_note" defaultValue={task.completion_note} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>}
+                      <label><span className="sr-only">任务标题</span><Input aria-label="任务标题" name="title" defaultValue={draftValues.title} placeholder="输入任务名称" required maxLength={200} readOnly={(!canManage && !own && !isNew) || pending} /></label>
+                      <TaskMarkdownField projectId={project.id} name="description" label="任务详情" value={draftValues.description} readOnly={!canManage && !own && !isNew} pending={pending} files={uploads.current} onInput={description => setDraftValues(v => ({...v,description}))} />
+                      <label hidden={draftStatus !== 'blocked'} className="task-blocker-field">受阻原因<Textarea aria-label="受阻原因" name="blocked_reason" disabled={draftStatus !== 'blocked'} required={draftStatus === 'blocked'} defaultValue={draftValues.blocked_reason} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
+                      {!isNew && <label hidden={draftStatus !== 'done' && !task.completion_note}>完成结果<Textarea aria-label="完成结果" name="completion_note" defaultValue={draftValues.completion_note} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>}
                       {requiresChangeReason && canManage && <label>{draftStatus === 'cancelled' ? '取消原因（必填）' : '变更原因（必填）'}<Textarea aria-label={draftStatus === 'cancelled' ? '取消原因' : '变更原因'} aria-required="true" name="change_reason" maxLength={4000} rows={2} readOnly={pending} onChange={() => {if (error === reasonPrompt) setError('')}} /></label>}
-                      <TaskMarkdownField projectId={project.id} name="acceptance" label="验收条件" value={task.acceptance} readOnly={!canManage} pending={pending} files={uploads.current} onInput={acceptance => setDraftValues(v => ({...v,acceptance}))} />
+                      <TaskMarkdownField projectId={project.id} name="acceptance" label="验收条件" value={draftValues.acceptance} readOnly={!canManage} pending={pending} files={uploads.current} onInput={acceptance => setDraftValues(v => ({...v,acceptance}))} />
                     </section>
                     <aside className="task-inspector-sidebar" aria-label="任务属性">
                       <section className="task-side-section"><h3>属性</h3>
                         <label className="task-property"><span>状态</span><span className="task-status-control" data-stage={draftStatus} style={{ '--task-status-dot': boardColumns.find(column => column.id === selectedColumn)?.color || ({ todo: '#7b8495', in_progress: '#1746e8', blocked: '#b66b16', done: '#528a14', cancelled: '#7b8495' })[draftStatus] } as CSSProperties}><NativeSelect aria-label="任务状态" name="column" value={selectedColumn || draftStatus} disabled={(!canManage && !own && !isNew) || pending} onChange={event => { setSelectedColumn(event.target.value); setDraftStatus(boardColumns.find(column => column.id === event.target.value)?.stage ?? event.target.value as TaskStatus) }}>{boardColumns.length > 0 && selectedColumn && selectedColumn !== 'cancelled' && !boardColumns.some(column => column.id === selectedColumn) && <option value={selectedColumn} disabled>原状态列已移除，请选择当前状态列</option>}{boardColumns.length ? boardColumns.map(column => <option key={column.id} value={column.id}>{column.name}</option>) : Object.entries(statuses).filter(([status]) => status !== 'cancelled' || !isNew && (canManage || task.status === 'cancelled')).map(([status,label]) => <option key={status} value={status}>{label}</option>)}{boardColumns.length > 0 && !isNew && (canManage || task.status === 'cancelled') && <option value="cancelled">已取消</option>}</NativeSelect></span></label>
-                        <label className="task-property"><span>优先级</span><NativeSelect aria-label="优先级" name="priority" defaultValue={task.priority ?? ''} disabled={!canManage || pending}><option value="">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</NativeSelect></label>
+                        <label className="task-property"><span>优先级</span><NativeSelect aria-label="优先级" name="priority" defaultValue={draftValues.priority ?? ''} disabled={!canManage || pending}><option value="">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</NativeSelect></label>
                         <div className="task-property task-owner-property"><span aria-hidden>主负责人</span><input type="hidden" name="owner" value={selectedOwner ?? ''} /><TaskOwnerField members={taskPeople.filter(member => member.active !== false || member.id === task.owner_member_id)} value={selectedOwner} inputRef={ownerInput} onChange={value => { setSelectedOwner(value); setError(current => current === '请从搜索结果中选择负责人。' ? '' : current) }} onQueryChange={setOwnerSearch} disabled={!canManage || pending} /></div>
                         <TaskParticipantsField members={taskPeople} value={draftValues.participant_ids} interactions={task.interaction_participants} disabled={!canManage || pending} onChange={ids => setDraftValues(current => ({ ...current, participant_ids: ids }))} />
-                        <TaskDateField timezone={timezone} label="开始日期" name="start" defaultValue={taskDate(task.start_at,project.business_timezone || 'UTC')} disabled={!canManage || pending} />
-                        <TaskDateField timezone={timezone} label="截止日期" name="due" defaultValue={taskDate(task.due_at,project.business_timezone || 'UTC')} disabled={!canManage || pending} />
+                        <label className="task-property"><span>里程碑</span><NativeSelect name="milestone_id" value={draftValues.milestone_id ?? ''} disabled={!canManage || pending}
+                          onChange={event=>setDraftValues(current=>({...current,milestone_id:event.target.value || null}))}>
+                          <option value="">未关联</option>{project.milestones?.map(item=><option key={item.id} value={item.id}>{item.title}</option>)}
+                        </NativeSelect></label>
+                        <TaskDateField timezone={timezone} label="开始日期" name="start" defaultValue={draftValues.start} disabled={!canManage || pending} />
+                        <TaskDateField timezone={timezone} label="截止日期" name="due" defaultValue={draftValues.due} disabled={!canManage || pending} />
                         <div className="task-property task-property-tags"><span>标签</span><div><div className="task-selected-tags">{selectedTags.map(id => { const tag=tags?.find(tag => tag.id === id); return <span key={id} title={tag?.type}>{tag?.name ?? '标签名称未知'}</span> })}</div><TaskLabelField projectId={project.id} tags={tags ?? []} value={selectedTags} onChange={setSelectedTags} onTags={setTags} disabled={!canManage || pending || tags === null} canCreate={project.actions.includes('configure_board')} /></div></div>
                       </section>
-                      {!isNew && <section className="task-side-section"><h3>详情</h3><dl className="task-info-list"><dt>创建者</dt><dd>{task.created_by_name || task.created_by || '未知'}</dd><dt>创建于</dt><dd><time dateTime={task.created_at}>{task.created_at && new Date(task.created_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd><dt>更新于</dt><dd><time dateTime={task.updated_at}>{task.updated_at && new Date(task.updated_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd></dl><details className="task-version-info"><summary>版本与更新人</summary><p>版本 v{task.version}</p><p>更新人：{task.updated_by_name || task.updated_by || '未知'}</p><p>业务时区：{project.business_timezone || 'UTC（业务时区未设置）'}</p></details><ProjectTaskEvidence projectId={project.id} taskId={task.id} /></section>}
+                      {!isNew && <section className="task-side-section"><h3>详情</h3><dl className="task-info-list"><dt>创建者</dt><dd>{task.created_by_name || task.created_by || '未知'}</dd><dt>创建于</dt><dd><time dateTime={task.created_at ?? undefined}>{task.created_at && new Date(task.created_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd><dt>更新于</dt><dd><time dateTime={task.updated_at ?? undefined}>{task.updated_at && new Date(task.updated_at).toLocaleString('zh-CN',{timeZone:project.business_timezone || 'UTC',hour12:false})}</time></dd></dl><details className="task-version-info"><summary>版本与更新人</summary><p>版本 v{task.version}</p><p>更新人：{task.updated_by_name || task.updated_by || '未知'}</p><p>业务时区：{project.business_timezone || 'UTC（业务时区未设置）'}</p></details><ProjectTaskEvidence projectId={project.id} taskId={task.id} /></section>}
                     </aside>
                   </form>
                   {!isNew && (project.actions?.includes('comment') ?? canManage) && (

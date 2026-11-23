@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { api, ApiError, setSession } from '../../frontend/src/api/session-client.js';
-import { feishuBotAPI } from '../../frontend/src/api/system-api.js';
+import { api, ApiError, setSession } from '../../frontend/src/api/session-client.ts';
+import { feishuBotAPI } from '../../frontend/src/api/system-api.ts';
 
 const origin = 'https://relay.example.test';
 const basePath = '/api/v1/system/feishu-bot';
@@ -44,7 +44,7 @@ test('飞书 Bot 客户端传递条件头、幂等键和 CSRF，并读取原始 
   assert.equal(expected.length, 0);
 });
 
-test('请求包装保留旧调用返回值、错误与同源路径限制', async context => {
+test('请求客户端透传服务端错误，并限制为同源 API 地址', async context => {
   const fetch = context.mock.method(globalThis, 'fetch', async (url, request) => {
     if (url.pathname === '/auth/logout') return new Response(null, { status: 204 });
     if (request.method === 'PATCH') return Response.json({ error: 'config_version_conflict' }, { status: 412 });

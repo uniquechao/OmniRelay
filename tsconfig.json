@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2022", "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "target": "ES2022", "lib": ["ES2022", "DOM", "DOM.Iterable", "ESNext.Disposable"],
     "module": "ESNext", "moduleResolution": "Bundler", "jsx": "react-jsx",
-    "allowJs": true, "strict": true, "noEmit": true, "isolatedModules": true, "types": ["vite/client"]
+    "allowImportingTsExtensions": true, "allowJs": false, "strict": true, "noEmit": true, "isolatedModules": true, "types": ["vite/client"]
   },
-  "include": ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"]
+  "include": ["frontend/src"]
 }
