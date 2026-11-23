@@ -2,6 +2,8 @@
 
 [交互原型](../prototype/omni-relay-workbench.html) · [开发者 · 布局说明](../prototype/omni-relay-workbench.html#/developer/layout) · [开发者 · 组件列表](../prototype/omni-relay-workbench.html#/developer/components) · [色彩系统](../prototype/omni-relay-color-system.html) · [CSS 色彩变量](../prototype/omni-relay-colors.css)
 
+正式前端的源码语言、类型检查、原型使用边界和合并要求统一遵循[工程实现与合并标准](../../AGENTS.md#工程实现与合并标准)。
+
 ## 页面清单
 
 | 模板 | 原型入口 | 统一结构 |
