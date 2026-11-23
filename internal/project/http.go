@@ -88,6 +88,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	const base = "/api/v1/projects"
 	const project = base + "/{projectID}"
 	handle("GET "+base, "", list)
+	handle("GET /api/v1/me/followed-projects", "", s.followedProjects)
+	handle("PUT "+project+"/follow", "project.read", s.setFollow)
+	handle("DELETE "+project+"/follow", "project.read", s.setFollow)
 	handle("POST "+base, "", s.createProject)
 	handle("PUT "+project+"/members/{accountID}/access", "", s.setMember)
 	handle("GET "+project+"/files", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {

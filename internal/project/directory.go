@@ -18,7 +18,7 @@ const profileColumns = `coalesce(p.status,'active'), coalesce(p.project_type,'')
 	coalesce(to_char(p.planned_start,'YYYY-MM-DD'),''), coalesce(to_char(p.planned_end,'YYYY-MM-DD'),''), coalesce(b.version,0), p.updated_at`
 
 func (s *Service) directory(ctx context.Context, actor identity.Principal, filter url.Values, page, size int) (ProjectPage, error) {
-	result := ProjectPage{Items: []Project{}, Page: page, PageSize: size, Types: projectTypeOptions}
+	result := ProjectPage{Items: []directoryProject{}, Page: page, PageSize: size, Types: projectTypeOptions}
 	const visible = ` FROM project_members m
 		JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
 		LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(m.tenant_key,m.app_id,m.project_id)
@@ -39,12 +39,12 @@ func (s *Service) directory(ctx context.Context, actor identity.Principal, filte
 		if err := tx.QueryRow(ctx, "SELECT count(*)"+visible, args...).Scan(&result.Total); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, "SELECT m.project_id, coalesce(p.name,m.project_id), "+profileColumns+visible+
+		rows, err := tx.Query(ctx, "SELECT m.project_id, coalesce(p.name,m.project_id), "+profileColumns+", m.followed"+visible+
 			" ORDER BY p.updated_at DESC NULLS LAST, lower(coalesce(p.name,m.project_id)), m.project_id LIMIT $7 OFFSET $8", append(args, size, (page-1)*size)...)
 		if err != nil {
 			return err
 		}
-		result.Items, err = pgx.CollectRows(rows, pgx.RowToStructByPos[Project])
+		result.Items, err = pgx.CollectRows(rows, pgx.RowToStructByPos[directoryProject])
 		return err
 	})
 	return result, err
@@ -60,10 +60,16 @@ func (s *Service) overview(ctx context.Context, actor identity.Principal, id str
 	if err != nil {
 		return panelView{}, err
 	}
+	var followed bool
+	err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM project_members WHERE `+projectWhere+
+		` AND account_id=$4 AND role<>'revoked' AND followed)`, k.args(actor.AccountID)...).Scan(&followed)
+	if err != nil {
+		return panelView{}, err
+	}
 	nodes, err := s.milestones(ctx, k, time.Now())
 	return panelView{Project: id, Panel: "overview", Data: map[string]any{
 		"workspace": map[string]any{
-			"project": project, "project_types": projectTypeOptions, "can_manage_profile": canManage && project.Status != "archived",
+			"project": directoryProject{Project: project, Followed: followed}, "project_types": projectTypeOptions, "can_manage_profile": canManage && project.Status != "archived",
 		},
 		"milestones": map[string]any{"items": nodes},
 	}}, err

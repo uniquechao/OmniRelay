@@ -169,6 +169,10 @@ th[aria-sort] .sort-button { color: var(--or-link); }
 .nav-group[data-active="true"] summary > .icon:first-child { color: var(--or-rail-accent); }
 .nav-group .nav-children { display: grid; gap: 2px; margin: 3px 0 3px 16px; border-inline-start: 1px solid var(--or-rail-edge); padding-inline-start: 5px; }
 .nav-group .nav-children a { min-height: 32px; font-size: .8125rem; }
+.nav-children .followed-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.button.project-follow { min-inline-size: 4.75em; white-space: nowrap; }
+.button.project-follow[aria-pressed="true"] { color: var(--or-link); background: var(--or-selected-bg); }
+.button.project-follow[aria-disabled="true"] { cursor: progress; }
 .shell[data-rail="collapsed"] .nav-group :is(.nav-children, summary span, summary .disclosure) { display: none; }
 .shell[data-rail="collapsed"] .nav-group summary { justify-content: center; min-height: 42px; padding-inline: 5px; }
 .dev-fields { display: grid; grid-template-columns: repeat(2,minmax(0, 1fr)); gap: 16px; }

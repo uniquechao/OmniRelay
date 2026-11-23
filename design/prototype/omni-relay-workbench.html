@@ -183,6 +183,10 @@ td a:hover { text-decoration: underline; }
       <nav class="nav" id="side-navigation" aria-label="工作台主导航">
         <a href="#/workbench" data-nav="workbench" aria-label="工作台总览"><svg class="icon" aria-hidden="true"><use href="#nav-workbench"/></svg><span>工作台总览</span></a>
         <a href="#/projects" data-nav="projects" aria-label="项目列表"><svg class="icon" aria-hidden="true"><use href="#nav-projects"/></svg><span>项目列表</span></a>
+        <details class="nav-group" id="followed-nav" open hidden>
+          <summary aria-label="已关注项目" title="已关注项目"><svg class="icon" aria-hidden="true"><use href="#chat-star-icon"/></svg><span>已关注项目</span><svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg></summary>
+          <div class="nav-children"></div>
+        </details>
         <details class="nav-group" id="feishu-nav">
           <summary aria-label="飞书" aria-controls="feishu-nav-children"><svg class="icon" aria-hidden="true"><use href="#nav-bot-chat"/></svg><span>飞书</span>
             <svg class="icon disclosure" aria-hidden="true"><use href="#action-expand"/></svg>
@@ -251,6 +255,7 @@ td a:hover { text-decoration: underline; }
         <img src="omni-relay-avatar.png" width="29" height="29" alt="OmniRelay">
         <select class="select" id="mobile-nav" aria-label="工作台主导航">
           <option value="workbench">工作台总览</option><option value="projects">项目列表</option>
+          <optgroup id="mobile-followed" label="已关注项目" hidden></optgroup>
           <optgroup label="飞书">
             <option value="feishu/bot-chats">机器人记录</option>
             <option value="feishu/drive">文件网盘</option>
@@ -419,6 +424,8 @@ const developerNav = document.getElementById('developer-nav');
 const developerPages = OmniRelayDeveloper.pages;
 const systemNav = document.getElementById('system-nav');
 const feishuNav = document.getElementById('feishu-nav');
+const followedNav = document.getElementById('followed-nav');
+const followedProjects = new Set();
 const systemPages = { ...OmniRelaySystem.pages, bot:'飞书 Bot 配置', settings:'连接设置' };
 const systemSettingsViews = {
   bot:() => OmniRelayBotSettings.render(),
@@ -453,7 +460,7 @@ function setRail(state) {
 railToggle.addEventListener('click', () => {
   setRail(shell.dataset.rail === 'collapsed' ? 'expanded' : 'collapsed');
 });
-for (const group of [feishuNav, systemNav, developerNav]) {
+for (const group of [feishuNav, followedNav, systemNav, developerNav]) {
   group.querySelector('summary').addEventListener('click', event => {
     if (shell.dataset.rail !== 'collapsed') return;
     event.preventDefault();
@@ -520,6 +527,22 @@ OmniRelaySystem.mountLogin(loginPage, () => {
 const heading = (text) => '<h1 id="page-heading" tabindex="-1">' + text + '</h1>';
 const chip = (tone, label = statuses[tone]) => '<span class="chip" data-tone="' + tone + '">' + label + '</span>';
 const projectUrl = (id, tab = 'overview') => '#/projects/' + id + '/' + tab;
+function followButton(id) {
+  const selected = followedProjects.has(id);
+  return '<button type="button" class="button project-follow" data-follow="'+id+'" aria-label="关注项目 '+OmniRelayUI.escape(projects[id].name)+
+    '" aria-pressed="'+selected+'" title="'+(selected?'取消关注':'关注项目')+'">'+(selected?'已关注':'关注')+'</button>';
+}
+function renderFollowed(id) {
+  const mobileGroup = document.getElementById('mobile-followed');
+  const ids = [...followedProjects].sort((a,b)=>projects[a].name.localeCompare(projects[b].name,'zh-CN'));
+  followedNav.hidden = mobileGroup.hidden = !ids.length;
+  followedNav.dataset.active = String(followedProjects.has(id));
+  followedNav.querySelector('.nav-children').innerHTML = ids.map(key=>{
+    const name = OmniRelayUI.escape(projects[key].name);
+    return '<a href="'+projectUrl(key)+'" title="'+name+'"'+(key===id?' aria-current="page"':'')+'><span class="followed-project-name">'+name+'</span></a>';
+  }).join('');
+  mobileGroup.replaceChildren(...ids.map(key=>new Option(projects[key].name,projectUrl(key).slice(2))));
+}
 const cardLink = (label) => '<a class="button" data-theme-link href="' + OmniRelayTheme.href('omni-relay-feishu-prototype.html') + '">' + label + '</a>';
 const panel = (title, body, action = '') => '<section class="panel"><header class="section-head"><h2>' + title + '</h2>' + action + '</header>' + body + '</section>';
 const empty = (message) => '<p class="empty" role="status">' + message + '</p>';
@@ -562,7 +585,7 @@ function projectOverview(project, id, settings) {
 function renderProject(id, tab, html, listHref) {
   const project = projects[id];
   return '<header class="head"><div class="project-title"><span class="kind">' + project.kind + '</span>' + heading(project.name) +
-    chip(project.status) + '</div><a class="button" href="' + listHref + '">返回项目列表</a></header>' +
+    chip(project.status) + followButton(id) + '</div><a class="button" href="' + listHref + '">返回项目列表</a></header>' +
     '<div class="tabs" role="tablist" aria-label="项目工作台">' + Object.entries(tabs).map(([key,label]) =>
       '<button type="button" id="tab-' + key + '" data-tab="' + key + '" role="tab" aria-controls="project-panel" aria-selected="' +
       (key === tab) + '" tabindex="' + (key === tab ? '0' : '-1') + '">' + label + '</button>').join('') + '</div>' +
@@ -591,7 +614,8 @@ function projectListConfig(allProjectStatuses) {
       column('latest','进展速览', row => row.latest, null, true),
       column('lead','负责人', row => row.lead, row => row.lead),
       column('updatedAt','更新时间', row =>
-        '<time class="date" datetime="' + row.updatedAt + '">' + projectUpdatedTime.format(new Date(row.updatedAt)) + '</time>')
+        '<time class="date" datetime="' + row.updatedAt + '">' + projectUpdatedTime.format(new Date(row.updatedAt)) + '</time>'),
+      column('follow','关注',row=>followButton(row.id))
     ]
   };
 }
@@ -707,11 +731,12 @@ function render() {
   }
   returnRoute = location.hash || '#/projects/beichen/overview';
   document.querySelectorAll('[data-nav]').forEach(link => {
-    if (link.dataset.nav === area) link.setAttribute('aria-current', 'page');
+    if (link.dataset.nav === area && !followedProjects.has(id)) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
   const nestedPage = developerPage || systemPage || feishuPage;
-  mobile.value = nestedPage ? area + '/' + nestedPage : area;
+  renderFollowed(id);
+  mobile.value = followedProjects.has(id) ? projectUrl(id).slice(2) : nestedPage ? area + '/' + nestedPage : area;
   for (const [name, group, child] of [
     ['developer', developerNav, developerPage], ['system', systemNav, systemPage], ['feishu', feishuNav, feishuPage]
   ]) {
@@ -777,6 +802,15 @@ function selectTab(tab) {
 }
 
 document.addEventListener('click', event => {
+  const follow = event.target.closest('button[data-follow]');
+  if (follow) {
+    const id = follow.dataset.follow;
+    if (followedProjects.has(id)) followedProjects.delete(id);
+    else followedProjects.add(id);
+    render();
+    page.querySelector('[data-follow="'+CSS.escape(id)+'"]')?.focus({preventScroll:true});
+    return;
+  }
   const link = event.target.closest('a[href^="#/"]');
   if (link && link.hash !== location.hash && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) focusAfterRoute = 'heading';
   const tab = event.target.closest('[data-tab]');

@@ -13,6 +13,22 @@ try{
  const headers={Origin:origin,'X-CSRF-Token':me.csrf_token};
  async function api(method,path,data,status=200){const r=await context.request.fetch(origin+root+path,{method,headers,data});const body=await r.json();assert.equal(r.status(),status,JSON.stringify(body));return body;}
  await api('PUT','/members/manager/access',{role:'manager'});
+ await page.goto(origin+'/#/projects');
+ const follow=page.getByRole('button',{name:'关注项目 h3',exact:true});
+ const shortcut=page.locator('.rail').getByRole('link',{name:'h3',exact:true});
+ await follow.focus();
+ await follow.press('Space');
+ await shortcut.waitFor();
+ assert.ok(await follow.evaluate(button=>button===document.activeElement));
+ await page.getByRole('button',{name:'收起侧栏'}).click();
+ await page.locator('summary[aria-label="已关注项目"]').click();
+ await shortcut.click();
+ await page.getByRole('heading',{name:'h3',exact:true}).waitFor();
+ assert.equal(new URL(page.url()).hash,'#/projects/h3/overview');
+ await page.reload();
+ await page.getByRole('button',{name:'关注项目 h3',pressed:true}).waitFor();
+ await mkdir('.runtime/evidence',{recursive:true});
+ await page.screenshot({path:'.runtime/evidence/project-follow-desktop.png'});
  await page.goto(origin+'/#/projects/h3/members');
  await page.getByRole('button',{name:'添加成员',exact:true}).click();
  let dialog=page.getByRole('dialog');
@@ -73,6 +89,13 @@ try{
  await api('PUT','/members/second',{role:'reader',expected_version:second.version+1});
  const reader=await browser.newContext({ignoreHTTPSErrors:true});const rp=await reader.newPage();await reader.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username:'second',password:process.env.H3_PASSWORD}});const rme=await(await reader.request.get(origin+'/api/v1/me')).json();
  await rp.goto(origin+'/#/projects/h3/members');await rp.getByRole('heading',{name:'项目成员',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'添加成员',exact:true}).count(),0);
+ const readerFollow=rp.getByRole('button',{name:'关注项目 h3',exact:true});
+ assert.equal(await readerFollow.getAttribute('aria-pressed'),'false');
+ await readerFollow.click();
+ await rp.locator('.rail').getByRole('link',{name:'h3',exact:true}).waitFor();
+ await readerFollow.click();
+ await rp.locator('.rail').getByRole('link',{name:'h3',exact:true}).waitFor({state:'detached'});
+ assert.deepEqual((await (await context.request.get(origin+'/api/v1/me/followed-projects')).json()).items,[{id:'h3',name:'h3'}]);
  const denied=await reader.request.put(origin+root+'/members/manager',{headers:{Origin:origin,'X-CSRF-Token':rme.csrf_token},data:{expected_version:manager.version,responsibility:'不允许'}});assert.equal(denied.status(),404);
  await rp.goto(origin+'/#/projects/h3/tasks');await rp.getByRole('region',{name:'正式任务看板',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'新建任务',exact:true}).count(),0);
  assert.deepEqual(errors,[]);console.log('PASS real API/browser member add/edit/conflict/remove/last-manager/reader; task create/update/delete; desktop/mobile light/dark');
