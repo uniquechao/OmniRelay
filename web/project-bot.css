@@ -3,19 +3,12 @@
 @import '@deepseek-ai/dsh-client-ui-theme/src/styles/gradient-shadow-text.css' layer(dsh-theme);
 @import '@deepseek-ai/dsh-client-ui-theme/src/styles/shiki.css' layer(dsh-theme);
 
-.page[data-layout="project"]:has(.dsh-project-chat) {
-  max-width: none;
-  padding-inline: 0;
-}
-.page:has(.dsh-project-chat) > :is(.head, .tabs) {
-  margin-inline: clamp(14px, 2vw, 22px);
-}
-.page:has(.dsh-project-chat) > .tabs { margin-bottom: 0; }
 #project-panel:has(> .dsh-project-chat) { padding: 0; margin: 0; overflow: hidden; }
 #project-panel > .dsh-project-chat {
   flex: 1;
   min-height: 0;
   container-type: inline-size;
+  --chat-inset: clamp(12px, 1.5cqw, 20px);
   --dsw-radius-sm: 8px;
   --dsw-radius-md: 12px;
   --dsw-radius-lg: 16px;
@@ -34,7 +27,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px clamp(14px, 2vw, 28px);
+  padding: 4px var(--chat-inset);
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
 .dsh-project-head h2 { font-size: .9375rem; }
@@ -50,7 +43,6 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  --chat-inset: clamp(14px, 2.5cqw, 36px);
 }
 .dsh-history {
   flex: 1;
@@ -65,14 +57,15 @@
 .dsh-history article { min-width: 0; overflow-wrap: anywhere; }
 .dsh-history article > strong { display: block; font-size: .8125rem; color: var(--dsw-alias-label-secondary); margin-bottom: 6px; }
 .dsh-compose { flex: none; padding: 8px var(--chat-inset) max(12px, env(safe-area-inset-bottom)); }
-.dsh-project-body[data-hero="true"] { justify-content: center; overflow: auto; }
+.dsh-project-body[data-hero="true"] { overflow: auto; }
 .dsh-project-body[data-hero="true"] .dsh-history { flex: none; }
-.dsh-project-body[data-hero="true"] .dsh-compose { margin-block: auto; }
-.dsh-hero { margin-bottom: 22px; }
+.dsh-project-body[data-hero="true"] .dsh-compose { padding-top: 16px; }
+.dsh-hero { width: fit-content; max-width: 100%; margin-bottom: 12px; }
+.dsh-hero > div { padding-inline: 0; }
 .dsh-compose [data-composer-card]:has([data-composer-input]:focus-visible) { outline: 2px solid var(--or-focus); }
 .dsh-compose [data-composer-input]:focus-visible { outline: 0; }
 .dsh-compose [data-composer-dock]:empty { display: none; }
-.dsh-questions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.dsh-questions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .dsh-questions button {
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 20px;
