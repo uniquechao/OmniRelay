@@ -19,6 +19,7 @@ import { taskDate, taskDateInstant } from './task-dates'
 import {
   commentOnTask,
   createProjectTask,
+  deleteProjectTask,
   getProjectBoard,
   getProjectTask,
   updateProjectTask,
@@ -82,6 +83,8 @@ export function ProjectTaskInspector({
   const [ownerSearch, setOwnerSearch] = useState('')
   const [comment, setComment] = useState('')
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [deleteVersion, setDeleteVersion] = useState<number | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   const [closing, setClosing] = useState(false)
   const [pending, setPending] = useState(false)
   const [denied, setDenied] = useState(false)
@@ -272,6 +275,27 @@ export function ProjectTaskInspector({
       attempts.current[operation] = { signature, key: crypto.randomUUID() }
     return attempts.current[operation].key
   }
+  const requiresChangeReason = !isNew && task && draftStatus !== task.status &&
+    (draftStatus === 'cancelled' || task.status === 'done' || task.status === 'cancelled')
+  const reasonPrompt = draftStatus === 'cancelled' ? '请填写取消原因。' : '请填写变更原因。'
+  async function remove(event: FormEvent) {
+    event.preventDefault()
+    const reason = deleteReason.trim()
+    if (!task || deleteVersion === null || !reason || busy.current || !canManage || conflict) return
+    busy.current = true
+    setPending(true)
+    setError('')
+    try {
+      await deleteProjectTask(project.id, task.id, deleteVersion, reason, key('delete', JSON.stringify([task.id, deleteVersion, reason])))
+      if (active.current && !revoked.current) { onChanged(); onClose() }
+    } catch (cause) {
+      if (cause instanceof ApiError && [401,403,404,409].includes(cause.status)) setDeleteVersion(null)
+      failure(cause)
+    } finally {
+      busy.current = false
+      if (active.current) setPending(false)
+    }
+  }
   async function save(event: FormEvent) {
     event.preventDefault()
     if (!task || busy.current || conflict) return
@@ -279,6 +303,11 @@ export function ProjectTaskInspector({
     if (ownerSearch) { setError('请从搜索结果中选择负责人。'); ownerInput.current?.focus(); return }
     if (!String(data.get('title') ?? '').trim()) { setError('请输入任务名称。'); form.current?.querySelector<HTMLInputElement>('[name=title]')?.focus(); return }
     if (draftStatus === 'blocked' && !String(data.get('blocked_reason') ?? '').trim()) { setError('请填写受阻原因。'); form.current?.querySelector<HTMLTextAreaElement>('[name=blocked_reason]')?.focus(); return }
+    if (requiresChangeReason && !String(data.get('change_reason') ?? '').trim()) {
+      setError(reasonPrompt)
+      form.current?.querySelector<HTMLTextAreaElement>('[name=change_reason]')?.focus()
+      return
+    }
     if (draftValues.start && draftValues.due && draftValues.start > draftValues.due) { setError('截止日期不能早于开始日期。'); form.current?.querySelector<HTMLInputElement>('[name=due]')?.focus(); return }
     let fields: TaskFields
     try {
@@ -326,7 +355,7 @@ export function ProjectTaskInspector({
         column_id: boardColumns.some(column => column.id === selectedColumn) ? selectedColumn : undefined,
         blocked_reason: draftStatus === 'blocked' ? String(data.get('blocked_reason') ?? '').trim() : '',
         completion_note: String(data.get('completion_note') ?? ''),
-        change_reason: String(data.get('change_reason') ?? ''),
+        change_reason: requiresChangeReason ? String(data.get('change_reason') ?? '').trim() : '',
       }
       busy.current = true
       setPending(true)
@@ -409,6 +438,8 @@ export function ProjectTaskInspector({
               <header className="task-inspector-top">
                 <span className="task-inspector-path"><Columns3 size={15} aria-hidden /><span className="task-path-project">{project.name}</span><ChevronRight size={14} aria-hidden />{!isNew && task && <span className="task-path-code">T-{String(task.display_number ?? '').padStart(3,'0')}</span>}<span className="task-path-title">{isNew ? '新建任务' : task?.title ?? '任务详情'}</span></span>
                 <div>
+                  {!isNew && task && canManage && !denied && <Button variant="outline" aria-haspopup="dialog" disabled={pending || conflict || unsaved}
+                    title={unsaved ? '请先保存或放弃更改' : '删除任务'} onClick={() => {setDeleteReason(''); setDeleteVersion(task.version); setError('')}}>删除任务</Button>}
                   <Button
                     form="task-inspector-form"
                     type="submit"
@@ -434,6 +465,17 @@ export function ProjectTaskInspector({
                   </Button>
                 </div>
               </header>
+              {deleteVersion !== null && task && !denied && <ModalOverlay isOpen isDismissable={!pending} isKeyboardDismissDisabled={pending}
+                onOpenChange={open => { if (!open && !busy.current) setDeleteVersion(null) }} className="task-delete-overlay">
+                <Modal className="task-delete-modal"><Dialog aria-label="删除任务">
+                  <form onSubmit={remove}><h3>删除「{task.title}」？</h3><p>删除后任务将从看板和搜索中移除，操作历史仍会保留。</p>
+                    <label>删除原因<Textarea autoFocus required maxLength={4000} value={deleteReason} onChange={event => setDeleteReason(event.target.value)} disabled={pending}/></label>
+                    {error && <p role="alert">{error}</p>}
+                    <div className="dialog-actions"><Button variant="outline" disabled={pending} onClick={() => setDeleteVersion(null)}>保留任务</Button>
+                      <Button type="submit" disabled={!deleteReason.trim() || pending || conflict}>确认删除</Button></div>
+                  </form>
+                </Dialog></Modal>
+              </ModalOverlay>}
               {closing && (
                 <div className="task-inspector-discard" role="alert">
                   <span>有未保存的更改</span><div className="task-discard-actions">
@@ -450,7 +492,7 @@ export function ProjectTaskInspector({
                   </Button></div>
                 </div>
               )}
-              {error && (
+              {error && deleteVersion === null && (
                 <div role="alert" className="task-inspector-notice">
                   {error}
                   {!task && !denied && (
@@ -565,12 +607,12 @@ export function ProjectTaskInspector({
                       <label><span className="sr-only">任务正文</span><Textarea aria-label="任务正文" name="description" defaultValue={task.description} placeholder="添加任务说明…" rows={2} maxLength={10000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
                       <label hidden={draftStatus !== 'blocked'} className="task-blocker-field">受阻原因<Textarea aria-label="受阻原因" name="blocked_reason" disabled={draftStatus !== 'blocked'} required={draftStatus === 'blocked'} defaultValue={task.blocked_reason} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>
                       {!isNew && <label hidden={draftStatus !== 'done' && !task.completion_note}>完成结果<Textarea aria-label="完成结果" name="completion_note" defaultValue={task.completion_note} rows={2} maxLength={4000} readOnly={(!canManage && !own && !isNew) || pending} /></label>}
-                      {!isNew && canManage && <label hidden={draftStatus !== 'cancelled' && !['done','cancelled'].includes(task.status)}>变更原因<Textarea aria-label="变更原因" name="change_reason" maxLength={4000} rows={2} readOnly={pending} /></label>}
+                      {requiresChangeReason && canManage && <label>{draftStatus === 'cancelled' ? '取消原因（必填）' : '变更原因（必填）'}<Textarea aria-label={draftStatus === 'cancelled' ? '取消原因' : '变更原因'} aria-required="true" name="change_reason" maxLength={4000} rows={2} readOnly={pending} onChange={() => {if (error === reasonPrompt) setError('')}} /></label>}
                       <details className="task-inspector-extra"><summary>验收条件</summary><label>验收条件<Textarea aria-label="验收条件" name="acceptance" defaultValue={task.acceptance} maxLength={4000} rows={2} readOnly={!canManage || pending} /></label></details>
                     </section>
                     <aside className="task-inspector-sidebar" aria-label="任务属性">
                       <section className="task-side-section"><h3>属性</h3>
-                        <label className="task-property"><span>状态</span><span className="task-status-control" data-stage={draftStatus} style={{ '--task-status-dot': boardColumns.find(column => column.id === selectedColumn)?.color || ({ todo: '#7b8495', in_progress: '#1746e8', blocked: '#b66b16', done: '#528a14', cancelled: '#7b8495' })[draftStatus] } as CSSProperties}><NativeSelect aria-label="任务状态" name="column" value={selectedColumn || draftStatus} disabled={(!canManage && !own && !isNew) || pending} onChange={event => { setSelectedColumn(event.target.value); setDraftStatus(boardColumns.find(column => column.id === event.target.value)?.stage ?? event.target.value as TaskStatus) }}>{boardColumns.length > 0 && selectedColumn && selectedColumn !== 'cancelled' && !boardColumns.some(column => column.id === selectedColumn) && <option value={selectedColumn} disabled>原状态列已移除，请选择当前状态列</option>}{boardColumns.length ? boardColumns.map(column => <option key={column.id} value={column.id}>{column.name}</option>) : Object.entries(statuses).filter(([status]) => isNew ? status !== 'cancelled' : true).map(([status,label]) => <option key={status} value={status}>{label}</option>)}{boardColumns.length > 0 && !isNew && (canManage || task.status === 'cancelled') && <option value="cancelled">已取消</option>}</NativeSelect></span></label>
+                        <label className="task-property"><span>状态</span><span className="task-status-control" data-stage={draftStatus} style={{ '--task-status-dot': boardColumns.find(column => column.id === selectedColumn)?.color || ({ todo: '#7b8495', in_progress: '#1746e8', blocked: '#b66b16', done: '#528a14', cancelled: '#7b8495' })[draftStatus] } as CSSProperties}><NativeSelect aria-label="任务状态" name="column" value={selectedColumn || draftStatus} disabled={(!canManage && !own && !isNew) || pending} onChange={event => { setSelectedColumn(event.target.value); setDraftStatus(boardColumns.find(column => column.id === event.target.value)?.stage ?? event.target.value as TaskStatus) }}>{boardColumns.length > 0 && selectedColumn && selectedColumn !== 'cancelled' && !boardColumns.some(column => column.id === selectedColumn) && <option value={selectedColumn} disabled>原状态列已移除，请选择当前状态列</option>}{boardColumns.length ? boardColumns.map(column => <option key={column.id} value={column.id}>{column.name}</option>) : Object.entries(statuses).filter(([status]) => status !== 'cancelled' || !isNew && (canManage || task.status === 'cancelled')).map(([status,label]) => <option key={status} value={status}>{label}</option>)}{boardColumns.length > 0 && !isNew && (canManage || task.status === 'cancelled') && <option value="cancelled">已取消</option>}</NativeSelect></span></label>
                         <label className="task-property"><span>优先级</span><NativeSelect aria-label="优先级" name="priority" defaultValue={task.priority ?? ''} disabled={!canManage || pending}><option value="">未设置</option>{Object.entries({P0:'紧急',P1:'高',P2:'中',P3:'低'}).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</NativeSelect></label>
                         <div className="task-property task-owner-property"><span aria-hidden>主负责人</span><input type="hidden" name="owner" value={selectedOwner ?? ''} /><TaskOwnerField members={project.members.filter(member => member.active !== false || member.id === task.owner_member_id)} value={selectedOwner} inputRef={ownerInput} onChange={value => { setSelectedOwner(value); setError(current => current === '请从搜索结果中选择负责人。' ? '' : current) }} onQueryChange={setOwnerSearch} disabled={!canManage || pending} /></div>
                         <TaskParticipantsField members={project.members} value={draftValues.participant_ids} interactions={task.interaction_participants} disabled={!canManage || pending} onChange={ids => setDraftValues(current => ({ ...current, participant_ids: ids }))} />

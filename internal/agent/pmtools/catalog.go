@@ -32,11 +32,36 @@ var catalog = []Tool{
 	{"file_get", "用搜索结果的 file_ref 查询单个文件元数据", "project.read", false, true, "!file_ref"},
 	{"task_search", "按关键词、状态、负责人搜索当前项目的任务", "project.read", false, false, "q status owner_member_id page"},
 	{"task_get", "取得项目任务及当前版本", "project.read", false, false, "!task_id"},
-	{"task_create", "创建任务，默认由本人负责", "project.comment", true, false, "!title description owner_member_id priority start_at due_at milestone_id acceptance participant_ids tag_ids"},
+	{"task_create", "创建任务，默认由本人负责", "project.comment", true, false, "!title status column_id blocked_reason description owner_member_id priority start_at due_at milestone_id acceptance participant_ids tag_ids"},
 	{"task_update", "修改任务指定字段，改派和优先级需要任务分派权", "project.comment", true, false, "!task_id !expected_version title description owner_member_id priority start_at due_at milestone_id acceptance participant_ids tag_ids"},
 	{"task_delete", "按任务版本删除任务并保留审计，必须提供删除原因", "project.assign", true, false, "!task_id !expected_version !change_reason"},
-	{"task_transition", "按版本变更状态，受阻需 blocked_reason，取消和重开需 change_reason", "project.comment", true, false, "!task_id !expected_version !expected_board_version !status blocked_reason change_reason completion_note"},
+	{"task_transition", "按版本变更状态，受阻需 blocked_reason，取消和重开需 change_reason", "project.comment", true, false, "!task_id !expected_version !expected_board_version !status column_id blocked_reason change_reason completion_note"},
 	{"task_add_progress", "在可评论任务下追加进度，保留作者和时间", "project.comment", true, false, "!task_id !expected_version !body"},
+	{"task_board_get", "读取任务看板、列、标签、数量和版本，可按列续页", "project.read", false, false, "q status sort owner_member_id owner_unassigned milestone_id milestone_unassigned priority priority_unset tag_ids tag_match due_from due_before overdue_only no_due filter_column_id cursor limit column_id"},
+	{"task_query", "按编号、成员、状态、标签、日期等筛选并分页读取任务", "project.read", false, false, "q status sort owner_member_id owner_unassigned milestone_id milestone_unassigned priority priority_unset tag_ids tag_match due_from due_before overdue_only no_due filter_column_id cursor limit"},
+	{"task_move", "在列间移动任务或在同列重排，按任务和看板版本执行", "project.comment", true, false, "!task_id !expected_task_version !expected_board_version !target_column_id before_id after_id blocked_reason completion_note change_reason"},
+	{"task_bulk_update", "原子批量更新任务，每项含 id、expected_version 及要修改的字段", "project.assign", true, false, "!items"},
+	{"task_board_save", "保存列配置和默认列，删除有任务的列时提供 migrations 映射", "project.settings", true, false, "!expected_version !columns !default_column_id migrations blocked_reason change_reason tags"},
+	{"task_tag_create", "创建任务标签，使用看板版本", "project.settings", true, false, "!expected_version !name !color !type"},
+	{"task_tag_update", "修改指定任务标签，使用看板版本", "project.settings", true, false, "!tag_id !expected_version !name !color !type"},
+	{"task_tag_delete", "删除任务标签，使用看板版本", "project.settings", true, false, "!tag_id !expected_version"},
+	{"task_activity_list", "读取评论与变更历史，kind 可选 all、change、comment", "project.read", false, false, "!task_id kind cursor limit"},
+	{"task_evidence_list", "读取本人有权查看的任务依据，撤权后重新校验", "project.read", false, true, "!task_id"},
+	{"task_feedback_list", "读取当前账号可见的任务进展建议", "project.read", false, true, "!task_id"},
+	{"task_feedback_submit", "本人负责或参与的任务可提交进展建议", "project.comment", true, false, "!task_id !task_version !proposed_status !note"},
+	{"task_feedback_review", "审核进展建议，action 为 accept 或 reject", "project.assign", true, false, "!suggestion_id !expected_version !action !reason"},
+	{"task_candidate_sources", "读取当前账号有权查看的项目候选任务来源及修订值", "project.assign", false, true, "lookback_days"},
+	{"task_candidate_chat_sources", "按时间范围读取本项目已授权群的候选来源", "project.assign", false, true, "!chat_id !from_at !to_at limit cursor"},
+	{"task_candidate_submit", "基于已读取来源的修订提交候选任务，仍需人工确认", "project.assign", true, false, "!session_ref !source_revision !candidates skill_ref lookback_days chat_scope"},
+	{"task_candidate_list", "列出本人可见的任务建议、版本与依据，默认待审核", "project.read", false, true, "status q sort owner_member_id owner_unassigned no_due due_from due_before tag_ids overdue_only cursor limit"},
+	{"task_candidate_review", "确认、合并或忽略候选（confirm、merge、ignore）；确认前须获得用户对共享内容及无截止日期的明确同意", "project.assign", true, false, "!candidate_id !action !expected_version reason target_task_id target_version fields share_ack no_deadline_ack"},
+	{"task_actions", "读取本人对任务可执行的编辑、删除、评论及审核动作", "project.read", false, false, "!task_id"},
+	{"task_milestone_list", "查询本项目里程碑以设置任务关联", "project.read", false, false, ""},
+	{"task_milestone_create", "新增里程碑，可关联本项目任务", "project.assign", true, false, "!title occurs_on task_id"},
+	{"task_evidence_link", "将本人可读的项目来源关联到任务", "project.assign", true, false, "!task_id !source_kind !source_id"},
+	{"task_source_tasks", "按可读来源列出关联任务，消息来源须提供 chat_id", "project.read", false, true, "!source_kind !source_id chat_id"},
+	{"task_business_time", "查询看板业务时区及当前业务日期", "project.read", false, false, ""},
+	{"task_board_timezone", "按看板版本设置业务时区", "project.settings", true, false, "!expected_board_version !business_timezone"},
 	{"daily_report_query", "按日期范围查授权日报，source 可选 reports 或 published。published 只查已发布且本人仍能查看的简报", "project.read", false, true, "source date_from date_to q page"},
 }
 var ErrArguments = errors.New("invalid tool arguments")
@@ -46,7 +71,11 @@ type Args map[string]json.RawMessage
 func (a Args) String(k string) string { var s string; _ = json.Unmarshal(a[k], &s); return s }
 func (a Args) Int(k string) int64     { var n int64; _ = json.Unmarshal(a[k], &n); return n }
 func numeric(k string) bool {
-	return k == "expected_board_version" || k == "expected_version" || k == "primary_version" || k == "page"
+	switch k {
+	case "expected_board_version", "expected_task_version", "expected_version", "primary_version", "task_version", "target_version", "lookback_days", "page", "limit":
+		return true
+	}
+	return false
 }
 func Lookup(name string) (Tool, bool) {
 	for _, t := range catalog {
@@ -82,7 +111,11 @@ func (t Tool) Validate(a Args) error {
 		if string(v) == "null" {
 			return ErrArguments
 		}
-		if k == "participant_ids" || k == "tag_ids" {
+		if shape := taskArgument(k); shape != nil {
+			if !shape.valid(v) {
+				return ErrArguments
+			}
+		} else if k == "participant_ids" || k == "tag_ids" {
 			var ids []string
 			if json.Unmarshal(v, &ids) != nil || len(ids) > 50 {
 				return ErrArguments
@@ -118,6 +151,9 @@ func Schemas() []map[string]any {
 			props[k] = map[string]any{"type": typ}
 			if k == "participant_ids" || k == "tag_ids" {
 				props[k] = map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "maxItems": 50}
+			}
+			if shape := taskArgument(k); shape != nil {
+				props[k] = shape
 			}
 			if k != f {
 				req = append(req, k)

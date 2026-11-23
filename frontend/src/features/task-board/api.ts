@@ -11,6 +11,11 @@ export interface ProjectTask extends TaskFields { interaction_participants?: Pro
 export function getProjectTasks(id: string, params: URLSearchParams, signal?: AbortSignal) { return json<{ items: ProjectTask[]; next_cursor: string | null }>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/query?${params}`, { signal }) }
 export function createProjectTask(id: string, fields: TaskFields & { column_id?: string; blocked_reason?: string }, requestKey: string) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks`, body({ ...fields, request_key: requestKey })) }
 export function updateProjectTask(id: string, task: ProjectTask, fields: TaskFields & { status: TaskStatus; blocked_reason: string; completion_note: string; change_reason: string; request_key?: string }) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task.id)}`, put({ ...fields, milestone_id: task.milestone_id, expected_task_version: task.version })) }
+export function deleteProjectTask(projectId: string, taskId: string, version: number, reason: string, requestKey: string) {
+  return json(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'DELETE', body: {expected_version: version, change_reason: reason, request_key: requestKey},
+  })
+}
 export function getProjectTask(id: string, taskId: string, signal?: AbortSignal) { return json<ProjectTask>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`, { signal }) }
 export function getProjectTaskHistory(id: string, taskId: string, signal?: AbortSignal) { return json<{ items: { id: string; actor_id: string; action: string; before: Record<string, unknown>; after: Record<string, unknown>; created_at: string }[] }>(`/api/v1/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/activity?kind=change`, { signal }) }
 export interface CandidateEvidence { id: string; base_key: string; kind: 'message' | 'meeting_minutes' | 'document'; created_at: string; text: string; revision: string; chat_id?: string; title?: string | null; resource_token?: string; part: number }

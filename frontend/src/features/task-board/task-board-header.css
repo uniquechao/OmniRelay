@@ -76,3 +76,11 @@
 
 
 .task-label-trigger {justify-content:flex-start;gap:6px}
+
+.task-delete-overlay {position:fixed;inset:0;z-index:20000;display:grid;place-items:center;padding:16px;background:#10182866}
+.task-delete-modal {width:min(100%,420px);max-height:90dvh;overflow:auto;padding:20px;box-sizing:border-box;border-radius:12px;color:var(--or-text);background:light-dark(white,var(--or-surface));box-shadow:0 12px 40px #10182833}
+.task-delete-modal form,.task-delete-modal label {display:grid;gap:10px}
+.task-delete-modal h3,.task-delete-modal p {margin:0;overflow-wrap:anywhere}
+.task-delete-modal textarea {min-height:72px}
+.task-delete-modal .dialog-actions {display:flex;justify-content:flex-end;gap:8px}
+.task-delete-modal button[type=submit] {background:var(--or-danger,#b42318);color:white}

@@ -134,12 +134,23 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			}
 		}
 		if t.PrivateSource {
-			digest, err := toolDigest(val)
+			reads, err := project.ToolReadRecords(t.Name, c.Args, val)
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", w.Work, t.Name, fp, c.Args, digest)
-			return err
+			for _, read := range reads {
+				fingerprint, err := toolDigest(read.Args)
+				if err != nil {
+					return err
+				}
+				digest, err := toolDigest(read.Value)
+				if err != nil {
+					return err
+				}
+				if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", w.Work, read.Name, fingerprint, read.Args, digest); err != nil {
+					return err
+				}
+			}
 		}
 		return err
 	})
@@ -202,7 +213,7 @@ func (s *Service) verifyToolReads(ctx context.Context, tx pgx.Tx, workID string,
 		if s.Projects == nil {
 			return nil, access.ErrForbidden
 		}
-		val, err := s.Projects.RunTool(ctx, tx, actor, projectID, r.Name, r.Args)
+		val, err := s.Projects.RecheckToolRead(ctx, tx, actor, projectID, r.Name, r.Args)
 		if err != nil {
 			switch project.ToolStatus(err) {
 			case http.StatusForbidden:

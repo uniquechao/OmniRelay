@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
@@ -118,6 +119,7 @@ func TestProjectPMToolMatrix(t *testing.T) {
 		t.Fatal(got)
 	}
 	check("chat_bind", "manager", `{"chat_id":"oc","expected_version":0}`, "north")
+	check("task_candidate_chat_sources", "manager", fmt.Sprintf(`{"chat_id":"oc","from_at":%q,"to_at":%q}`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), time.Now().Add(time.Hour).UTC().Format(time.RFC3339)), "source_revision")
 	check("chat_list", "reader", "{}", "oc")
 	check("chat_search_messages", "reader", `{"chat_id":"oc","q":"验收"}`, "验收记录")
 	call(t, "member", "chat_search_messages", `{"chat_id":"oc","q":"验收"}`, 403)
@@ -197,6 +199,83 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	call(t, "manager", "task_get", fmt.Sprintf(`{"task_id":%q}`, removedTask.ID), 403)
 	if got := call(t, "manager", "task_search", `{"q":"待删除"}`, 200); strings.Contains(got, removedTask.ID) {
 		t.Fatal(got)
+	}
+
+	encode := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	read := func(data string) map[string]any {
+		t.Helper()
+		var x map[string]any
+		if err := json.Unmarshal([]byte(data), &x); err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	check("task_board_get", "reader", "{}", "default_column_id")
+	boardVersion := func() float64 { return read(call(t, "manager", "task_board_get", "{}", 200))["version"].(float64) }
+	check("task_query", "reader", `{"q":"本人","limit":10}`, "items")
+	activeTask := read(call(t, "member", "task_create", `{"title":"插件操作联验"}`, 200))
+	id := activeTask["id"].(string)
+	ver := func() float64 {
+		return read(call(t, "manager", "task_get", encode(map[string]any{"task_id": id}), 200))["version"].(float64)
+	}
+	moved := map[string]any{"task_id": id, "expected_task_version": ver(), "expected_board_version": boardVersion(), "target_column_id": "in_progress"}
+	check("task_move", "manager", encode(moved), "in_progress")
+	check("task_bulk_update", "manager", encode(map[string]any{"items": []any{map[string]any{"id": id, "expected_version": ver(), "priority": "P2"}}}), id)
+	check("task_activity_list", "reader", encode(map[string]any{"task_id": id, "kind": "change"}), "items")
+	check("task_evidence_list", "reader", encode(map[string]any{"task_id": id}), "items")
+	feedback := read(check("task_feedback_submit", "member", encode(map[string]any{"task_id": id, "task_version": ver(), "proposed_status": "done", "note": "完成检查"}), "id"))
+	check("task_feedback_list", "member", encode(map[string]any{"task_id": id}), "完成检查")
+	check("task_feedback_review", "manager", encode(map[string]any{"suggestion_id": feedback["id"], "expected_version": feedback["version"], "action": "accept", "reason": "已确认"}), "accepted")
+	change := map[string]any{"task_id": id, "expected_version": ver(), "expected_board_version": boardVersion(), "status": "cancelled"}
+	call(t, "manager", "task_transition", encode(change), 400)
+	change["change_reason"] = "无需继续"
+	call(t, "manager", "task_transition", encode(change), 200)
+	check("task_board_save", "manager", encode(map[string]any{"expected_version": boardVersion(), "columns": defaultLanes, "default_column_id": "todo"}), "todo")
+	tag := map[string]any{"name": "联验", "type": "分类", "color": "#123456", "expected_version": boardVersion()}
+	tagged := read(check("task_tag_create", "manager", encode(tag), "联验"))
+	added := tagged["tags"].([]any)[0].(map[string]any)["id"]
+	tag["name"] = "改名"
+	tag["expected_version"] = boardVersion()
+	tag["tag_id"] = added
+	check("task_tag_update", "manager", encode(tag), "改名")
+	check("task_tag_delete", "manager", encode(map[string]any{"tag_id": added, "expected_version": boardVersion()}), "tags")
+	sql("INSERT INTO project_source_readers VALUES('tenant','app','north','document','doc','manager')")
+	check("task_actions", "reader", encode(map[string]any{"task_id": id}), "delete")
+	check("task_business_time", "reader", "{}", "business_date")
+	check("task_board_timezone", "manager", encode(map[string]any{"expected_board_version": boardVersion(), "business_timezone": "UTC"}), "UTC")
+	check("task_milestone_create", "manager", encode(map[string]any{"title": "工具节点", "task_id": id}), "id")
+	check("task_milestone_list", "reader", "{}", "工具节点")
+	check("task_evidence_link", "manager", encode(map[string]any{"task_id": id, "source_kind": "document", "source_id": "doc"}), id)
+	check("task_source_tasks", "reader", `{"source_kind":"document","source_id":"doc"}`, id)
+	snapshot := read(check("task_candidate_sources", "manager", "{}", "source_revision"))
+	sources := snapshot["sources"].([]any)
+	if len(sources) == 0 {
+		t.Fatal("missing source")
+	}
+	suggestion := map[string]any{"title": "候选验收", "related_project": true, "evidence_ids": []string{sources[0].(map[string]any)["id"].(string)}}
+	submitted := read(check("task_candidate_submit", "manager", encode(map[string]any{"session_ref": "tool-matrix", "source_revision": snapshot["source_revision"], "candidates": []any{suggestion}}), "candidate_ids"))
+	candidate := submitted["candidate_ids"].([]any)[0]
+	check("task_candidate_list", "manager", `{"status":"pending_review"}`, "候选验收")
+	check("task_candidate_review", "manager", encode(map[string]any{"candidate_id": candidate, "expected_version": 1, "action": "confirm", "share_ack": true, "no_deadline_ack": true, "fields": map[string]string{"title": "候选验收"}}), "task_id")
+	actor := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "manager", OpenID: "ou_manager"}
+	recheck := func() error {
+		return roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+			_, err := svc.RecheckToolRead(ctx, tx, actor, "north", candidateRead, pmtools.Args{"id": json.RawMessage(encode(candidate))})
+			return err
+		})
+	}
+	if err := recheck(); err != nil {
+		t.Fatal("review must preserve access to original evidence", err)
+	}
+	sql("DELETE FROM project_source_readers WHERE account_id='manager' AND source_id='doc'")
+	if err := recheck(); ToolStatus(err) != 403 {
+		t.Fatal("revoked candidate source", err)
 	}
 
 	sql("INSERT INTO project_members(tenant_key,app_id,project_id,account_id,member_id,role) VALUES('tenant','app','north','outside','outside','reader')")

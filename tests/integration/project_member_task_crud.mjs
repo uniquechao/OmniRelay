@@ -75,5 +75,9 @@ try{
  await rp.goto(origin+'/#/projects/h3/members');await rp.getByRole('heading',{name:'项目成员',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'添加成员',exact:true}).count(),0);
  const denied=await reader.request.put(origin+root+'/members/manager',{headers:{Origin:origin,'X-CSRF-Token':rme.csrf_token},data:{expected_version:manager.version,responsibility:'不允许'}});assert.equal(denied.status(),404);
  await rp.goto(origin+'/#/projects/h3/tasks');await rp.getByRole('region',{name:'正式任务看板',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'新建任务',exact:true}).count(),0);
+ const visible=await api('POST','/tasks',{title:'只读成员查看任务'});
+ await rp.goto(origin+'/#/projects/h3/tasks?task='+visible.id);
+ await rp.getByLabel('任务标题',{exact:true}).waitFor();
+ assert.equal(await rp.getByRole('button',{name:'删除任务',exact:true}).count(),0);
  assert.deepEqual(errors,[]);console.log('PASS real API/browser member add/edit/conflict/remove/last-manager/reader; task create/update/delete; desktop/mobile light/dark');
 }finally{await browser.close();}

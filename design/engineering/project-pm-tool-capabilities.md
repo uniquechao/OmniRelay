@@ -108,3 +108,23 @@
 | `task_delete` | 按任务版本和明确原因逻辑删除；保留活动、来源及审计；退出看板、搜索和详情 | 任务分派管理权 |
 
 `task_create` / `task_update` 同步支持开始/截止日期、验收条件、里程碑、参与人和标签。可选关联用空字符串清空，数组用空数组清空；普通成员的协作字段与分派字段边界沿用领域校验。网页新建复用原型任务编辑器，成员管理复用标准右侧抽屉。删除使用二次确认和原因，服务端按请求键记录幂等回执。
+
+### 与新版任务工作区共用的操作
+
+项目对话按轮次从 Gateway 加载目录。看板与列表共享业务数据，显示模式、字段显隐、抽屉收起和滚动位置由浏览器保存。
+
+| 操作 | 工具 |
+| --- | --- |
+| 看板版本、列、标签、筛选和续页 | `task_board_get`、`task_query` |
+| 任务权限、本人互动与手动参与人 | `task_actions`、`task_get`、`task_update` |
+| 调整状态、取消和重开、跨列移动、列内排序、批量编辑 | `task_transition`、`task_move`、`task_bulk_update` |
+| 列配置、设置默认列与列迁移、业务时区 | `task_board_save`、`task_business_time`、`task_board_timezone` |
+| 创建、修改和删除标签 | `task_tag_create`、`task_tag_update`、`task_tag_delete` |
+| 任务评论、变更历史、附件或文档来源 | `task_add_progress`、`task_activity_list`、`task_evidence_list`、`task_evidence_link`、`task_source_tasks` |
+| 成员进展反馈与审核 | `task_feedback_list`、`task_feedback_submit`、`task_feedback_review` |
+| 从授权项目资料或群消息提取候选 | `task_candidate_sources`、`task_candidate_chat_sources`、`task_candidate_submit` |
+| 候选筛选、确认、合并或忽略 | `task_candidate_list`、`task_candidate_review` |
+| 新建与查询任务里程碑 | `task_milestone_create`、`task_milestone_list`，使用 `task_update` 关联或移除里程碑 |
+| 删除任务 | `task_delete`，需任务管理权、当前版本和明确删除原因 |
+
+普通成员可在权限范围内维护本人任务或提交反馈。管理者取消任务或重新打开终态任务时提供变更原因，批量更新按任务版本整体提交。确认候选并共享前需取得用户确认。来源、反馈和候选读取沿用当前项目与当前成员权限。

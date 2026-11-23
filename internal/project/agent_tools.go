@@ -25,7 +25,7 @@ func ToolStatus(err error) int {
 		return 403
 	case errors.Is(err, errInput), errors.Is(err, pmtools.ErrArguments):
 		return 400
-	case errors.Is(err, errBoardVersion), errors.Is(err, errConflict), errors.Is(err, errTaskVersion), errors.Is(err, errRequestKey):
+	case errors.Is(err, errBoardVersion), errors.Is(err, errConflict), errors.Is(err, errTaskVersion), errors.Is(err, errRequestKey), errors.Is(err, errMoveKey):
 		return 409
 	default:
 		return 503
@@ -58,7 +58,7 @@ func (s *Service) RunTool(ctx context.Context, tx pgx.Tx, actor identity.Princip
 // the actor to have authority over the particular resource.
 func (s *Service) AuthorizeToolReceipt(ctx context.Context, tx pgx.Tx, actor identity.Principal, projectID, name string, a pmtools.Args) error {
 	switch name {
-	case "task_update", "task_transition":
+	case "task_update", "task_transition", "task_move", "task_feedback_submit":
 		k := scope(actor, projectID)
 		task, err := k.task(ctx, tx, a.String("task_id"), time.Now())
 		if err != nil {
@@ -68,9 +68,24 @@ func (s *Service) AuthorizeToolReceipt(ctx context.Context, tx pgx.Tx, actor ide
 		if err != nil {
 			return err
 		}
-		if !g.CanAssign && (!g.CanUpdateOwn || !ownTask(task, g.MemberID)) {
+		if name == "task_feedback_submit" {
+			if !g.CanComment || !ownTask(task, g.MemberID) {
+				return errDenied
+			}
+		} else if !g.CanAssign && (!g.CanUpdateOwn || !ownTask(task, g.MemberID)) {
 			return errDenied
 		}
+	case "task_evidence_link":
+		_, err := s.source(ctx, tx, scope(actor, projectID), actor, a.String("source_kind"), a.String("source_id"))
+		return err
+	case "task_candidate_review":
+		k := scope(actor, projectID)
+		var refs []candidateRef
+		if err := tx.QueryRow(ctx, "SELECT sources FROM project_task_candidates WHERE "+projectWhere+" AND id=$4 AND submitted_by=$5", k.args(a.String("candidate_id"), actor.AccountID)...).Scan(&refs); err != nil {
+			return err
+		}
+		_, err := s.candidateEvidence(ctx, tx, k, actor, refs)
+		return err
 	case "member_add", "member_set_role", "member_update", "member_remove":
 		var manager bool
 		err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_members WHERE "+projectWhere+" AND account_id=$4 AND role='manager')", scope(actor, projectID).args(a.String("account_id"))...).Scan(&manager)
@@ -365,7 +380,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		}
 		return map[string]any{"id": event.ID, "task_id": a.String("task_id")}, nil
 	}
-	return nil, errInput
+	return s.runTaskBoardTool(ctx, k, actor, name, a)
 }
 
 // Published briefs expose the aggregate the channel actually delivered. A draft, a

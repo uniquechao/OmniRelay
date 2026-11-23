@@ -123,58 +123,9 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PUT "+project+"/profile", "project.settings", s.setProfile)
 	handle("POST "+project+"/archive", "project.settings", s.archiveProject)
 	handle("PUT "+project+"/reports/mine/{date}", "project.comment", s.saveReport)
-	readBoard := func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		replica := strings.HasSuffix(r.URL.Path, "/board")
-		view := "tasks"
-		if replica {
-			view = "board"
-		}
-		query, err := viewQuery(view, r.URL.Query())
-		if err != nil {
-			return nil, err
-		}
-		if replica {
-			query.Set("board_view", "true")
-		}
-		board, err := scope(actor, r.PathValue("projectID")).board(r.Context(), s.pool, query, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		grant, err := s.roles.ProjectGrant(r.Context(), s.pool, actor, board.Project)
-		if err != nil {
-			return nil, err
-		}
-		if !grant.Member {
-			return nil, errDenied
-		}
-		board.CanComment = grant.CanComment
-		board.CanConfigure, err = s.roles.Check(r.Context(), actor, "project.settings", board.Project)
-		if err != nil {
-			return nil, err
-		}
-		board.MemberID = grant.MemberID
-		board.CanCreate, board.CanAssign = grant.CanUpdateOwn || grant.CanAssign, grant.CanAssign
-		board.CanMove = grant.CanAssign
-		for _, column := range board.Columns {
-			for i, task := range column.Items {
-				movable := canUpdateProgress(task, grant) && task.Status != "cancelled"
-				column.Items[i].CanMove = &movable
-				board.CanMove = board.CanMove || movable
-			}
-		}
-		if strings.HasSuffix(r.URL.Path, "/board/tags") {
-			return map[string]any{"tags": board.Tags, "version": board.Version}, nil
-		}
-		if strings.HasSuffix(r.URL.Path, "/board/config") {
-			return board, nil
-		}
-		if replica {
-			return board, nil
-		}
-		return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
-	}
-	handle("GET "+project+"/tasks", "project.read", readBoard)
-	handle("GET "+project+"/board", "project.read", readBoard)
+
+	handle("GET "+project+"/tasks", "project.read", s.readBoard)
+	handle("GET "+project+"/board", "project.read", s.readBoard)
 	handle("GET "+project+"/tasks/query", "project.read", s.flatTaskQuery)
 	handle("GET "+project+"/tasks/{taskID}/history", "project.read", func(w http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 		q := r.URL.Query()
@@ -195,27 +146,12 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	for _, op := range []string{"DELETE", "PUT"} {
 		handle(op+" "+project+"/board/tags/{tagID}", "project.settings", s.boardTagCommand)
 	}
-	handle("GET "+project+"/board/config", "project.read", readBoard)
-	handle("GET "+project+"/board/tags", "project.read", readBoard)
+	handle("GET "+project+"/board/config", "project.read", s.readBoard)
+	handle("GET "+project+"/board/tags", "project.read", s.readBoard)
 	handle("GET "+project+"/tasks/business-time", "project.read", s.businessTime)
 	handle("POST "+project+"/tasks", "project.read", s.saveTask)
 	handle("PUT "+project+"/tasks/{taskID}", "project.read", s.saveTask)
-	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", func(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
-		k := scope(a, r.PathValue("projectID"))
-		t, err := k.task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
-		if err != nil {
-			return nil, err
-		}
-		g, err := s.roles.ProjectGrant(r.Context(), s.pool, a, k.project)
-		if err != nil {
-			return nil, err
-		}
-		if !g.Member {
-			return nil, errDenied
-		}
-		own := ownTask(t, g.MemberID)
-		return map[string]bool{"delete": g.CanAssign, "edit_fields": canUpdateProgress(t, g), "assign": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
-	})
+	handle("GET "+project+"/tasks/{taskID}/actions", "project.read", s.taskActions)
 	handle("GET "+project+"/tasks/{taskID}/activity", "project.read", s.activity)
 	handle("POST "+project+"/tasks/{taskID}/comments", "project.comment", s.comment)
 	handle("GET "+project+"/tasks/{taskID}/evidence", "project.read", s.evidence)
@@ -225,17 +161,12 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 	handle("PATCH "+project+"/tasks/{taskID}/milestone", "project.assign", s.setTaskMilestone)
 	handle("PUT "+project+"/tasks/board/timezone", "project.settings", s.setBoardTimezone)
 	handle("POST "+project+"/tasks/{taskID}/move", "project.read", s.moveTask)
-	handle("GET "+project+"/milestones", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		items, err := s.milestones(r.Context(), scope(actor, r.PathValue("projectID")), time.Now())
-		return map[string]any{"items": items}, err
-	})
+	handle("GET "+project+"/milestones", "project.read", s.taskMilestones)
 	handle("POST "+project+"/milestones", "project.assign", s.createMilestone)
 	handle("GET "+project+"/tasks/{taskID}", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
 		return scope(actor, r.PathValue("projectID")).task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
 	})
-	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", func(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
-		return s.localSourceTasks(r, actor)
-	})
+	handle("GET "+project+"/sources/{kind}/{sourceID}/tasks", "project.read", s.sourceTasks)
 	handle("GET "+project+"/reports/briefings/{runID}", "project.read", s.latestBriefing)
 	handle("GET "+project+"/chats", "project.read", s.getChats)
 	handle("PUT /api/v1/feishu/chats/{chatID}/project", "", func(w http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
@@ -421,4 +352,81 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s *Service) readBoard(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+	replica := strings.HasSuffix(r.URL.Path, "/board")
+	view := "tasks"
+	if replica {
+		view = "board"
+	}
+	query, err := viewQuery(view, r.URL.Query())
+	if err != nil {
+		return nil, err
+	}
+	if replica {
+		query.Set("board_view", "true")
+	}
+	board, err := scope(actor, r.PathValue("projectID")).board(r.Context(), s.pool, query, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	grant, err := s.roles.ProjectGrant(r.Context(), s.pool, actor, board.Project)
+	if err != nil {
+		return nil, err
+	}
+	if !grant.Member {
+		return nil, errDenied
+	}
+	board.CanComment = grant.CanComment
+	board.CanConfigure, err = s.allowed(r.Context(), actor, "project.settings", board.Project)
+	if err != nil {
+		return nil, err
+	}
+	board.MemberID = grant.MemberID
+	board.CanCreate, board.CanAssign = grant.CanUpdateOwn || grant.CanAssign, grant.CanAssign
+	board.CanMove = grant.CanAssign
+	for _, column := range board.Columns {
+		for i, task := range column.Items {
+			movable := canUpdateProgress(task, grant) && task.Status != "cancelled"
+			column.Items[i].CanMove = &movable
+			board.CanMove = board.CanMove || movable
+		}
+	}
+	if strings.HasSuffix(r.URL.Path, "/board/tags") {
+		return map[string]any{"tags": board.Tags, "version": board.Version}, nil
+	}
+	if strings.HasSuffix(r.URL.Path, "/board/config") {
+		return board, nil
+	}
+	if replica {
+		return board, nil
+	}
+	return map[string]any{"project_id": board.Project, "panel": "tasks", "data": board, "total": board.Total}, nil
+}
+
+func (s *Service) taskActions(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
+	k := scope(a, r.PathValue("projectID"))
+	t, err := k.task(r.Context(), s.pool, r.PathValue("taskID"), time.Now())
+	if err != nil {
+		return nil, err
+	}
+	g, err := s.roles.ProjectGrant(r.Context(), s.pool, a, k.project)
+	if err != nil {
+		return nil, err
+	}
+	if !g.Member {
+		return nil, errDenied
+	}
+	own := ownTask(t, g.MemberID)
+	return map[string]bool{"delete": g.CanAssign, "edit_fields": canUpdateProgress(t, g), "assign": g.CanAssign, "update_progress": canUpdateProgress(t, g), "move": canUpdateProgress(t, g) && t.Status != "cancelled", "comment": g.CanComment, "submit_feedback": g.CanComment && own && t.Status != "done" && t.Status != "cancelled", "review_feedback": g.CanAssign}, nil
+}
+
+func (s *Service) taskMilestones(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+	items, err := s.milestones(r.Context(), scope(actor, r.PathValue("projectID")), time.Now())
+	return map[string]any{"items": items}, err
+}
+
+func (s *Service) sourceTasks(_ http.ResponseWriter, r *http.Request, actor identity.Principal) (any, error) {
+	return s.localSourceTasks(r, actor)
 }

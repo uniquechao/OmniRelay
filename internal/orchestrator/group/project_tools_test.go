@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -395,14 +396,44 @@ func TestProjectToolCRUDRecoveryGate(t *testing.T) {
 		t.Fatal(string(created), err)
 	}
 	raw, _ := json.Marshal(task.ID)
-	call("task_delete", 3, `{"task_id":`+string(raw)+`,"expected_version":1,"change_reason":"重复任务清理"}`)
+	call("task_bulk_update", 3, `{"items":[{"id":`+string(raw)+`,"expected_version":1,"priority":"P1"}]}`)
+	var board struct{ Version int }
+	if err = json.Unmarshal(call("task_board_get", 0, "{}"), &board); err != nil {
+		t.Fatal(err)
+	}
+	call("task_transition", 4, fmt.Sprintf(`{"task_id":%s,"expected_version":2,"expected_board_version":%d,"status":"cancelled","change_reason":"停止执行"}`, raw, board.Version))
+	call("task_delete", 5, `{"task_id":`+string(raw)+`,"expected_version":3,"change_reason":"重复任务清理"}`)
 	var events int
 	if err = g.DB.QueryRow(g.ctx, "SELECT count(*) FROM project_task_activity WHERE task_id=$1 AND action='task.deleted'", task.ID).Scan(&events); err != nil || events != 1 {
 		t.Fatal("duplicate deletion", events, err)
 	}
 	g.sql("UPDATE project_members SET role='reader' WHERE account_id='alice'")
-	_, err = g.projectTool(g.ctx, projectCall{ToolCall: binding, Name: "task_delete", Slot: 3, Args: pmtools.Args{"task_id": raw, "expected_version": json.RawMessage("1"), "change_reason": json.RawMessage(`"重复任务清理"`)}})
+	_, err = g.projectTool(g.ctx, projectCall{ToolCall: binding, Name: "task_delete", Slot: 5, Args: pmtools.Args{"task_id": raw, "expected_version": json.RawMessage("3"), "change_reason": json.RawMessage(`"重复任务清理"`)}})
 	if !errors.Is(err, access.ErrForbidden) {
 		t.Fatal("revoked delete replay", err)
 	}
+	g.sql("UPDATE project_members SET role='manager' WHERE account_id='alice'")
+	g.sql(`INSERT INTO project_sources(tenant_key,app_id,project_id,kind,id,title,body) VALUES('tenant','app','north','document','tool-proof','审核依据','已核对');
+ INSERT INTO project_source_readers VALUES('tenant','app','north','document','tool-proof','alice')`)
+	var snapshot struct {
+		Revision string `json:"source_revision"`
+		Sources  []struct{ ID string }
+	}
+	if err = json.Unmarshal(call("task_candidate_sources", 0, "{}"), &snapshot); err != nil || len(snapshot.Sources) != 1 {
+		t.Fatal("candidate sources", err)
+	}
+	var batch struct {
+		IDs []string `json:"candidate_ids"`
+	}
+	if err = json.Unmarshal(call("task_candidate_submit", 6, fmt.Sprintf(`{"session_ref":"review","source_revision":%q,"candidates":[{"title":"待确认","related_project":true,"evidence_ids":[%q]}]}`, snapshot.Revision, snapshot.Sources[0].ID)), &batch); err != nil || len(batch.IDs) != 1 {
+		t.Fatal("candidate submit", err)
+	}
+	call("task_candidate_list", 0, "{}")
+	call("task_candidate_review", 7, fmt.Sprintf(`{"candidate_id":%q,"expected_version":1,"action":"ignore","reason":"已处理"}`, batch.IDs[0]))
+	call("task_candidate_list", 0, `{"status":"ignored"}`)
+	g.sql("DELETE FROM project_source_readers WHERE source_id='tool-proof'")
+	if _, err = g.projectTool(g.ctx, projectCall{ToolCall: binding, Name: "project_get", Args: pmtools.Args{}}); err == nil {
+		t.Fatal("revoked source was delivered")
+	}
+
 }

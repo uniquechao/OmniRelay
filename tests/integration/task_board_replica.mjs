@@ -211,6 +211,27 @@ try{
  const comment={body:'进度核对',expected_version:commented.version,request_key:'new-comment'};
  await api('POST','/tasks/'+source.id+'/comments',comment);await api('POST','/tasks/'+source.id+'/comments',comment);
  const history=await api('GET','/tasks/'+source.id+'/activity?kind=comment');assert.equal(history.items.length,1);assert.equal(history.items[0].actor_id,'manager');
+ const disposable=await api('POST','/tasks',{title:'取消和删除验收'});
+ await page.goto(origin+'/#/projects/board-test/tasks?task='+disposable.id);
+ await page.getByLabel('任务状态',{exact:true}).selectOption('cancelled');
+ await page.getByRole('button',{name:'保存任务'}).click();
+ await page.getByText('请填写取消原因。',{exact:true}).waitFor();
+ await page.getByLabel('取消原因',{exact:true}).fill('交付已撤回');
+ await page.getByRole('button',{name:'保存任务'}).click();
+ await page.getByRole('dialog',{name:'任务详情'}).waitFor({state:'hidden'});
+ assert.equal((await api('GET','/tasks/'+disposable.id)).status,'cancelled');
+ await page.getByRole('button',{name:/^已取消/}).click();
+ await page.locator('#board-task-'+disposable.id).click();
+ await page.getByRole('button',{name:'删除任务',exact:true}).click();
+ const confirmation=page.getByRole('dialog',{name:'删除任务',exact:true});
+ assert.ok(await confirmation.getByRole('button',{name:'确认删除'}).isDisabled());
+ await confirmation.getByRole('button',{name:'保留任务'}).click();
+ await page.getByRole('button',{name:'删除任务',exact:true}).click();
+ await confirmation.getByLabel('删除原因').fill('清理验收任务');
+ await confirmation.getByRole('button',{name:'确认删除'}).click();
+ await page.getByRole('dialog',{name:'任务详情'}).waitFor({state:'hidden'});
+ await page.locator('#board-task-'+disposable.id).waitFor({state:'detached'});
+ await api('GET','/tasks/'+disposable.id,undefined,404);
  assert.deepEqual(errors,[]);
 } catch(error){
  console.error(page.url(),await page.locator('body').innerText(),errors);
