@@ -2,7 +2,7 @@
   --task-ink: light-dark(#191b1c,var(--or-text));
   --task-muted: light-dark(#66686b,var(--or-text-secondary));
   --task-rule: light-dark(#e5e5e7,var(--or-border));
-  display: grid; gap: 12px; min-width: 0; margin-block-end: 14px;
+  display: grid; gap: 12px; min-width: 0;
   padding: 12px 24px 0; color: var(--task-ink); background: light-dark(white,var(--or-surface));
 }
 .task-page-heading,.task-page-tools,.task-page-query,.task-page-display,.task-page-status,.task-layout-switch,.task-page-search,.task-status-tabs {display:flex;align-items:center;min-width:0}

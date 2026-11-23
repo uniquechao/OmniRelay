@@ -44,6 +44,9 @@ try{
  await mkdir('.runtime/board-evidence',{recursive:true});
  for(const width of [1440,1100,820,390,320]){
    await page.setViewportSize({width,height:900});
+   const gap = await page.locator('.board-lane').first().evaluate(lane =>
+     lane.getBoundingClientRect().top - lane.closest('.project-task-board').querySelector('.task-page-status').getBoundingClientRect().bottom);
+   assert.ok(Math.abs(gap) <= 1, '状态栏与看板列间距 ' + gap + 'px @ ' + width);
    if (width===390 || width===1440) {
      await page.evaluate(()=>document.documentElement.dataset.theme='dark');
      const card=page.locator('.board-card').first();
