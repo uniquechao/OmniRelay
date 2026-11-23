@@ -68,6 +68,14 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 		t.Skip("双账号浏览器验收需要 Playwright")
 	}
 	pool := testProjectPool(t, schema)
+	if schema == "member_task_crud_browser" {
+		_, err := pool.Exec(t.Context(), `INSERT INTO accounts(id,tenant_key,app_id,open_id,name)
+			SELECT 'sample-'||n,'tenant','app','ou_sample_'||n,name FROM
+			unnest(ARRAY['方宁','周言','林一帆','陈冬','顾清禾']) WITH ORDINALITY person(name,n)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	if schema == "task_board_replica_browser" {
 		_, err := pool.Exec(t.Context(), `INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES('tenant','app',1,true);
           INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind) SELECT 'tenant','app',x,'group' FROM unnest(ARRAY['oc_a','oc_b','oc_other']) x;

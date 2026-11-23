@@ -32,11 +32,29 @@ try{
  await page.goto(origin+'/#/projects/h3/members');
  await page.getByRole('button',{name:'添加成员',exact:true}).click();
  let dialog=page.getByRole('dialog');
- await dialog.locator('[data-user-choice]').first().waitFor();
+ const people=dialog.getByRole('combobox',{name:'选择人员'});
+ const options=dialog.getByRole('listbox',{name:'可添加的人员'});
+ assert.equal(await people.getAttribute('aria-expanded'),'false');
+ await people.click();
+ await options.getByRole('option').first().waitFor();
  await mkdir('.runtime/evidence',{recursive:true});
- await page.screenshot({path:'.runtime/evidence/system-user-picker.png'});
- await dialog.getByLabel('选择人员').fill('second');
- await dialog.locator('[data-user-choice]').filter({hasText:'项目成员'}).click();
+ for (const [width,theme] of [[1440,'light'],[390,'dark']]) {
+   await page.setViewportSize({width,height:900});
+   await page.evaluate(t=>{document.documentElement.dataset.theme=t;},theme);
+   assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+   await dialog.screenshot({path:`.runtime/evidence/member-search-${width}-${theme}.png`});
+ }
+ await page.setViewportSize({width:1440,height:1000});
+ await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
+ await people.press('Escape');
+ assert.equal(await people.getAttribute('aria-expanded'),'false');
+ await people.fill('second');
+ await options.getByRole('option',{name:/项目成员/}).waitFor();
+ await people.press('ArrowDown');
+ assert.ok(await people.getAttribute('aria-activedescendant'));
+ await people.press('Enter');
+ assert.equal(await people.inputValue(),'项目成员');
+ assert.equal(await people.getAttribute('aria-expanded'),'false');
  assert.deepEqual(await dialog.getByLabel('项目角色',{exact:true}).locator('option').allTextContents(),['项目管理员','项目成员']);
  await dialog.getByLabel('项目角色',{exact:true}).selectOption('project_admin');await dialog.getByLabel('项目职责').fill('负责联调验收');
  await dialog.getByRole('button',{name:'添加成员',exact:true}).click();

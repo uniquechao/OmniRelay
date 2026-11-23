@@ -80,7 +80,7 @@ func (s *Service) changeMember(ctx context.Context, k taskScope, a identity.Prin
 		candidate := account
 		if strings.HasPrefix(candidate, "feishu:") {
 			var openID, name, avatar string
-			if err := tx.QueryRow(ctx, groupPeople+` SELECT open_id,display_name,avatar FROM people WHERE id=$4`, k.args(candidate)...).Scan(&openID, &name, &avatar); err == pgx.ErrNoRows {
+			if err := tx.QueryRow(ctx, systemPeople+` SELECT open_id,name,avatar FROM system_people WHERE open_id=$3`, k.tenant, k.app, strings.TrimPrefix(candidate, "feishu:")).Scan(&openID, &name, &avatar); err == pgx.ErrNoRows {
 				return errInput
 			} else if err != nil {
 				return err
