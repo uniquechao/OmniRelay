@@ -42,7 +42,7 @@
 
 ### 所有权与基准
 
-- 正式代码在 `web/`，Bot 页使用独立模块 `web/feishu-bot.js`；复用 `web/login.js`、`web/system-api.js`、`web/app.js` 和既有 UI 组件。不得引入新框架、替换全站布局或把原型演示数据接入正式状态。
+- 正式代码在 `web/`，Bot 页使用独立模块 `frontend/src/features/connections/feishu-bot.js`；复用 `web/login.js`、`frontend/src/api/system-api.js`、`web/app.js` 和既有 UI 组件。不得引入新框架、替换全站布局或把原型演示数据接入正式状态。
 - 实施前读取 `.agents/skills/omnirelay-frontend/SKILL.md` 并按其流程读取 Impeccable、Web Design Guidelines；以 `design/prototype/omni-relay-workbench.html`、`design/specs/omni-relay-ui-standards.md` 为基准。新 Bot 页复用已有标准表单/信息展示组件；没有确认的独立页面稿应明确标注，不能声称已通过完整页面 1:1 验收。
 - 原型覆盖的布局、组件、色值、主题和动效按 1:1 复现；不擅改已确认设计。新增状态的文案使用用户语言，不暴露内部任务、租约或原始平台报错。
 

@@ -2,7 +2,7 @@ import { assignmentAPI, editAssignment } from './chat-assignment.js';
 import { renderChatCard } from './chat-card.js';
 import { mountChatComposer } from './chat-composer.js';
 import { messageResources, openMessagePreview, renderMessageResource } from './chat-preview.js';
-import { fileIcon } from './file-format.js';
+import { fileIcon } from '../drive/file-format.js';
 
 const chatBase = '/api/v1/feishu/chats';
 const chatHash = '#/feishu/bot-chats';
@@ -12,7 +12,6 @@ const pageSize = 50;
 const number = new Intl.NumberFormat('zh-CN');
 const day = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' });
 const clock = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' });
-const types = { '': '全部', group: '群聊', p2p: '1:1' };
 const contentLabels = new Map([
   ['image', '图片消息'], ['file', '文件消息'], ['interactive', '卡片消息'], ['audio', '语音消息'], ['media', '视频消息']
 ]);
@@ -20,7 +19,6 @@ const stateLabels = new Map(Object.entries({
   pending: '等待同步', queued: '已请求同步', complete: '已同步', partial: '部分同步',
   failed: '同步失败', access_lost: '来源授权受限', syncing: '正在同步'
 }));
-let instance = 0;
 
 export function chatRoute(hash) {
   const match = routePattern.exec(hash);
@@ -124,58 +122,8 @@ export function mountChatReader(host, api, {
   if (signal.aborted) return;
   const { escape: esc, icon, mountPersonCards, openDialog, personAvatar, personButton, personView, toast } = window.OmniRelayUI;
   const loading = (node, label) => window.OmniRelayLoading.mount(node, { label });
-  const id = 'chat-reader-' + ++instance;
-  const headingId = project ? id + '-heading' : 'page-heading';
-  const heading = project ? 'h2' : 'h1';
   const tool = (name, symbol, label, attributes = '') => `<button class="chat-icon-button" type="button"
     data-action="${name}" title="${label}" aria-label="${label}" ${attributes}>${icon(symbol)}</button>`;
-  function search(name, label) {
-    return `<label class="chat-search${name === 'messages' ? ' chat-message-search' : ''}" id="${id}-${name}" ${name === 'messages' ? 'hidden' : ''}>
-      ${icon('chat-search-icon')}<input class="search" name="${name}" type="search" autocomplete="off" maxlength="200"
-      aria-label="${label}" placeholder="${label}"></label>`;
-  }
-
-  host.innerHTML = `<div class="chat-reader-host"><div class="bot-chat" ${project ? 'data-project-chat' : ''}>
-    <section class="chat-directory" id="${id}-directory" aria-labelledby="${headingId}">
-      <div class="chat-directory-tools">
-        <div class="chat-directory-title">
-          ${project ? '' : tool('filters', 'chat-filter-icon', '筛选会话', `aria-expanded="false" aria-controls="${id}-filters"`)}
-          <${heading} id="${headingId}" tabindex="-1">${project ? '项目关联群' : '机器人记录'}</${heading}>
-          <span data-count role="status"></span>
-        </div>
-        <div class="chat-sync" ${project ? 'hidden' : ''}>
-          <span data-sync role="status"></span>
-          <div>${tool('sync', 'chat-info', '查看同步详情', 'aria-haspopup="dialog"')}
-            <button class="button chat-page-action" type="button" data-action="retry-sync" hidden>重试同步</button>
-            ${tool('refresh', 'chat-refresh', '刷新会话')}</div>
-        </div>
-        <div id="${id}-filters" class="chat-filters" role="group" aria-label="会话类型" hidden>
-          ${Object.entries(types).map(([kind, label]) => `<button class="chat-filter" type="button"
-            data-kind="${kind}" aria-pressed="${!kind}">${label}</button>`).join('')}
-        </div>
-        ${search('directory', project ? '搜索关联群或消息' : '搜索会话或消息')}
-      </div>
-      <div class="chat-conversations reader-directory" data-directory></div>
-    </section>
-    <div class="split-handle chat-split-handle" role="separator" aria-label="调整会话列表宽度" aria-orientation="vertical"
-      aria-controls="${id}-directory" tabindex="0" title="左右拖动调整宽度"></div>
-    <section class="chat-reading" aria-label="聊天记录">
-      <header class="chat-reading-head">
-        <button class="chat-icon-button chat-back" type="button" data-action="back" aria-label="返回会话列表" title="返回会话列表">${icon('action-expand')}</button>
-        <h2 class="chat-reading-title" data-title tabindex="-1">聊天记录</h2>
-        <div class="chat-reading-tools" data-tools hidden>
-          ${tool('members', 'nav-team', '会话成员', 'aria-haspopup="dialog"')}
-          ${tool('search', 'chat-search-icon', '搜索当前会话', `aria-expanded="false" aria-controls="${id}-messages"`)}
-          ${project ? tool('primary', 'chat-star-icon', '设为项目主群', 'data-chat-action="primary" hidden aria-haspopup="dialog"') : ''}
-          ${tool('project', 'chat-project-icon', '修改项目归属', 'hidden aria-haspopup="dialog"')}
-        </div>
-        <div class="chat-project-meta" hidden></div>
-      </header>
-      ${search('messages', '搜索当前会话')}
-      <div class="chat-timeline" data-timeline tabindex="0" aria-label="消息时间线"><p class="chat-empty">没有可显示的会话。</p></div>
-      <div data-composer-host></div>
-    </section>
-  </div></div>`;
   const root = host.querySelector('.bot-chat');
   const get = selector => root.querySelector(selector);
   const directory = get('[data-directory]');
@@ -288,7 +236,7 @@ export function mountChatReader(host, api, {
   }
 
   const groupAvatar = () => `<span class="chat-avatar" aria-hidden="true">${icon('nav-team')}</span>`;
-  const avatar = new URL('../design/prototype/omni-relay-avatar.png', import.meta.url).href;
+  const avatar = new URL('../../../../design/prototype/omni-relay-avatar.png', import.meta.url).href;
   const botAvatar = '<span class="chat-avatar" data-kind="bot" aria-hidden="true"><img src="' + esc(avatar) + '" width="32" height="32" alt=""></span>';
   const nameOf = record => record.person?.name || record.name || (record.kind === 'group' ? '未命名群聊' : '未知人员');
   const personOf = record => record.person ?? { name: nameOf(record) };

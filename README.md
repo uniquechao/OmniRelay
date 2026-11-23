@@ -108,18 +108,18 @@ go test ./...
 go build -o bin/omnirelay ./cmd/omnirelay
 ```
 
-`npm run dev` 启动带 React 快速刷新的 Vite。打开 `/` 或 `/setup`，可通过 `OMNIRELAY_DEV_ORIGIN` 指向已有 Go 后端，默认上游为 `http://127.0.0.1:8080`。生产构建输出到 `web/dist`。使用已有服务配置运行 `OMNIRELAY_PREVIEW_DIR="$PWD/web/dist" ./bin/omnirelay serve` 即可同源验证。镜像内对应目录为 `/opt/omnirelay/ui`。变量未设置时，Go 从二进制提供 React 工作台、首次配置页面和哈希资源。修改前端后先运行 `npm run build`，再重新构建 Go 二进制。预发布升级和恢复步骤见 [Kubernetes 部署说明](deploy/k8s/README.md#工作台升级与恢复)。
+`npm run dev` 启动带 React 快速刷新的 Vite。打开 `/` 或 `/setup`，可通过 `OMNIRELAY_DEV_ORIGIN` 指向已有 Go 后端，默认上游为 `http://127.0.0.1:8080`。生产构建输出到 `internal/webui/dist`。使用已有服务配置运行 `OMNIRELAY_PREVIEW_DIR="$PWD/internal/webui/dist" ./bin/omnirelay serve` 即可同源验证。镜像内对应目录为 `/opt/omnirelay/ui`。变量未设置时，Go 从二进制提供 React 工作台、首次配置页面和哈希资源。修改前端后先运行 `npm run build`，再重新构建 Go 二进制。预发布升级和恢复步骤见 [Kubernetes 部署说明](deploy/k8s/README.md#工作台升级与恢复)。
 
 已配置的 Go 服务在 `/` 提供工作台；首次配置模式将 `/` 重定向到 `/setup`，OAuth 回跳 `/?setup=complete` 也使用初始化入口。两个入口均从 `/assets/` 加载带哈希资源。
 
 浏览器验证使用已安装的 Chrome，将 `OMNIRELAY_CHROME` 设为其可执行文件。以下两条命令分别验证构建目录和 Go 的两种路由模式。
 
 ```sh
-OMNIRELAY_BROWSER_DIST=web/dist node --test tests/integration/preview_browser.test.mjs
+OMNIRELAY_BROWSER_DIST=internal/webui/dist node --test tests/integration/preview_browser.test.mjs
 OMNIRELAY_PLAYWRIGHT_MODULE=playwright-core go test ./cmd/omnirelay -run '^TestPreviewUI$' -count=1
 ```
 
-旧套件的 mock API 仍可独立运行。默认静态资源取自构建输出 `web/dist`；设置 `OMNIRELAY_ASSET_ORIGIN` 可以从指定 Go 服务读取静态资源，同时保留 mock API。原型对照使用独立的 `/prototype/` 路径或原型文件。真实后端用例沿用各 Go 测试创建的服务、账号和 PostgreSQL 夹具。
+旧套件的 mock API 仍可独立运行。默认静态资源取自构建输出 `internal/webui/dist`；设置 `OMNIRELAY_ASSET_ORIGIN` 可以从指定 Go 服务读取静态资源，同时保留 mock API。原型对照使用独立的 `/prototype/` 路径或原型文件。真实后端用例沿用各 Go 测试创建的服务、账号和 PostgreSQL 夹具。
 
 ## 系统架构
 
@@ -172,7 +172,8 @@ sequenceDiagram
 design/                可体验原型、架构设计和 UI 规范
 cmd/omnirelay/         Go 服务入口
 internal/              Go 业务、接入和存储模块
-web/                   正式工作台
+frontend/              React 工作台与首次配置页面
+internal/webui/        Go 静态资源服务与嵌入式前端构建产物
 runtime/dsh/           DSH 运行配置与工具桥
 migrations/            PostgreSQL 迁移
 config/                配置模板

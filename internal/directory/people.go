@@ -33,6 +33,14 @@ type PersonProjection struct {
 	OrganizationPaths [][]string `json:"organization_paths,omitempty"`
 }
 
+// OrganizationPathsSQL projects department names for the visible directory_people row dp.
+// Callers must check directory.read before including this projection.
+const OrganizationPathsSQL = `COALESCE((SELECT jsonb_agg(d.path ORDER BY d.path,d.id)
+	FROM department_memberships m JOIN departments d
+	ON (d.tenant_key,d.app_id,d.snapshot_version,d.id)=(m.tenant_key,m.app_id,m.snapshot_version,m.department_id)
+	WHERE (m.tenant_key,m.app_id,m.snapshot_version,m.open_id)=(dp.tenant_key,dp.app_id,dp.snapshot_version,dp.open_id)
+),'[]'::jsonb)`
+
 // ReadResourcePeople is called by conversation and task readers using their own
 // authorizer. Use PersonKey as the avatar seed, falling back to Name for color
 // only. The result preserves source order, including separate name-only people.
@@ -86,15 +94,10 @@ func (s *Service) ReadResourcePeople(ctx context.Context, actor identity.Princip
 		LEFT JOIN accounts a ON a.tenant_key=$1 AND a.app_id=$2 AND a.id=ref.account_id AND ref.open_id=''
 	)
 	SELECT refs.position, COALESCE(`+identity.FeishuPersonKeySQL("refs.open_id")+`,''),
-		CASE WHEN $3 THEN COALESCE(p.name,'') ELSE '' END, COALESCE((
-			SELECT jsonb_agg(d.path ORDER BY d.path,d.id)
-			FROM department_memberships m JOIN departments d
-			ON (d.tenant_key,d.app_id,d.snapshot_version,d.id)=(m.tenant_key,m.app_id,m.snapshot_version,m.department_id)
-			WHERE $3 AND (m.tenant_key,m.app_id,m.snapshot_version,m.open_id)=(p.tenant_key,p.app_id,p.snapshot_version,p.open_id)
-		),'[]'), EXISTS (SELECT 1 FROM visible_snapshot) AND
-		COALESCE(p.directory_status='resigned', k.resigned, r.resigned_at IS NOT NULL)
+		CASE WHEN $3 THEN COALESCE(dp.name,'') ELSE '' END, CASE WHEN $3 THEN `+OrganizationPathsSQL+` ELSE '[]' END,
+		EXISTS (SELECT 1 FROM visible_snapshot) AND COALESCE(dp.directory_status='resigned', k.resigned, r.resigned_at IS NOT NULL)
 	FROM refs
-	LEFT JOIN directory_people p ON (p.tenant_key,p.app_id,p.snapshot_version,p.open_id)
+	LEFT JOIN directory_people dp ON (dp.tenant_key,dp.app_id,dp.snapshot_version,dp.open_id)
 		= ($1,$2,(SELECT active_version FROM visible_snapshot),refs.open_id)
 	LEFT JOIN feishu_chat_sender_checks k ON (k.tenant_key,k.app_id,k.open_id)=($1,$2,refs.open_id)
 	LEFT JOIN directory_roster r ON (r.tenant_key,r.app_id,r.open_id)=($1,$2,refs.open_id)`,

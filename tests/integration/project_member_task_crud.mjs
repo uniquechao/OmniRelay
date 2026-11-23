@@ -78,7 +78,26 @@ try{
  assert.deepEqual(members.map(m=>m.account_id),['sample-1','second','manager']);
  assert.equal(new Date(extra.last_spoke_at).toISOString(),'2026-01-01T14:00:00.000Z');
  assert.equal(members.at(-1).last_spoke_at,null);
- const memberNames=()=>page.locator('.table-box tbody tr td:first-child').allTextContents();
+ const memberNames=()=>page.locator('.project-member-person > span').allTextContents();
+ const org=page.locator('.project-member-person').filter({has:page.getByText('项目成员',{exact:true})}).locator('small');
+ assert.deepEqual(second.organization_paths,[['研发中心','平台组'],['研发中心','质量组']]);
+ assert.equal(await org.innerText(),'研发中心 / 平台组；研发中心 / 质量组');
+ assert.equal(await page.locator('.project-member-person small').count(),1);
+ const orgColors=[];
+ for(const [width,theme] of [[1440,'light'],[390,'dark']]){
+   await page.setViewportSize({width,height:900});
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+   const style=await org.evaluate(el=>({color:getComputedStyle(el).color,size:getComputedStyle(el).fontSize,background:getComputedStyle(el.closest('.list-scroll')).backgroundColor}));
+   assert.equal(style.size,'12px');
+   const luminance=str=>str.match(/\d+/g).slice(0,3).map(Number).map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((v,n,i)=>v+n*[.2126,.7152,.0722][i],0);
+   const values=[luminance(style.color),luminance(style.background)].sort((a,b)=>b-a);
+   assert.ok((values[0]+.05)/(values[1]+.05)>=4.5);
+   orgColors.push(style.color);
+   await page.screenshot({path:'.runtime/evidence/member-organization-'+theme+'.png'});
+ }
+ assert.notEqual(...orgColors);
+ await page.setViewportSize({width:1440,height:1000});
+ await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
  async function setInlineRole(name, role) {
    const label='修改 '+name+' 的项目角色';
    const edit=page.getByRole('button',{name:label,exact:true});
@@ -160,6 +179,9 @@ try{
  const reader=await browser.newContext({ignoreHTTPSErrors:true});const rp=await reader.newPage();await reader.request.post(origin+'/auth/login',{headers:{Origin:origin},data:{username:'second',password:process.env.H3_PASSWORD}});const rme=await(await reader.request.get(origin+'/api/v1/me')).json();
  await rp.goto(origin+'/#/projects/h3/members');await rp.getByRole('heading',{name:'项目成员',exact:true}).waitFor();assert.equal(await rp.getByRole('button',{name:'添加成员',exact:true}).count(),0);
  assert.equal(await rp.locator('[data-role-edit],[data-member-remove]').count(),0);
+ assert.equal(await rp.locator('.project-member-person small').count(),0);
+ const readerMembers=await (await reader.request.get(origin+root+'/members')).json();
+ assert.ok(readerMembers.data.members.every(m=>!('organization_paths' in m)));
  const readerFollow=rp.getByRole('button',{name:'关注项目 h3',exact:true});
  assert.equal(await readerFollow.getAttribute('aria-pressed'),'false');
  await readerFollow.click();

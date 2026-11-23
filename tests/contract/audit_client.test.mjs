@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { systemAPI } from '../../web/system-api.js';
+import { systemAPI } from '../../frontend/src/api/system-api.js';
 
 const sample = JSON.parse(await readFile(new URL('../fixtures/audit-query.json', import.meta.url)));
 

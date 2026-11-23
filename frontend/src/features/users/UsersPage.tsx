@@ -1,8 +1,8 @@
 import {useLayoutEffect,useRef,type RefObject} from 'react';
 import {client} from '../../api/session';
 import type {Guard,User} from '../workbench/Account';
-import {bindAdmin} from '../../../../web/admin.js';
-import {systemAPI} from '../../../../web/system-api.js';
+import {bindAdmin} from './admin.js';
+import {systemAPI} from '../../api/system-api.js';
 
 export function UsersPage({user,guard,section='users'}:{user:User;guard:RefObject<Guard>;section?:'users'|'roles'}) {
   const root = useRef<HTMLElement>(null);

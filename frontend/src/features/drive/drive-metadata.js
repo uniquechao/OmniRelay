@@ -1,4 +1,4 @@
-import { assignmentAPI } from './chat-assignment.js';
+import { assignmentAPI } from '../chat/chat-assignment.js';
 
 export const syncStates = { pending:'等待同步', complete:'已同步', partial:'部分同步', failed:'同步失败',
   expired:'同步版本已过期', revoked:'访问受限', over_limit:'超过同步大小上限' };

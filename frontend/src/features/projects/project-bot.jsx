@@ -1,5 +1,4 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {createRoot} from 'react-dom/client';
 import {ConversationRoot} from '@deepseek-ai/dsh-client-ui-conversation/src/client/skeleton/ConversationRoot.tsx';
 import {HeroShell} from '@deepseek-ai/dsh-client-ui-conversation/src/client/skeleton/EmptyHero.tsx';
 import {InputBar} from '@deepseek-ai/dsh-client-ui-conversation/src/client/skeleton/InputBar.tsx';
@@ -191,24 +190,19 @@ function ProjectConversation({project, base, request, signal}) {
     </div>}/>;
 }
 
-export function mountProjectBot(host, project, base, request, signal) {
-  const container = document.createElement('section');
-  container.className = 'dsh-project-chat';
-  container.setAttribute('aria-label', '项目 PM 对话');
-  host.replaceChildren(container);
-  const root = createRoot(container);
-  const syncTheme = () => document.body.toggleAttribute('data-ds-dark-theme', document.documentElement.dataset.theme === 'dark');
-  // The host owns theme changes and the lifetime of the native icon sprite.
-  let removeSprite;
-  installIconSprite({effect: mount => { removeSprite = mount(); }, on: noop});
-  syncTheme();
-  const observer = new MutationObserver(syncTheme);
-  observer.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
-  signal.addEventListener('abort', () => {
-    observer.disconnect();
-    removeSprite();
-    document.body.removeAttribute('data-ds-dark-theme');
-    queueMicrotask(() => root.unmount());
-  }, {once: true});
-  root.render(<ProjectConversation {...{project, base, request, signal}}/>);
+export function ProjectBot(props) {
+  useLayoutEffect(() => {
+    const syncTheme = () => document.body.toggleAttribute('data-ds-dark-theme', document.documentElement.dataset.theme === 'dark');
+    let removeSprite;
+    installIconSprite({effect: mount => { removeSprite = mount(); }, on: noop});
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, {attributes:true,attributeFilter:['data-theme']});
+    return () => {
+      observer.disconnect();
+      removeSprite();
+      document.body.removeAttribute('data-ds-dark-theme');
+    };
+  }, []);
+  return <section className="dsh-project-chat" aria-label="项目 PM 对话"><ProjectConversation {...props}/></section>;
 }

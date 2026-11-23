@@ -3,7 +3,7 @@ import {Button, Icon, Loading, Status} from '../../ui/components/Elements';
 import {client} from '../../api/session';
 import {useQueries, useQuery, type UseQueryResult} from '@tanstack/react-query';
 import type {Route} from '../../routes/targets';
-import {projectStatusLabel} from '../../../../web/projects.js';
+import {projectStatusLabel} from '../projects/projects.js';
 import '../../../../design/prototype/omni-relay-overview.css';
 
 type Count = {total: number};

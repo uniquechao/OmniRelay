@@ -1,16 +1,16 @@
-import { fileIcon } from './file-format.js';
-import { previewCanvas, renderResult, renderDocumentImages } from './drive-preview.js';
+import { fileIcon } from '../drive/file-format.js';
+import { previewCanvas, renderResult, renderDocumentImages } from '../drive/drive-preview.js';
 
 const labels = {
   video: '视频', image: '图片', docx: '飞书文档', wiki: '飞书知识库', sheets: '飞书表格', minutes: '飞书妙记', base: '多维表格', file: '飞书文件', attachment: '文件'
 };
 const documentIcons = {
-  docx: new URL('./feishu-icons/docx.png', import.meta.url).href,
-  sheets: new URL('./feishu-icons/sheets.png', import.meta.url).href,
-  base: new URL('./feishu-icons/base.png', import.meta.url).href,
-  minutes: new URL('./feishu-icons/minutes.png', import.meta.url).href,
-  wiki: new URL('./feishu-icons/wiki.png', import.meta.url).href,
-  file: new URL('./feishu-icons/file.png', import.meta.url).href,
+  docx: new URL('../../ui/feishu-icons/docx.png', import.meta.url).href,
+  sheets: new URL('../../ui/feishu-icons/sheets.png', import.meta.url).href,
+  base: new URL('../../ui/feishu-icons/base.png', import.meta.url).href,
+  minutes: new URL('../../ui/feishu-icons/minutes.png', import.meta.url).href,
+  wiki: new URL('../../ui/feishu-icons/wiki.png', import.meta.url).href,
+  file: new URL('../../ui/feishu-icons/file.png', import.meta.url).href,
 };
 const documentStates = {
   pending:'正在同步', resource_forbidden:'机器人无权读取或来源已失效',

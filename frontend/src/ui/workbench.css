@@ -168,6 +168,11 @@ td a:hover { text-decoration: underline; }
   .task-detail .dialog-head > .button { min-height:44px; }
 }
 .project-member-responsibility { display:block; max-width:40ch; white-space:pre-wrap; overflow-wrap:anywhere; }
+.project-member-person { display:inline-flex; align-items:baseline; flex-wrap:wrap; gap:2px 6px; max-width:100%; }
+.project-member-person small { max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.75rem; color:var(--or-text-muted); }
+@media (max-width:720px) {
+  .project-member-person small { max-width:min(14rem,40vw); white-space:normal; overflow-wrap:anywhere; }
+}
 .project-member-role, .project-member-actions { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
 .project-member-role { min-width:7.5em; }
 .project-member-role button, .project-member-actions button { display:inline-flex; align-items:center; justify-content:center; min-height:32px; min-width:32px; border:0; border-radius:5px; padding:0 5px; background:transparent; color:var(--or-primary); font:inherit; cursor:pointer; }
@@ -275,3 +280,13 @@ body:has(.session-lock[open]) dialog[open]:not(.session-lock) { visibility: hidd
 .task-md [data-md-preview] a {color:var(--or-primary);text-decoration:underline}
 .task-md textarea {width:100%;box-sizing:border-box;font:inherit;resize:vertical}
 .task-md [data-md-status] {color:var(--or-danger)}
+
+#project-panel > .project-members-page { display:flex; flex:1 1 auto; flex-direction:column; min-height:245px; }
+#project-panel > .project-drive-page { display: contents; }
+[data-project-list] .list-scroll table { min-width: 40rem; }
+[data-project-list] .list-scroll th .sort-button, [data-project-list] .list-scroll time { white-space: nowrap; }
+.project-members-page .react-list-host { display:flex; flex:1; min-height:0; }
+.project-members-page .list-scroll :is(th, .date) { white-space:nowrap; }
+@media (max-width:720px) {
+  .project-members-page .project-member-person { min-width:8rem; }
+}

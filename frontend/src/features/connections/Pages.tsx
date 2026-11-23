@@ -2,8 +2,8 @@ import {useLayoutEffect,useMemo,useRef,useState,type ReactNode,type RefObject} f
 import {client} from '../../api/session';
 import {Button, Facts, Loading, notify} from '../../ui/components/Elements';
 import type {Guard,User} from '../workbench/Account';
-import {feishuBotAPI} from '../../../../web/system-api.js';
-import {connectionStates,checkStates,checkErrors,time} from '../../../../web/feishu-bot.js';
+import {feishuBotAPI} from '../../api/system-api.js';
+import {connectionStates,checkStates,checkErrors,time} from './feishu-bot.js';
 import {useBotCheck} from './useBotCheck';
 
 const requestSignal=(signal:AbortSignal)=>AbortSignal.any([signal,AbortSignal.timeout(15000)]);

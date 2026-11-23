@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef} from 'react'
-import {bindTaskMarkdown} from '../../../../web/task-markdown.js'
+import {bindTaskMarkdown} from './task-markdown.js'
 
 type Props = {projectId:string; name:'description'|'acceptance'; label:string; value:string; readOnly:boolean; pending:boolean; files:Map<string,File>; onInput:(value:string)=>void}
 export function TaskMarkdownField({projectId,name,label,value,readOnly,pending,files,onInput}:Props) {

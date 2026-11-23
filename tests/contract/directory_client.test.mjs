@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { isDirectoryConflict, systemAPI } from '../../web/system-api.js';
+import { isDirectoryConflict, systemAPI } from '../../frontend/src/api/system-api.js';
 
 const base = '/api/v1/system';
 const directory = base + '/directory';

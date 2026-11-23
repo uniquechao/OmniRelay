@@ -22,7 +22,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 	"github.com/uniquechao/OmniRelay/internal/system"
 	"github.com/uniquechao/OmniRelay/migrations"
-	"github.com/uniquechao/OmniRelay/web"
+	"github.com/uniquechao/OmniRelay/internal/webui"
 )
 
 func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper) (http.Handler, *backendWorkers, error) {
@@ -152,7 +152,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	projectService.Register(mux, identityService.AuthenticateWorkbench)
 	identityService.Register(mux)
 	identityService.RegisterPasswords(mux)
-	web.Register(mux)
+	webui.Register(mux)
 	roles.Register(mux, identityService.Authenticate)
 	directoryService.Register(mux, identityService.Authenticate, roles.Check, func(ctx context.Context, tx pgx.Tx, actor identity.Principal) (bool, error) {
 		err := roles.AuthorizeDirectorySync(ctx, tx, actor)

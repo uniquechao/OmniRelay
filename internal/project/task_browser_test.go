@@ -11,7 +11,7 @@ import (
 
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/identity"
-	"github.com/uniquechao/OmniRelay/web"
+	"github.com/uniquechao/OmniRelay/internal/webui"
 )
 
 func TestTaskTwoAccountBrowser(t *testing.T) {
@@ -47,7 +47,7 @@ func TestTaskTwoAccountBrowser(t *testing.T) {
 	auth.RegisterPasswords(mux)
 	service := Service{pool: pool, roles: roles}
 	service.Register(mux, auth.Authenticate)
-	web.Register(mux)
+	webui.Register(mux)
 	cmd := exec.CommandContext(t.Context(), "node", "tests/integration/task_two_accounts.mjs")
 	cmd.Dir = "../.."
 	cmd.Env = append(os.Environ(), "H3_ORIGIN="+server.URL, "H3_PASSWORD="+password)
@@ -72,6 +72,16 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 		_, err := pool.Exec(t.Context(), `INSERT INTO accounts(id,tenant_key,app_id,open_id,name)
 			SELECT 'sample-'||n,'tenant','app','ou_sample_'||n,name FROM
 			unnest(ARRAY['方宁','周言','林一帆','陈冬','顾清禾']) WITH ORDINALITY person(name,n);
+			INSERT INTO directory_sources(tenant_key,app_id) VALUES ('tenant','app');
+			INSERT INTO directory_sync_runs(tenant_key,app_id,trigger,state) VALUES ('tenant','app','initial','succeeded');
+			UPDATE directory_sources SET visible=true,active_version=(SELECT id FROM directory_sync_runs);
+			INSERT INTO departments(tenant_key,app_id,snapshot_version,id,name,path,has_children)
+				SELECT 'tenant','app',active_version,d.id,d.name,ARRAY['研发中心',d.name],false FROM directory_sources
+				CROSS JOIN (VALUES ('qa','质量组'),('platform','平台组')) AS d(id,name);
+			INSERT INTO directory_people(tenant_key,app_id,snapshot_version,open_id,name,avatar_url,directory_status)
+				SELECT 'tenant','app',active_version,'second','项目成员','','active' FROM directory_sources;
+			INSERT INTO department_memberships(tenant_key,app_id,snapshot_version,department_id,open_id)
+				SELECT tenant_key,app_id,snapshot_version,id,'second' FROM departments;
 			INSERT INTO feishu_bot_configs(tenant_key,app_id,credentials_generation,enabled) VALUES('tenant','app',1,true);
 			INSERT INTO feishu_chat_conversations(tenant_key,app_id,chat_id,kind)
 				SELECT 'tenant','app',id,'group' FROM unnest(ARRAY['alpha','beta','hidden','elsewhere']) id;
@@ -136,7 +146,7 @@ func runProjectBrowser(t *testing.T, schema, script string) {
 	auth.RegisterPasswords(mux)
 	service := Service{pool: pool, roles: roles}
 	service.Register(mux, auth.Authenticate)
-	web.Register(mux)
+	webui.Register(mux)
 	cmd := exec.CommandContext(t.Context(), "node", script)
 	cmd.Dir = "../.."
 	cmd.Env = append(os.Environ(), "H3_ORIGIN="+server.URL, "H3_PASSWORD="+password)

@@ -3,12 +3,15 @@ import {BotPage,ConnectionSettings} from '../connections/Pages';
 import {AuditPage} from '../audit/AuditPage';
 import {useLayoutEffect,useRef,useState} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
-import {projectFollowsChanged} from '../../../../web/projects.js';
+import {projectFollowsChanged} from '../projects/projects.js';
 import {client} from '../../api/session';
 import {routes,destination,permitted,remember,returnPath,type Route} from '../../routes/targets';
 import {Account,AccountTrigger,type Guard,type User} from './Account';
-import {BusinessPage} from './BusinessPage';
+import {ProjectWorkspacePage} from '../projects/ProjectWorkspacePage';
+import {DrivePage} from '../drive/DrivePage';
+import {ChatPage} from '../chat/ChatPage';
 import {Overview} from './Overview';
+import {ProjectListPage} from '../projects/ProjectListPage';
 import {Breadcrumbs, Icon, ThemeToggle, WorkbenchLayout} from '../../ui/components/Elements';
 import logo from '../../../../design/prototype/omni-relay-logo-bicolor.png';
 import avatar from '../../../../design/prototype/omni-relay-avatar.png';
@@ -111,9 +114,18 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
       <summary aria-label={group}><Icon name={entries[0].icon}/><span>{group}</span><Icon name="action-expand" className="icon disclosure"/></summary><div className="nav-children">{entries.map(link)}</div></details>;
   });
   const layout=target?.route.id==='bot-chats'?'bot-chat':target?.route.id==='projects' && target.section==='项目列表'?'project':
-    ['drive','users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
+    ['projects','drive','users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
   let page;
   switch(target?.route.id){
+    case 'projects':
+      page=target.section==='项目列表' ? <ProjectWorkspacePage key={visit} hash={target.path.slice(1)} guard={view}/> : <ProjectListPage key={visit} guard={view}/>;
+      break;
+    case 'drive':
+      page=<DrivePage key={visit}/>;
+      break;
+    case 'bot-chats':
+      page=<ChatPage key={visit} hash={target.path.slice(1)}/>;
+      break;
     case 'feishu-bot':
       page=<BotPage key={visit} user={user} guard={view} locked={locked}/>;
       break;
@@ -127,8 +139,6 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
     case 'audit':
       page=<AuditPage key={visit}/>;
       break;
-    default:
-      if(target && target.route.id!=='workbench')page=<BusinessPage key={visit} target={target} user={user} guard={view} layout={layout}/>;
   }
   return <div hidden={locked}><WorkbenchLayout page={page} navigation={nav} layout={layout}
     brand={<a className="brand" aria-label="工作台" href={destination('',access)?.path.slice(1)}><img className="wide-logo" src={logo} alt="OmniRelay"/><img className="compact-logo" src={avatar} alt="OmniRelay"/></a>}

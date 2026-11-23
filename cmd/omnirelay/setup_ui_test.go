@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uniquechao/OmniRelay/web"
+	"github.com/uniquechao/OmniRelay/internal/webui"
 )
 
 func TestEmbeddedSetupHTTP(t *testing.T) {
 	t.Setenv("OMNIRELAY_PREVIEW_DIR", "")
 	setup := newWebSetupHandler(webSetupStore{}, "https://relay.example.test", nil, func() {})
 	normal := http.NewServeMux()
-	web.Register(normal)
+	webui.Register(normal)
 	get := func(handler http.Handler, path string, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		res := httptest.NewRecorder()

@@ -11,7 +11,7 @@ const dist = process.env.OMNIRELAY_BROWSER_DIST;
 const require = createRequire(import.meta.url);
 
 test('生产资源均由工作台或初始化入口引用',async()=>{
-  const root=resolve(dist || 'web/dist');
+  const root=resolve(dist || 'internal/webui/dist');
   assert.deepEqual((await readdir(root)).sort(),['assets','index.html','setup.html']);
   const names=await readdir(resolve(root,'assets'));
   const pending=['index.html','setup.html'];

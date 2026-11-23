@@ -51,7 +51,7 @@ func TestCandidateRoleEntry(t *testing.T) {
 }
 
 func TestAccountGrantsBrowser(t *testing.T) {
-	dir, err := filepath.Abs("../../web/dist")
+	dir, err := filepath.Abs("../../internal/webui/dist")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestAccountGrantsBrowser(t *testing.T) {
 }
 
 func TestReactAuditBrowser(t *testing.T) {
-	dir, err := filepath.Abs("../../web/dist")
+	dir, err := filepath.Abs("../../internal/webui/dist")
 	if err != nil {
 		t.Fatal(err)
 	}

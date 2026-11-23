@@ -1,4 +1,4 @@
-import {loadContentScript as script} from '../../../../web/content-script.js';
+import {loadContentScript as script} from '../content-script.js';
 import '../../../../design/prototype/vendor/quill-snow-2.0.3.css';
 import '../../../../design/prototype/omni-relay-content.css';
 import {useId, useState} from 'react';

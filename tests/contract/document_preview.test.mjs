@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {renderResult} from '../../web/drive-preview.js';
+import {renderResult} from '../../frontend/src/features/drive/drive-preview.js';
 globalThis.window = {OmniRelayUI:{escape:v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}};
 test('文档保留标题、强调、列表、表格和图片位置',()=>{
  const html=renderResult('docs',{document:[

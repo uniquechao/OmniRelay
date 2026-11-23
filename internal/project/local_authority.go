@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/directory"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
@@ -32,6 +33,13 @@ func (s *Service) localMembers(ctx context.Context, k taskScope, actor identity.
 	args := k.args()
 	if !assignment {
 		join, extraFields = memberSpeechJoin, ",'last_spoke_at',speech.last_spoke_at"
+		canReadDirectory, err := s.allowed(ctx, actor, "directory.read", "")
+		if err != nil {
+			return nil, err
+		}
+		if canReadDirectory {
+			extraFields += ",'organization_paths'," + directory.OrganizationPathsSQL
+		}
 		order = "(pr.project_role='project_admin') DESC,speech.last_spoke_at DESC NULLS LAST,m.member_id"
 		args = append(args, actor.OpenID)
 	}

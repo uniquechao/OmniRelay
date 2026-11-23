@@ -1,9 +1,9 @@
 import { openFilePreview, readLocalDocument } from './drive-preview.js';
 import { fileIcon } from './file-format.js';
-import { assignmentAPI } from './chat-assignment.js';
+import { assignmentAPI } from '../chat/chat-assignment.js';
 import { fileSources, fileProjects, editFileProjects, mountFileMetadata, syncStates as coverage } from './drive-metadata.js';
 
-const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', images:'图片', videos:'视频', files:'文件' };
+export const categories = { all:'全部', minutes:'会议纪要', docs:'飞书文档', tasks:'任务表格（多维表格）', images:'图片', videos:'视频', files:'文件' };
 const fileFormats = {pdf:'PDF',word:'Word',excel:'Excel',slides:'PowerPoint',zip:'ZIP',generic:'其他文件'};
 const categoryLabel = row => categories[row.format_key] || categories[row.category] || '文件';
 const decimal = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:1});
@@ -32,12 +32,6 @@ export function mountDrive(page, request, signal, {preview, editProjects, projec
   const filePath = path => projectId ? path + (path.includes('?') ? '&' : '?') + 'source_project=' + encodeURIComponent(projectId) : path;
   const fileRequest = (path, options) => request(path.startsWith('/api/v1/feishu/files/') ? filePath(path) : path, options);
   const listPath = projectId ? '/api/v1/projects/' + encodeURIComponent(projectId) + '/files' : '/api/v1/feishu/files';
-  page.innerHTML = (projectId ? '' : '<header class="head"><h1 id="page-heading" tabindex="-1">文件网盘</h1></header>' +
-    '<section class="drive-sync" aria-label="文件同步进度"><div data-drive-sync-loader></div>' +
-    '<p data-drive-sync role="status"></p></section>') +
-    '<div class="drive-categories" role="group" aria-label="文件分类">' + Object.entries(categories).map(([id,label]) =>
-      '<button type="button" class="button" aria-controls="drive-file-list" data-drive-category="' + id + '">' + label + '</button>'
-    ).join('') + '</div><p data-partial role="status" hidden>部分数据暂不可用。</p><section id="drive-file-list"></section>';
   const bar = page.querySelector('.drive-categories');
   const list = page.querySelector('#drive-file-list');
   const syncLoader = page.querySelector('[data-drive-sync-loader]');

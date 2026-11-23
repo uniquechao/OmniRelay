@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { api, ApiError, setSession } from '../../web/session-client.js';
-import { feishuBotAPI } from '../../web/system-api.js';
+import { api, ApiError, setSession } from '../../frontend/src/api/session-client.js';
+import { feishuBotAPI } from '../../frontend/src/api/system-api.js';
 
 const origin = 'https://relay.example.test';
 const basePath = '/api/v1/system/feishu-bot';

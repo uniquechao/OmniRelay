@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { SessionClient } from '../../web/session-client.js';
+import { SessionClient } from '../../frontend/src/api/session-client.js';
 
 const session = (account_id, allowed = true) => ({
   principal:{account_id}, csrf_token:'fixture', access:{navigation:{workbench:allowed}}

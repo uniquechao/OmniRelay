@@ -1,5 +1,5 @@
-import markdownScript from '../design/prototype/vendor/markdown-it-15.0.3.min.js?url';
-import {loadContentScript} from './content-script.js';
+import markdownScript from '../../../../design/prototype/vendor/markdown-it-15.0.3.min.js?url';
+import {loadContentScript} from '../../ui/content-script.js';
 let markdown;
 
 const batchLimit = 32 * 1024 * 1024;

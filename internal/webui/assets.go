@@ -1,5 +1,5 @@
-// Package web serves the production workbench alongside its same-origin Go API.
-package web
+// Package webui serves the production workbench alongside its same-origin Go API.
+package webui
 
 import (
 	"embed"

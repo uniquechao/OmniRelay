@@ -9,7 +9,8 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 - `internal/project/directory.go`、`internal/project/profile.go`、`internal/project/http.go` 提供目录、概览和项目档案写接口。
 - `internal/access/roles.go` 和 `internal/access/local_projects.go` 提供创建权限和现行项目成员授权。
 - `migrations/0021_local_project_directory.sql`、`migrations/0024_project_profile_dates.sql` 定义项目档案和计划日期，业务时区保存在 `project_task_boards`。
-- `web/projects.js`、`web/project-profile.js` 提供列表、概览和项目设置抽屉，由 React 工作台的业务页适配层挂载。
+- `frontend/src/features/projects/ProjectListPage.tsx` 和 `ProjectMembers.tsx` 共用工作台的 React `DataList`。项目目录在服务端筛选、排序和分页，成员沿用接口返回的角色、发言时间顺序。成员的组织路径来自已发布的组织快照，读取接口按当前账号的通讯录权限返回。
+- `frontend/src/features/projects/ProjectWorkspacePage.jsx` 负责项目标题、标签导航和请求生命周期。项目群聊、文件、任务看板与 Bot 分别复用其功能目录的组件。
 
 ## 长期设计约束
 
@@ -20,7 +21,7 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 - 系统管理员拥有 `project.create`。创建项目时以同一事务登记档案、首位项目负责人、看板时区和审计。创建后沿用本地项目成员授权。
 - 项目负责人和具备当前 `project.settings` 权限的项目成员可以维护档案。档案写入使用 `expected_version`，修改时区还需看板版本。仅有历史成员关系的项目沿用档案版本 `0` 的兼容读写。
 - 归档后，项目成员保留原有的历史读取权限，可在项目目录按「已归档」查询。项目档案停止编辑，简报计划停止，未投递简报在发送前重新核对项目阶段。阶段变更、项目创建和归档均写入审计。
-- 项目「文件」沿用 `#/projects/{projectID}/docs`，与全局网盘共用 `web/drive.js`。项目列表先按可读群来源、有效归属和本地文档读者授权取数，再统一筛选、排序和分页。网盘版本预览与下载携带 `source_project`，本地文档正文单独鉴权读取。
+- 项目「文件」沿用 `#/projects/{projectID}/docs`，与全局网盘共用 `frontend/src/features/drive/DrivePage.jsx`。项目列表先按可读群来源、有效归属和本地文档读者授权取数，再统一筛选、排序和分页。网盘版本预览与下载携带 `source_project`，本地文档正文单独鉴权读取。
 
 项目群 Agent 从可信通道取得群绑定与消息主体，按正式会籍代次、账号权限版本和群绑定版本确定工作授权。工具读取和向群回复前重验。Gateway、Runtime 的验收由内部通道完成，外部消息适配器单独验证。
 

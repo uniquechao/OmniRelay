@@ -419,35 +419,33 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   await mountFixture(page);
-  await page.goto(origin + '/#/workbench');
   const first = { ...group, id: 'project_first' };
   const second = { ...group, id: 'project_second', name: '第二个关联群' };
-  await page.getByRole('heading', { name: '工作台总览' }).waitFor();
-  // 适配器单测按测试专用地址注入，工作台仍从实际构建加载。
-  const adapters = ['chat-reader', 'chat-assignment', 'chat-card', 'chat-composer', 'chat-preview', 'drive-preview', 'file-format'];
-  for (const name of adapters) {
-    await page.route(origin + '/fixture/' + name + '.js', route =>
-      route.fulfill({path:'web/' + name + '.js',contentType:'text/javascript'}));
-  }
-  await page.evaluate(async ({ first, second, task }) => {
-    const { mountChatReader } = await import('/fixture/chat-reader.js');
-    const host = document.createElement('div');
-    host.style.cssText = 'display:flex; inline-size:760px; block-size:430px';
-    document.getElementById('page').append(host);
-    window.projectPanel = host;
-    const rows = Array.from({ length: 35 }, (_, i) => ({ ...first, id: 'other_' + i, name: '关联群 ' + i }));
-    const records = [first, second, ...rows];
-    window.embedded = mountChatReader(host, {
-      conversations: async () => ({ items: records, total: records.length }),
-      conversation: async id => ({ items: records.filter(record => record.id === id) }),
-      messages: async id => {
-        if (id === first.id) return new Promise(resolve => { window.lateProjectMessages = resolve; });
-        const items = Array.from({ length: 30 }, (_, i) => ({ ...task, id: 'history_' + i, type: 'text', body: '第二群记录 ' + i }));
-        return { items: [{ ...task, chat_id: id }, ...items] };
-      },
-      sync: async () => ({ items: [], total: 0 })
-    }, { project: true });
-  }, { first, second, task });
+  const records = [first, second, ...Array.from({length:35}, (_,i)=>({...first,id:'other_'+i,name:'关联群 '+i}))];
+  const projectAPI='/api/v1/projects/embed';
+  await page.route(origin+projectAPI+'/**', route=>{
+    const path=new URL(route.request().url()).pathname.slice(projectAPI.length);
+    if(path==='/overview')return route.fulfill({json:{data:{workspace:{project:{id:'embed',name:'嵌入测试'}}}}});
+    if(path==='/chat-reader')return route.fulfill({json:{items:records,total:records.length}});
+    if(path.endsWith('/send-capabilities'))return route.fulfill({json:{can_send:false}});
+    if(path==='/chat-reader/'+second.id+'/messages') {
+      const messages=Array.from({length:30},(_,i)=>({...task,id:'history_'+i,chat_id:second.id,type:'text',body:'第二群记录 '+i}));
+      return route.fulfill({json:{items:[{...task,chat_id:second.id},...messages]}});
+    }
+    return route.fulfill({json:{items:records.filter(record=>path.endsWith('/'+record.id))}});
+  });
+  await page.addInitScript(({path})=>{
+    const original=window.fetch.bind(window);
+    window.fetch=(input,options)=>{
+      if(new URL(input instanceof Request?input.url:input,location.href).pathname===path)
+        return new Promise(resolve=>{window.lateProjectMessages=data=>resolve(new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}}));});
+      return original(input,options);
+    };
+  },{path:projectAPI+'/chat-reader/'+first.id+'/messages'});
+  await page.goto(origin+'/#/projects/embed/chats');
+  await page.locator('.project-chat-reader').evaluate(host=>{
+    host.style.cssText='display:flex; inline-size:760px; flex:0 0 430px';
+  });
   await page.getByRole('heading', { name: '项目关联群' }).waitFor();
   await page.waitForFunction(() => typeof window.lateProjectMessages === 'function');
   await page.getByRole('button', { name: '打开会话 第二个关联群' }).click();
@@ -460,11 +458,12 @@ test('项目宿主复用会话组件，按容器宽度切换并忽略过期适�
   assert.ok(await page.locator('.chat-conversations').evaluate(node => node.scrollHeight > node.clientHeight));
   await page.locator('.chat-conversations').evaluate(node => { node.scrollTop = 200; });
   assert.ok(await page.locator('.chat-timeline').evaluate(node => node.scrollTop > 0));
-  await page.evaluate(() => { window.projectPanel.style.inlineSize = '470px'; });
+  await page.locator('.project-chat-reader').evaluate(host=>{host.style.inlineSize='470px';});
   await page.getByRole('separator', { name: '调整会话列表宽度' }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '返回会话列表' }).click();
   assert.ok(await page.getByRole('button', { name: '打开会话 第二个关联群' }).evaluate(node => node === document.activeElement));
-  await page.evaluate(() => window.embedded.dispose());
+  await page.getByRole('link',{name:'返回项目列表'}).click();
+  await page.getByRole('heading',{name:'项目列表'}).waitFor();
 });
 
 test('按桌面和手机视口核对原型的浅色及深色聊天界面', { skip: !packageName }, async t => {

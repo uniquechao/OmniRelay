@@ -1,5 +1,5 @@
-import {client, ApiError} from '../../../../web/session-client.js'
-import {taskRequestBody} from '../../../../web/task-markdown.js'
+import {client, ApiError} from '../../api/session-client.js'
+import {taskRequestBody} from './task-markdown.js'
 export {ApiError}
 const json = <T,>(path: string, options: {method?: string; body?: unknown; signal?: AbortSignal} = {}): Promise<T> => client.bind()(path,options) as Promise<T>
 const body = (body: unknown) => ({method:'POST',body})

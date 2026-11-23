@@ -28,7 +28,7 @@ export async function browserAsset(target, { setup = false } = {}) {
   if (prototype) file = resolve(root, 'design', '.' + path);
   else {
     if (path !== '/' && !(setup && path === '/setup') && !path.startsWith('/assets/')) return { status: 404 };
-    file = resolve(process.env.OMNIRELAY_BROWSER_DIST || resolve(root, 'web/dist'), './' + name);
+    file = resolve(process.env.OMNIRELAY_BROWSER_DIST || resolve(root, 'internal/webui/dist'), './' + name);
   }
   try {
     return { status: 200, body: await readFile(file), headers: {

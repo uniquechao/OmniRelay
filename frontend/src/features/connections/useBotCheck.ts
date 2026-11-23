@@ -1,9 +1,9 @@
 import {useLayoutEffect,useRef,useState} from 'react';
 import {useLatest} from '../../ui/components/runtime';
 import {client} from '../../api/session';
-import {ApiError} from '../../../../web/session-client.js';
-import {checkErrors} from '../../../../web/feishu-bot.js';
-import type {feishuBotAPI} from '../../../../web/system-api.js';
+import {ApiError} from '../../api/session-client.js';
+import {checkErrors} from './feishu-bot.js';
+import type {feishuBotAPI} from '../../api/system-api.js';
 
 type Result={name:string;state:string;error?:string;checked_at?:string};
 type Check={id:string;state:string;results?:Result[]};

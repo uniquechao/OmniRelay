@@ -228,4 +228,4 @@ a.chat-card-action:hover { background: var(--or-hover-bg); }
   .chat-composer-choice[data-compose-kind="mention"] .button { min-height: 44px; }
 }
 
-#project-panel > .chat-reader-host { flex: 1 1 auto; }
+#project-panel > .project-chat-reader { display: flex; flex: 1 1 auto; min-height: 0; }

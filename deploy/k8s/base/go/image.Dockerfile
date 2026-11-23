@@ -3,7 +3,6 @@ WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY frontend ./frontend
-COPY web ./web
 COPY design/prototype ./design/prototype
 COPY vite.config.mjs tsconfig.json ./
 RUN npm run typecheck && npm run build
@@ -19,8 +18,7 @@ COPY cmd ./cmd
 COPY tests/fixtures ./tests/fixtures
 COPY internal ./internal
 COPY migrations ./migrations
-COPY web ./web
-COPY --from=frontend /src/web/dist ./web/dist
+COPY --from=frontend /src/internal/webui/dist ./internal/webui/dist
 ARG OMNIRELAY_SOURCE_SHA
 RUN CGO_ENABLED=0 go test -mod=readonly ./... && \
     CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags="-X main.receiverSourceSHA=${OMNIRELAY_SOURCE_SHA}" -o /out/omnirelay ./cmd/omnirelay
@@ -33,6 +31,6 @@ ARG CANDIDATE_PIP_INDEX
 RUN PIP_INDEX_URL="${CANDIDATE_PIP_INDEX:-${PIP_INDEX_URL:-https://pypi.org/simple}}" pip install --no-cache-dir --only-binary=:all: -r /opt/preview/requirements.txt
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/omnirelay /omnirelay
-COPY --from=builder /src/web/dist /opt/omnirelay/ui
+COPY --from=builder /src/internal/webui/dist /opt/omnirelay/ui
 USER 10000:10000
 ENTRYPOINT ["/omnirelay"]

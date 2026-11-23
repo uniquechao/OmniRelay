@@ -13,7 +13,7 @@ const data={document:[{type:'heading',level:2,runs:[{text:'会议总结',bold:tr
 const root=document.querySelector('main');root.innerHTML=renderResult('docs',data,{});await renderDocumentImages(root,data,new AbortController().signal);window.ready=true;`;
 test('图文预览在 CSP 下保留格式并绘出同步图片，兼容桌面手机及浅深主题',async()=>{
  const server=createServer(async(req,res)=>{
-  const files={'/drive-preview.js':'web/drive-preview.js','/style.css':'web/workbench.css','/colors.css':'design/prototype/omni-relay-colors.css'};
+  const files={'/drive-preview.js':'frontend/src/features/drive/drive-preview.js','/style.css':'frontend/src/ui/workbench.css','/colors.css':'design/prototype/omni-relay-colors.css'};
   res.setHeader('Content-Security-Policy',policy);
   if(req.url==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/colors.css"><link rel="stylesheet" href="/style.css"></head><body><main class="drive-preview-content"></main><script type="module" src="/fixture.js"></script></body></html>');return;}
   if(req.url==='/fixture.js'){res.setHeader('Content-Type','text/javascript');res.end(fixture);return;}

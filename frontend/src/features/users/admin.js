@@ -1,5 +1,5 @@
-import {eventKinds,eventResults,showTime} from './audit-display.js';
-import { isDirectoryConflict } from './system-api.js';
+import {eventKinds,eventResults,showTime} from '../audit/audit-display.js';
+import { isDirectoryConflict } from '../../api/system-api.js';
 
 const system = '/api/v1/system';
 const titles = { users:'用户管理', roles:'角色权限', audit:'审计日志' };

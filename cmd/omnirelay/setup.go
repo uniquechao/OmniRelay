@@ -24,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/migrations"
-	"github.com/uniquechao/OmniRelay/web"
+	"github.com/uniquechao/OmniRelay/internal/webui"
 )
 
 const (
@@ -206,7 +206,7 @@ func newWebSetupHandler(store webSetupStore, origin string,
 	transport http.RoundTripper, onSaved func(),
 ) http.Handler {
 	mux := http.NewServeMux()
-	web.RegisterSetup(mux)
+	webui.RegisterSetup(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})

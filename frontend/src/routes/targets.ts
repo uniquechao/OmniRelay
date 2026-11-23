@@ -1,5 +1,5 @@
 import {matchPath} from 'react-router';
-import {projectRoute} from '../../../web/projects.js';
+import {projectRoute} from '../features/projects/projects.js';
 
 export type Access = {navigation?: Record<string,boolean>; admin?: Record<string,boolean>; default_route?: string};
 type Parsed = {path:string;title?:string;section?:string};

@@ -25,7 +25,7 @@ func (s *Service) Register(mux *http.ServeMux, auth func(http.ResponseWriter, *h
 				return nil, errInput
 			}
 			switch key {
-			case "q", "status":
+			case "q", "status", "sort", "direction":
 				continue
 			case "page", "page_size":
 				number, err := strconv.Atoi(values[0])

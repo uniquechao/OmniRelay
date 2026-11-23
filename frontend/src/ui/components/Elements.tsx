@@ -1,5 +1,5 @@
 import {useId, useLayoutEffect, useMemo, useRef, type ComponentProps, type ReactNode} from 'react';
-import {mountRail} from '../../../../web/rail.js';
+import {mountRail} from '../rail.js';
 import symbols from './symbols.svg?raw';
 import avatar from '../../../../design/prototype/omni-relay-avatar.png';
 import {ui, type Tone, type Wait} from './runtime';

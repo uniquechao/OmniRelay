@@ -3,7 +3,7 @@ import '../../../../design/prototype/omni-relay-loading.js';
 import '../../../../design/prototype/omni-relay-theme.js';
 import '../../../../design/prototype/omni-relay-login-motion.js';
 import '../../../../design/prototype/omni-relay-colors.css';
-import '../../../../web/workbench.css';
+import '../workbench.css';
 import '../../../../design/prototype/omni-relay-ui.css';
 import '../../../../design/prototype/omni-relay-loading.css';
 import '../../../../design/prototype/omni-relay-interactions.css';

@@ -15,7 +15,7 @@ ln -s "$PWD/node_modules" "$run/src/node_modules"
   npm run build
   go build -o ../omnirelay ./cmd/omnirelay
 ) > "$run/build.log" 2>&1
-sha256sum "$run/omnirelay" "$run/src/web/dist/"{index,setup}.html > "$run/build.sha256"
+sha256sum "$run/omnirelay" "$run/src/internal/webui/dist/"{index,setup}.html > "$run/build.sha256"
 
 db=
 server=

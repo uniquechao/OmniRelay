@@ -137,6 +137,15 @@ func TestProjectProfileLifecycle(t *testing.T) {
 		}
 	}
 	const settings = `{"target_chat_id":"oc_primary","timezone":"Asia/Shanghai","local_time":"18:00","plan_enabled":true,"public_submission_count":true,"version":%d}`
+	for _, order := range []struct{ direction, first string }{{"asc", "older"}, {"desc", key}} {
+		body := request("GET", "?status=active&page_size=1&sort=updated_at&direction="+order.direction, "", 200)
+		var page ProjectPage
+		if err := json.Unmarshal([]byte(body), &page); err != nil || len(page.Items) != 1 || page.Items[0].ID != order.first {
+			t.Fatalf("unexpected first project for %s: %s", order.direction, body)
+		}
+	}
+	request("GET", "?sort=unrecognized&direction=asc", "", 400)
+	request("GET", "?sort=name&direction=random", "", 400)
 	request("PUT", path+"/feishu/settings", fmt.Sprintf(settings, 0), 200)
 	request("PUT", path+"/reports/mine/2026-11-22", `{"note":"保留的日报","expected_version":0}`, 200)
 	var run briefing

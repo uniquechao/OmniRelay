@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/uniquechao/OmniRelay/web"
+	"github.com/uniquechao/OmniRelay/internal/webui"
 )
 
 func TestPreviewUI(t *testing.T) {
-	dir, err := filepath.Abs("../../web/dist")
+	dir, err := filepath.Abs("../../internal/webui/dist")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestPreviewUI(t *testing.T) {
 	}
 	t.Setenv("OMNIRELAY_PREVIEW_DIR", dir)
 	mux := http.NewServeMux()
-	web.Register(mux)
+	webui.Register(mux)
 	mux.HandleFunc("GET /api/v1/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) })
 	normal := secureHeaders(mux)
 	setup := newWebSetupHandler(webSetupStore{}, "https://relay.example.test", nil, func() {})

@@ -5,7 +5,7 @@ description: 按 OmniRelay 已确认的交互原型实现、修改或审查前�
 
 # OmniRelay 前端
 
-以用户最新确认的可运行原型为验收基准。仓库内入口为 [原型与设计索引](../../../design/README.md)，规则与入口对应关系见 [UI 规范](../../../design/specs/omni-relay-ui-standards.md)。用户提供新版原型时，先定位对应页面和状态，核对仓库副本是否同步，记录采用的基准。正式工作台代码位于 `web/`。
+以用户最新确认的可运行原型为验收基准。仓库内入口为 [原型与设计索引](../../../design/README.md)，规则与入口对应关系见 [UI 规范](../../../design/specs/omni-relay-ui-standards.md)。用户提供新版原型时，先定位对应页面和状态，核对仓库副本是否同步，记录采用的基准。正式工作台代码位于 `frontend/src/`。
 
 ## 实现与评审
 

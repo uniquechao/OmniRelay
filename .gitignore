@@ -13,6 +13,6 @@
 /deploy/k8s/private/
 
 /node_modules/
-/web/dist/
+/internal/webui/dist/
 
 /deploy/k8s/candidate/__pycache__/

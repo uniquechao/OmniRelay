@@ -4,62 +4,14 @@ export function canRemoveMember(data, member) {
   return data.can_manage && (data.can_delegate || (member.role !== 'manager' && member.project_role !== 'project_admin'));
 }
 
-export function wireProjectMembers(host, {data, projectId, request, signal, navigation, refresh}) {
+export function projectMemberDialogs({data, projectId, request, signal, navigation, refresh}) {
   const {escape: esc, openDialog, toast} = window.OmniRelayUI;
   const root = '/api/v1/projects/' + projectId;
   const projectRoles = (data.project_roles || []).filter(role => role.scope === 'project');
-  const members = new Map(data.members.map(member => [member.account_id, member]));
   const updateMember = (member, changes) => request(root + '/members/' + encodeURIComponent(member.account_id), {
     method: 'PUT', signal, body: {...changes, expected_version: member.version, expected_project_role: member.project_role},
   });
-  host.querySelector('[data-member-add]')?.addEventListener('click', e => open(null, e.currentTarget));
-  host.querySelectorAll('[data-member-edit]').forEach(button => {
-    button.onclick = () => open(members.get(button.dataset.memberEdit), button);
-  });
-  host.querySelectorAll('[data-member-remove]').forEach(button => {
-    button.onclick = () => confirmRemoval(members.get(button.dataset.memberRemove), button, () => refresh('[data-member-add]'));
-  });
-  host.querySelectorAll('[data-role-edit]').forEach(button => {
-    button.onclick = () => editRole(members.get(button.dataset.roleEdit), button);
-  });
-
-  function editRole(member, button) {
-    const container = button.parentElement, label = button.previousElementSibling;
-    const select = document.createElement('select');
-    select.className = 'select';
-    select.setAttribute('aria-label', button.getAttribute('aria-label'));
-    for (const role of projectRoles) select.add(new Option(role.name, role.id, false, role.id === member.project_role));
-    let saving = false;
-    function close(restoreFocus) {
-      select.remove();
-      label.hidden = button.hidden = false;
-      if (restoreFocus) button.focus();
-    }
-    select.onblur = () => { if (!saving && select.isConnected) close(false); };
-    select.onkeydown = event => {
-      if (event.key === 'Escape' && !saving) { event.preventDefault(); close(true); }
-    };
-    select.onchange = async () => {
-      if (saving) return;
-      if (select.value === member.project_role) { close(true); return; }
-      saving = true;
-      select.disabled = true;
-      host.inert = true;
-      try {
-        await updateMember(member, {project_role: select.value});
-        if (!signal.aborted) toast('success', '项目角色已更新。');
-      } catch (error) {
-        if (signal.aborted) return;
-        toast('error', error.status === 409 ? '无法更改角色，请核对最新角色，并保留至少一位项目负责人。'
-          : [403,404].includes(error.status) ? '当前账号无权修改该角色。' : '角色保存失败，请重试。');
-      } finally { host.inert = false; }
-      if (!signal.aborted && container.isConnected) await refresh(`[data-role-edit="${CSS.escape(member.account_id)}"]`);
-    };
-    label.hidden = button.hidden = true;
-    container.append(select);
-    select.focus();
-    try { select.showPicker?.(); } catch { /* The focused select still supports native keyboard and pointer input. */ }
-  }
+  return {open, confirmRemoval, updateMember};
 
   function confirmRemoval(member, trigger, removed) {
     let saving = false;

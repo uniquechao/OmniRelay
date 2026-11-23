@@ -330,7 +330,8 @@ window.OmniRelayUI = (() => {
     const states = config.states ?? listStates;
     if (!states.has(config.key)) {
       const initial = {
-        query: config.initialQuery ?? '', filters: { ...config.defaultFilters }, page: 0, pageSize: pageSizes[0], selected: new Set(),
+        query: config.initialQuery ?? '', filters: { ...(config.initialFilters ?? config.defaultFilters) },
+        page: config.initialPage ?? 0, pageSize: pageSizes.includes(config.initialPageSize) ? config.initialPageSize : pageSizes[0], selected: new Set(),
         sort: config.defaultSort ?? null, mode: config.selection === false ? 'none' : 'multiple', columnWidths: null
       };
       states.set(config.key, initial);

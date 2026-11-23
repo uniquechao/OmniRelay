@@ -7,9 +7,6 @@
 !go.sum
 !frontend/
 !frontend/**
-!web/
-!web/**
-web/dist
 !design/
 !design/prototype/
 !design/prototype/**
@@ -22,3 +19,4 @@ web/dist
 !tests/
 !tests/fixtures/
 !tests/fixtures/**
+internal/webui/dist

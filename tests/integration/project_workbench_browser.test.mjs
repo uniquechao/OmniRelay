@@ -284,7 +284,7 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       const directory = origin + '/?theme=' + theme + '#/projects';
       await page.goto(directory);
       const create = page.getByRole('button', { name: '新建项目' });
-      await page.getByText('没有符合条件的项目。').waitFor();
+      await page.getByText('没有匹配的项目。').waitFor();
       assert.equal(await create.count(), 0);
       canCreate = true;
       await page.reload();
@@ -348,9 +348,10 @@ test('项目档案创建、冲突保留草稿与归档', { skip: !moduleName }, 
       await page.getByText('已归档', { exact: true }).waitFor();
       assert.equal(await settings.count(), 0);
       await page.getByRole('link', { name: '返回项目列表' }).click();
-      await page.getByText('没有符合条件的项目。').waitFor();
-      await page.getByRole('combobox', { name: '项目状态' }).selectOption('');
-      await page.getByRole('button', { name: '查询' }).click();
+      await page.getByText('没有匹配的项目。').waitFor();
+      await page.getByRole('button',{name:'筛选与选择'}).click();
+      await page.getByRole('combobox', {name:'项目阶段'}).selectOption('');
+      await page.getByRole('button',{name:'收起',exact:true}).click();
       await page.getByRole('link', { name: '已编辑项目' }).waitFor();
       await page.getByRole('cell', { name: '已归档', exact: true }).waitFor();
       await page.getByRole('cell', { name: '销售', exact: true }).locator('[data-project-type-tone="purple"]').waitFor();
@@ -408,20 +409,30 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       await main.getByRole('link', { name: project.name }).waitFor();
       await main.getByRole('columnheader', { name: '更新时间' }).waitFor();
       assert.equal(await main.locator('tbody time').getAttribute('datetime'), project.updated_at);
-      const filter = main.getByRole('combobox', { name: '项目状态' });
+      if(width===390) {
+        assert.ok(await main.locator('.list-scroll').evaluate(el=>el.scrollWidth>el.clientWidth));
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      }
+      if (!admin && process.env.OMNIRELAY_PROJECT_EVIDENCE) await page.screenshot({
+        path:process.env.OMNIRELAY_PROJECT_EVIDENCE+'/project-list-'+width+'-'+theme+'.png',
+      });
+      const more=main.getByRole('button',{name:'筛选与选择'});
+      await more.click();
+      const filter = main.getByRole('combobox', {name:'项目阶段'});
       assert.equal(await filter.inputValue(), 'active');
       assert.equal(await main.getByRole('link', { name: planned.name }).count(), 0);
-      assert.ok(requested.includes('/api/v1/projects?page=1&page_size=25&status=active'));
+      assert.ok(requested.includes('/api/v1/projects?page=1&page_size=10&status=active'));
       await filter.selectOption('');
-      await main.getByRole('button', { name: '查询' }).click();
+      await main.getByRole('button',{name:'收起',exact:true}).click();
       await main.getByRole('link', { name: planned.name }).waitFor();
       await main.getByRole('row').filter({ hasText: planned.name }).getByRole('cell', { name: '—' }).waitFor();
       await page.waitForURL(/#\/projects\?status=$/);
       await page.reload();
       await main.getByRole('link', { name: planned.name }).waitFor();
+      await more.click();
       assert.equal(await filter.inputValue(), '');
       await filter.selectOption('planned');
-      await main.getByRole('button', { name: '查询' }).click();
+      await main.getByRole('button',{name:'收起',exact:true}).click();
       await page.waitForURL(/#\/projects\?status=planned$/);
       await main.getByText('共 1 条', { exact: false }).waitFor();
       assert.equal(await main.getByRole('link', { name: project.name }).count(), 0);
@@ -430,6 +441,33 @@ test('总览只请求个人可见统计，项目列表默认进行中并可查�
       await page.close();
     }
   }
+});
+
+test('项目标准列表按列排序、跨页并在刷新后恢复', {skip:!moduleName}, async t=>{
+  const browser=await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  await fixture(page);
+  const rows=Array.from({length:24},(_,i)=>({...project,id:'p'+i,name:'项目 '+String(i+1).padStart(2,'0')}));
+  await page.route(origin+'/api/v1/projects?**', route=>{
+    const params=new URL(route.request().url()).searchParams;
+    const offset=(Number(params.get('page'))-1)*Number(params.get('page_size'));
+    const sorted=params.get('sort')==='name' && params.get('direction')==='desc'?[...rows].reverse():rows;
+    return route.fulfill({json:{items:sorted.slice(offset,offset+Number(params.get('page_size'))),total:rows.length}});
+  });
+  await page.goto(origin+'/#/projects');
+  const list=page.getByRole('table',{name:'项目列表'});
+  const sort=list.getByRole('button',{name:'项目名称',exact:true});
+  await sort.click();
+  await page.waitForURL(url=>url.hash.includes('sort=name') && url.hash.includes('direction=asc'));
+  await sort.click();
+  await list.getByRole('link',{name:'项目 24'}).waitFor();
+  await page.getByRole('button',{name:'下一页'}).click();
+  await list.getByRole('link',{name:'项目 14'}).waitFor();
+  assert.match(new URL(page.url()).hash,/page=2/);
+  await page.reload();
+  await list.getByRole('link',{name:'项目 14'}).waitFor();
+  assert.equal(await list.getByRole('columnheader',{name:'项目名称'}).getAttribute('aria-sort'),'descending');
 });
 
 test('工作台与 Bot 共用居中宽度和左上对齐线', { skip: !moduleName }, async (t) => {
@@ -535,7 +573,7 @@ test('项目导航、来源深链、返回恢复与权限状态', { skip: !modul
       if(process.env.OMNIRELAY_TASK_EVIDENCE)await inspector.screenshot({path:process.env.OMNIRELAY_TASK_EVIDENCE+'/正式-'+width+'-'+theme+'.png'});
       await page.getByRole('link', { name: '返回项目列表' }).click();
       await page.getByRole('link', {name:'联调项目',exact:true}).waitFor();
-      assert.equal(await page.locator('input[name=q]').inputValue(), '联调');
+      assert.equal(await page.getByRole('searchbox',{name:'搜索项目'}).inputValue(), '联调');
       assert.equal(await page.evaluate(() => document.activeElement.textContent), '联调项目');
       assert.match(page.url(), /page=2/);
       for (const [section, title] of [

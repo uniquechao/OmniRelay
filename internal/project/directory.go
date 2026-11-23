@@ -29,6 +29,18 @@ func (s *Service) directory(ctx context.Context, actor identity.Principal, filte
 	if status := filter.Get("status"); status != "" && !slices.Contains(projectStatuses, status) {
 		return result, errInput
 	}
+	order := "p.updated_at DESC NULLS LAST, lower(coalesce(p.name,m.project_id)), m.project_id"
+	if filter.Has("sort") || filter.Has("direction") {
+		column := map[string]string{
+			"name": "lower(coalesce(p.name,m.project_id))", "project_type": "coalesce(p.project_type,'')",
+			"status": "coalesce(p.status,'active')", "updated_at": "p.updated_at",
+		}[filter.Get("sort")]
+		direction := filter.Get("direction")
+		if column == "" || (direction != "asc" && direction != "desc") {
+			return result, errInput
+		}
+		order = column + " " + direction + " NULLS LAST, lower(coalesce(p.name,m.project_id)), m.project_id"
+	}
 	var err error
 	result.CanCreate, err = s.roles.Check(ctx, actor, "project.create", "")
 	if err != nil {
@@ -40,7 +52,7 @@ func (s *Service) directory(ctx context.Context, actor identity.Principal, filte
 			return err
 		}
 		rows, err := tx.Query(ctx, "SELECT m.project_id, coalesce(p.name,m.project_id), "+profileColumns+", m.followed"+visible+
-			" ORDER BY p.updated_at DESC NULLS LAST, lower(coalesce(p.name,m.project_id)), m.project_id LIMIT $7 OFFSET $8", append(args, size, (page-1)*size)...)
+			" ORDER BY "+order+" LIMIT $7 OFFSET $8", append(args, size, (page-1)*size)...)
 		if err != nil {
 			return err
 		}
