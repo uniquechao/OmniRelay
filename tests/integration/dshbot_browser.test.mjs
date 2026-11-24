@@ -78,6 +78,7 @@ test('系统管理员打开原生 DSH，退出和撤权均断开调试连接', {
   assert.equal(foreign.status(), 403);
 
   const member = await login(browser, 'historical');
+  assert.equal((await member.context.request.get(origin + '/dshbot/')).status(), 403);
   const grant = await admin.context.request.post(origin + grants, {
     headers: admin.headers, data: {accountId: member.session.principal.account_id, role: 'system_admin'}
   });
