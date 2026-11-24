@@ -1,6 +1,8 @@
 spec:
   template:
     spec:
+      securityContext:
+        supplementalGroups: [10000]
       containers:
         - name: omnirelay
           volumeMounts:
