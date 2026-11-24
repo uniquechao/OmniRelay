@@ -16,7 +16,7 @@ OmniRelay 是飞书里的项目协作 Agent。首期承接群内 @、私聊、�
 | --- | --- | --- |
 | **OmniRelay Go 服务** | Kubernetes Deployment。首期一个副本，承载 Bot、工作台、调度和执行 Worker | 飞书应用凭据、业务 API 服务身份、PostgreSQL 运行库凭据。工作台通过 HTTPS 入口访问 |
 | **OmniRelay 专用 DSH** | 独立 StatefulSet，首期一个副本。提供查询、分派和分析执行 | 独立 PVC 挂载 DSH home，单独持有模型凭据。通过 Go 的受限工具访问当前工作允许的数据 |
-| **dshbot 原生调试服务** | 系统管理员从工作台一级菜单进入 DSH Web。Go 复核当前浏览器会话和 `dsh.debug` 权限，通过私有 Unix socket 转发页面、API 和 WebSocket | 调试进程独占原生登录凭据，管理员共享专用调试工作区。项目 Agent 的会话卷、业务工具身份和生产模型密钥与调试服务隔离 |
+| **dshbot 管理入口** | 系统管理员从工作台进入生产 DSH 的管理界面。项目 Bot 与管理入口使用同一套 Runtime、模型配置和原生会话记录 | 模型凭据由 Runtime 持有。Go 校验登录会话和 `dsh.debug`，管理员可跨项目操作，工作台登录失效或权限撤销时断开连接 |
 | **PostgreSQL** | OmniRelay 运行账本，保存入站事件、队列、账号角色、组织目录、配置、审计和回执 | 独立数据库，区分迁移与运行账号。优先使用托管或公司标准 PostgreSQL，若在集群内运行则由数据库 Operator 管理 |
 | **正式业务服务** | 校验成员权限与任务规则，提交正式任务和重要性标记 | 项目、成员、正式任务、业务审计和写入回执。如果由 OmniGrid 承担，部署为独立业务依赖 |
 
@@ -51,7 +51,7 @@ flowchart LR
     Store[("PostgreSQL · 独立运行账本")]
     DSH["DSH StatefulSet · 私有桥接 · PVC"]
     Admin["系统管理员"] --> DebugEntry
-    DebugEntry -->|私有 Unix socket| Debug["dshbot · 原生 DSH Web · 调试工作区"]
+    DebugEntry -->|管理员原生 DSH Web| DSH
     Grid["OmniGrid · Business API"]
     Feishu --> Ingress
     Ingress --> Store
@@ -65,6 +65,8 @@ flowchart LR
     Gate --> Grid
     Delivery --> Feishu
 ```
+
+**dshbot 管理入口。** 系统管理员通过工作台进入原生 DSH Web，拥有原生 owner 操作权限。Web 和项目 SDK 运行在同一个生产 Runtime Pod，读取同一模型 Secret 和 Agent 会话目录。两个 Host 通过 DSH 原生写锁串行修改会话。Web 侧维护自己的界面偏好和工作区列表。
 
 ## 2. 模块职责
 

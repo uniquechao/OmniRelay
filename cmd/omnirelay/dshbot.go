@@ -14,7 +14,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
-// The debug service owns its native credentials and home. Go only connects to
+// The Runtime console owns the native DSH connection. Go only connects to
 // the private Unix socket and never sends the workbench session to DSH.
 func registerDSHBot(mux *http.ServeMux, origin string, identities *identity.Service, roles *access.Service) {
 	public, _ := url.Parse(origin)

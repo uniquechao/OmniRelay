@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +38,33 @@ func startNativeDebugFixture(t *testing.T, origin string) {
 	_, number, _ := net.SplitHostPort(port.Addr().String())
 	port.Close()
 	cmd := exec.Command(binary, "-home", filepath.Join(dir, "home"), "-socket", socket, "-origin", origin+"/", "-port", number)
+	agents := filepath.Join(dir, "agents")
+	agent := filepath.Join(agents, strings.Repeat("a", 64))
+	workspace := filepath.Join(agent, "workspace")
+	project := "--" + strings.Trim(strings.ReplaceAll(workspace, "/", "-"), "-") + "--"
+	sessionDir := filepath.Join(agent, "home", "sessions", project, "fixture-project-session")
+	for _, folder := range []string{workspace, sessionDir} {
+		if err := os.MkdirAll(folder, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	header, err := json.Marshal(map[string]any{"type": "session", "version": 4, "id": "fixture-project-session", "cwd": workspace, "createdAt": 1, "isSeeded": false, "delegationDepth": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "session.v4.jsonl"), append(header, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(dir, "model-key")
+	if err := os.WriteFile(key, []byte("fixture-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plugins, err := filepath.Abs("../../runtime/dsh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "OMNI_AGENT_DIRECTORY="+agents, "OMNI_CONSOLE_PLUGINS="+plugins,
+		"DEEPSEEK_API_KEY_FILE="+key, "DSH_MODEL=deepseek-v4-flash", "DEEPSEEK_BASE_URL=http://127.0.0.1:1")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

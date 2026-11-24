@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,7 +27,7 @@ import (
 
 func main() {
 	origin := flag.String("origin", "", "OmniRelay HTTPS origin")
-	home := flag.String("home", "", "absolute path to the dedicated debug workspace")
+	home := flag.String("home", "", "absolute path to the native console workspace")
 	socket := flag.String("socket", "/run/omnirelay-dshbot/web.sock", "private Unix socket shared with the Go service")
 	port := flag.Int("port", 3080, "DSH loopback port")
 	flag.Parse()
@@ -93,10 +94,50 @@ func run(parent context.Context, origin, home, socket string, port int) error {
 	defer cancel()
 	public.Path = "/dshbot/"
 	mount := public.String()
-	cmd := exec.CommandContext(ctx, "dsh", "web", "--no-open", "--host", "127.0.0.1",
+	plugins := os.Getenv("OMNI_CONSOLE_PLUGINS")
+	if plugins == "" {
+		plugins = "/opt/omnirelay-console"
+	}
+	agents := os.Getenv("OMNI_AGENT_DIRECTORY")
+	if agents == "" {
+		agents = "/var/lib/omnirelay-agent/agents"
+	}
+	key, err := os.ReadFile(os.Getenv("DEEPSEEK_API_KEY_FILE"))
+	if err != nil || strings.TrimSpace(string(key)) == "" {
+		return errors.New("production model credential unavailable")
+	}
+	model := os.Getenv("DSH_MODEL")
+	if model == "" || os.Getenv("DEEPSEEK_BASE_URL") == "" {
+		return errors.New("production model configuration unavailable")
+	}
+	patch, err := os.CreateTemp("", "omnirelay-console-*.yml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(patch.Name())
+	rows := []map[string]any{
+		{"id": "session-controller", "isolate": map[string]string{"agents": "console-session-owner"}},
+		{"id": "session-persistence-jsonl", "disabled": true},
+		{"id": "agent-default-model", "config": map[string]string{"provider": "deepseek-official", "model": model}},
+		{"insert": []map[string]any{
+			{"id": "console-agents", "name": filepath.Join(plugins, "console-agents.cjs"), "isolate": map[string]string{"agents": "console-session-owner"}},
+			{"id": "console-sessions", "name": filepath.Join(plugins, "console-sessions.cjs")},
+			{"id": "console-workspaces", "name": filepath.Join(plugins, "console-workspaces.cjs")},
+		}},
+	}
+	if err := json.NewEncoder(patch).Encode(rows); err != nil {
+		patch.Close()
+		return err
+	}
+	if err := patch.Close(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "dsh", "--profile", "web", "--patch", patch.Name(), "--no-open", "--host", "127.0.0.1",
 		"--port", strconv.Itoa(port), "--public-url", mount, "--trusted-host", public.Host)
 	cmd.Dir = home
-	cmd.Env = []string{"HOME=" + home, "DSH_HOME=" + filepath.Join(home, ".dsh"), "PATH=" + os.Getenv("PATH")}
+	cmd.Env = []string{"HOME=" + home, "DSH_HOME=" + filepath.Join(home, ".dsh"), "PATH=" + os.Getenv("PATH"),
+		"OMNI_AGENT_DIRECTORY=" + agents, "DEEPSEEK_API_KEY=" + strings.TrimSpace(string(key)),
+		"DEEPSEEK_BASE_URL=" + os.Getenv("DEEPSEEK_BASE_URL")}
 	logs, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -108,12 +149,16 @@ func run(parent context.Context, origin, home, socket string, port int) error {
 	defer func() { cancel(); _ = cmd.Wait() }()
 	reader := bufio.NewReader(logs)
 	token := ""
-	for token == "" {
+	catalogReady := false
+	for token == "" || !catalogReady {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return errors.New("DSH exited before publishing its Web URL")
 		}
 		line = strings.TrimSpace(line)
+		if line == "OmniRelay native workspaces ready" {
+			catalogReady = true
+		}
 		if strings.HasPrefix(line, "dsh web: "+mount+"?") {
 			u, err := url.Parse(strings.TrimPrefix(line, "dsh web: "))
 			if err == nil {

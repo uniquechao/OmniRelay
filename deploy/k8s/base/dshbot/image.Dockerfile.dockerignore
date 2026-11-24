@@ -5,3 +5,5 @@
 !runtime/
 !runtime/dsh/
 !runtime/dsh/requirements.txt
+
+!runtime/dsh/console-*.cjs

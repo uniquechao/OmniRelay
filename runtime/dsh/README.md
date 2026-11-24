@@ -9,22 +9,11 @@ bash tests/integration/group-agent-gate.sh
 
 ## 系统管理员原生调试
 
-系统管理员登录工作台，点击一级菜单 **dshbot**（`/#/dshbot`）即可打开官方 DSH Web。Go 对 `/dshbot/` 下的页面、资源、API 和 WebSocket 使用当前登录会话校验 `dsh.debug`，退出、停用或撤权后终止长连接。所有具有该权限的管理员共用一个调试工作区。调试会话与飞书、项目 PM 的会话分别保存。
+系统管理员登录工作台，从 **dshbot** 打开官方 DSH Web。Gateway 对页面、资源、WebSocket 和 RPC 校验浏览器会话与 `dsh.debug`。通过后使用 DSH 原生 owner 权限，退出或撤权会断开活动连接。
 
-在独立的调试服务账号下安装本目录的固定版本，将虚拟环境的 `bin` 加入该账号的 `PATH`，并从仓库根目录构建启动器。下面的地址须替换为工作台实际的 `OMNIRELAY_PUBLIC_ORIGIN`。
+Web 容器随生产 Runtime StatefulSet 启动。两个入口使用同一个模型 Secret。管理页按工作区列出 Agent 原有的原生会话。打开历史调用 DSH 的 JSONL 读取接口，继续会话和改名使用同一文件及原生写锁。管理员在项目工作区新建的会话也写入该 Agent 的 store。在管理页主动占用会话后，可在该会话执行 `/handoff`，将空闲会话交还给项目 Bot。
 
-```sh
-python -m pip install -r runtime/dsh/requirements.txt
-go build -o bin/dshbot ./cmd/dshbot
-bin/dshbot -origin https://relay.example.test \
-  -home /var/lib/omnirelay-dshbot -socket /run/omnirelay-dshbot/web.sock
-```
-
-部署时为调试进程提供独立的系统身份、可写的 home 和专用调试模型配置。该进程启动 `dsh web`，仅监听回环地址（默认端口 3080，`-port` 可修改），在进程内交换原生登录凭据。为服务预建 socket 父目录，属主为调试账号，属组包含 Go 服务账号，目录权限设为 `2750` 以继承属组。启动器创建权限为 `0660` 的 socket；工作区仅授予调试账号访问。使用进程管理器同时管理启动器和其子进程，并在每次启动前准备专属运行目录。
-
-Go 默认连接上述 socket，使用其他位置时设置 `OMNIRELAY_DSHBOT_SOCKET`。Go 和调试进程须能访问同一 socket。HTTPS 入口将整个 `/dshbot/` 路径原样转发给 Go，支持 WebSocket Upgrade 和流式响应。管理员遇到 HTTP 503 时，检查调试进程、socket 路径和属组权限。未登录请求返回 401，已登录且缺少权限的请求返回 403。
-
-在 Kubernetes 中，使用仓库根目录为构建上下文，以 `deploy/k8s/base/dshbot/image.Dockerfile` 构建调试镜像。在 Go 所在命名空间，将 `deploy/k8s/base/dshbot/debug.yaml` 中的 `OMNIRELAY_DSHBOT_IMAGE` 替换为已验证的镜像后应用。独立 Deployment 的就绪探针通过 socket 验证原生页面返回 200，再将同目录的 `gateway-patch.yaml` 作为 strategic merge patch 应用到 Go Deployment。此卷仅向 Go 挂载 `ipc` 子目录。调试 Pod 的网络策略默认禁止入站和出站流量，调试工作区可离线使用；调用在线模型需要单独配置调试供应商、凭据和对应的出站访问。
+构建 `deploy/k8s/base/dshbot/image.Dockerfile`，将镜像填入 [Runtime 清单](../../deploy/k8s/base/dsh/runtime.yaml) 的 `OMNIRELAY_DSHBOT_IMAGE`。应用 [IPC 卷清单](../../deploy/k8s/base/dshbot/debug.yaml)，并对 Gateway 应用同目录的 `gateway-patch.yaml`。Gateway 只读挂载 IPC 目录。Web 容器挂载 Agent 数据、管理工作区及模型 Secret，Runtime 的工作账本和 mTLS 客户端私钥由工作容器持有。
 
 ## 内部验收
 

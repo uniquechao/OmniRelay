@@ -39,6 +39,33 @@ test('系统管理员打开原生 DSH，退出和撤权均断开调试连接', {
 
   const admin = await login(browser, 'admin');
   const adminSocket = await openConsole(admin.page);
+  async function native(method, args) {
+    const response = await admin.context.request.post(origin + '/dshbot/api/' + method, {
+      headers: {Origin: origin}, data: {type: 'client-request', rpcId: 'verification', method, payload: {args}}
+    });
+    assert.equal(response.status(), 200);
+    const {result} = await response.json();
+    assert.ok(result.ok, JSON.stringify(result.error));
+    return result.value;
+  }
+  const id = 'fixture-project-session';
+  const list = await native('session/list', {_request: {}});
+  assert.ok(list.items.some(item => item.sessionId === id));
+  const catalog = await native('session/modelCatalog', {});
+  assert.ok(catalog.routableProviders.includes('deepseek-official'));
+  assert.equal(catalog.default.model, 'deepseek-v4-flash');
+  const renamed = await native('session/rename', {request: {sessionId: id, title: '项目会话写入验证'}});
+  assert.equal(renamed.title, '项目会话写入验证');
+  const handoff = await native('commands/execute', {agentId: id, line: '/handoff', submittedAttachments: []});
+  assert.equal(handoff.result.kind, 'success');
+  await assert.doesNotReject(async () => {
+    for (let i = 0; i < 30; i++) {
+      const {items} = await native('session/list', {_request: {}});
+      if (items.find(item => item.sessionId === id)?.agentAvailable === false) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.fail('The console still holds the Agent after explicit handoff');
+  });
   assert.ok(!(await admin.context.cookies()).some(cookie => cookie.name.startsWith('dsh-auth-')));
   const withBearer = await admin.context.request.get(origin + '/dshbot/', {headers: {Authorization: 'Bearer fixture-only'}});
   assert.equal(withBearer.status(), 401);

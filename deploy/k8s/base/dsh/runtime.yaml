@@ -34,6 +34,36 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: console-ipc
+          image: OMNIRELAY_DSHBOT_IMAGE
+          command: [python, -c]
+          args:
+            - |
+              import os
+              os.makedirs('/state/ipc', exist_ok=True)
+              os.chown('/state/ipc', -1, 10000)
+              os.chmod('/state/ipc', 0o2770)
+              lock = '/state/ipc/web.sock.lock'
+              if os.path.exists(lock) and os.stat(lock).st_uid == 10002:
+                  os.chown(lock, -1, 10000)
+                  os.chmod(lock, 0o660)
+          securityContext:
+            runAsUser: 10002
+            runAsGroup: 10000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: console-ipc, mountPath: /state}]
+        - name: console-directories
+          image: OMNIRELAY_DSHBOT_IMAGE
+          command: [python, -c]
+          args: ["import os; [os.makedirs('/data/' + d, mode=0o700, exist_ok=True) for d in ('agents', 'console')]"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: data, mountPath: /data}]
       containers:
         - name: runtime
           image: omnirelay/dsh-runtime:release
@@ -86,7 +116,44 @@ spec:
             - {name: tmp, mountPath: /tmp}
             - {name: tls, mountPath: /certs, readOnly: true}
             - {name: model, mountPath: /model, readOnly: true}
+        - name: console
+          image: OMNIRELAY_DSHBOT_IMAGE
+          imagePullPolicy: IfNotPresent
+          args: ["-origin", "$(PUBLIC_ORIGIN)", "-home", "/var/lib/omnirelay-console"]
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - name: PUBLIC_ORIGIN
+              valueFrom:
+                configMapKeyRef: {name: omnirelay-runtime, key: OMNIRELAY_PUBLIC_ORIGIN}
+            - {name: DEEPSEEK_API_KEY_FILE, value: /model/DEEPSEEK_API_KEY}
+            - {name: DEEPSEEK_BASE_URL, value: "https://api.deepseek.com/anthropic"}
+            - {name: DSH_MODEL, value: deepseek-v4-flash}
+          startupProbe:
+            exec: &consoleProbe
+              command: [python, -c, "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/run/omnirelay-dshbot/web.sock'); s.sendall(b'GET / HTTP/1.0\\r\\nHost: dshbot\\r\\n\\r\\n'); assert b' 200 ' in s.makefile('rb').readline()"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe: {exec: *consoleProbe, periodSeconds: 15, timeoutSeconds: 5}
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/omnirelay-agent/agents, subPath: agents}
+            - {name: data, mountPath: /var/lib/omnirelay-console, subPath: console}
+            - {name: console-ipc, mountPath: /run/omnirelay-dshbot, subPath: ipc}
+            - {name: console-tmp, mountPath: /tmp}
+            - {name: model, mountPath: /model, readOnly: true}
       volumes:
+        - name: console-ipc
+          persistentVolumeClaim: {claimName: omnirelay-dshbot}
+        - name: console-tmp
+          emptyDir: {sizeLimit: 512Mi}
         - name: tmp
           emptyDir: {sizeLimit: 1Gi}
         - name: tls
