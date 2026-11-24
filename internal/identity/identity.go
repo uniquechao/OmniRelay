@@ -329,6 +329,13 @@ func (s *Service) Authenticate(w http.ResponseWriter, r *http.Request, policy Se
 	return p, ok
 }
 
+// NativeBrowserSession checks the live browser login for the native UI proxy.
+// Native requests use the proxy's exact Origin check for writes and upgrades.
+func (s *Service) NativeBrowserSession(r *http.Request) (Principal, int) {
+	p, _, status, _ := s.browserSession(r, ValidateSession, false)
+	return p, status
+}
+
 // AuthenticateWorkbench 同步约束业务页面的直达 API。
 func (s *Service) AuthenticateWorkbench(w http.ResponseWriter, r *http.Request, policy SessionPolicy) (Principal, bool) {
 	p, ok := s.Authenticate(w, r, policy)
@@ -370,6 +377,11 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request, policy Se
 }
 
 func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Principal, string, int, string) {
+	requireCSRF := policy == RefreshSessionWithCSRF || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions)
+	return s.browserSession(r, policy, requireCSRF)
+}
+
+func (s *Service) browserSession(r *http.Request, policy SessionPolicy, requireCSRF bool) (Principal, string, int, string) {
 	if len(r.Header.Values("Authorization")) != 0 {
 		return Principal{}, "", http.StatusUnauthorized, "browser_session_required"
 	}
@@ -378,7 +390,7 @@ func (s *Service) authenticateSession(r *http.Request, policy SessionPolicy) (Pr
 		return Principal{}, "", http.StatusUnauthorized, "authentication_required"
 	}
 	validCSRF := true
-	if policy == RefreshSessionWithCSRF || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
+	if requireCSRF {
 		origins := r.Header.Values("Origin")
 		csrf := r.Header.Values("X-CSRF-Token")
 		validCSRF = len(origins) == 1 && origins[0] == s.cfg.PublicOrigin && len(csrf) == 1 &&
@@ -479,6 +491,8 @@ func (a WorkbenchAccess) canReturnTo(path string) bool {
 		return false
 	}
 	switch path {
+	case "/#/dshbot":
+		return a.Navigation["dshbot"]
 	case "/#/workbench":
 		return a.Navigation["workbench"]
 	case "/#/system/users":
@@ -610,7 +624,7 @@ func localReturnPath(raw string) (string, error) {
 	switch raw {
 	case "":
 		return "/", nil
-	case "/", "/#/feishu/drive", "/#/workbench", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
+	case "/", "/#/feishu/drive", "/#/workbench", "/#/dshbot", "/#/system/users", "/#/system/roles", "/#/system/audit", "/#/system/feishu-bot", "/#/system/settings":
 		return raw, nil
 	default:
 		return "", errors.New("invalid workbench return path")

@@ -12,7 +12,7 @@ type roleDefinition struct {
 
 var systemActions = []string{
 	"account.read", "account.manage", "role.read", "role.manage", "directory.read",
-	"directory.sync", "system.read", "system.configure", "system.operate", "audit.read", "chat.read_all", "project.create",
+	"directory.sync", "system.read", "system.configure", "system.operate", "audit.read", "chat.read_all", "project.create", "dsh.debug",
 }
 
 var actionDescriptions = map[string]string{
@@ -23,6 +23,7 @@ var actionDescriptions = map[string]string{
 	"system.operate": "执行飞书 Bot 连接检测", "audit.read": "查看系统审计日志",
 	"chat.read_all":  "读取此部署已授权的飞书 Bot 会话",
 	"project.create": "新建项目",
+	"dsh.debug":      "进入 DSH 原生调试界面",
 }
 
 var roleCatalog = map[string]roleDefinition{

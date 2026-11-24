@@ -117,6 +117,9 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
     ['projects','drive','users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
   let page;
   switch(target?.route.id){
+    case 'dshbot':
+      page=!locked && <main className="dshbot-console"><iframe title="DSH 原生调试界面" src="/dshbot/"/></main>;
+      break;
     case 'projects':
       page=target.section==='项目列表' ? <ProjectWorkspacePage key={visit} hash={target.path.slice(1)} guard={view}/> : <ProjectListPage key={visit} guard={view}/>;
       break;

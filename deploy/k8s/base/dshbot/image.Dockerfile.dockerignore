@@ -1,0 +1,7 @@
+**
+!cmd/
+!cmd/dshbot/
+!cmd/dshbot/main.go
+!runtime/
+!runtime/dsh/
+!runtime/dsh/requirements.txt

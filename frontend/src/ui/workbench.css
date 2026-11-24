@@ -22,6 +22,9 @@ button, select { cursor: pointer; }
 .nav a:active { background: var(--or-rail-pressed); }
 .rail-foot { margin-top: auto; border-top: 1px solid var(--or-rail-edge); padding-top: 8px; font-size: .8125rem; }
 .workspace { min-width: 0; }
+.workspace:has(.dshbot-console) { display: flex; flex-direction: column; height: 100dvh; }
+.dshbot-console { flex: 1; min-height: 0; }
+.dshbot-console iframe { display: block; border: 0; width: 100%; height: 100%; }
 .top { position: sticky; z-index: 2; top: 0; min-height: 46px; padding: 5px 22px; background: var(--or-surface); border-bottom: 1px solid var(--or-border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
 .crumb, .top-tools { display: flex; align-items: center; min-width: 0; flex-wrap: wrap; gap: 5px 8px; font-size: .75rem; color: var(--or-text-muted); }
 .crumb a { color: var(--or-text-secondary); text-decoration: none; }

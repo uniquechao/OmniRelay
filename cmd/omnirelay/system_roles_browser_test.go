@@ -83,6 +83,9 @@ func runSystemBrowser(t *testing.T, suite string) {
 	server := httptest.NewUnstartedServer(nil)
 	defer server.Close()
 	origin := "https://" + server.Listener.Addr().String()
+	if suite == "dshbot_browser.test.mjs" {
+		startNativeDebugFixture(t, origin)
+	}
 	cfg := configuration{
 		publicOrigin: origin, appID: "cli_fixture", appSecret: "fixture-only",
 		tenantKey: "tenant_fixture", bootstrap: "ou_admin", syncInterval: time.Hour,

@@ -31,6 +31,7 @@ const system=(id:string,title:string,capability=id):Route=>({
 export const routes:Route[]=[
   {id:'workbench',path:'/#/workbench',title:'工作台总览',group:'工作空间',icon:'nav-workbench',capability:'workbench'},
   {id:'projects',path:'/#/projects',title:'项目列表',group:'工作空间',icon:'nav-projects',capability:'workbench',parse:project},
+  {id:'dshbot',path:'/#/dshbot',title:'dshbot',group:'工作空间',icon:'nav-bot-chat',capability:'dshbot'},
   {id:'bot-chats',path:'/#/feishu/bot-chats',title:'机器人记录',group:'飞书',icon:'nav-bot-chat',capability:'bot_chats',parse:chat},
   {id:'drive',path:'/#/feishu/drive',title:'文件网盘',group:'飞书',icon:'file-grid',capability:'bot_chats'},
   system('users','用户管理'),system('roles','角色权限'),system('feishu-bot','飞书 Bot 配置','feishu_bot'),

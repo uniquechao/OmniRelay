@@ -12,11 +12,14 @@ Go 服务已接入 Bot 管理接口与 OAuth 固定错误回跳。目录响应�
 
 系统运维者在没有系统管理员角色时默认仅显示系统管理。项目权限源确认有正式项目访问权限后同时显示工作台。
 
+`access.navigation.dshbot` 与 `access.permissions["dsh.debug"]` 一致。系统管理员可从一级菜单 `/#/dshbot` 进入原生调试界面，Go 对每次原生请求及已建立的长连接复核该权限。
+
 | 权限 | 系统管理员 | 系统运维者 | 审计查看者 | 普通用户 |
 | --- | --- | --- | --- | --- |
 | `account.read`、`role.read`、`directory.read`、`directory.sync`、`system.read`、`system.operate` | 允许 | 允许 | 拒绝 | 拒绝 |
 | `account.manage`、`role.manage`、`system.configure` | 允许 | 拒绝 | 拒绝 | 拒绝 |
 | `audit.read` | 允许 | 允许 | 允许 | 拒绝 |
+| `dsh.debug` | 允许 | 拒绝 | 拒绝 | 拒绝 |
 
 `GET /api/v1/system/roles` 要求 `role.read`，返回 `items` 数组。每个角色条目包含 `id`、`name`、`scope`（`system` 或 `project`）、`default` 和 `grantable` 布尔值以及中文说明字符串数组 `permissions`。账号接口的 `systemRoles` 为有效系统角色字符串数组，停用账号返回 `[]`。默认普通用户由启用状态计算，现有授权记录仅包含真实授权。项目权限继续由可信项目成员关系和业务能力计算。
 
@@ -36,9 +39,10 @@ Go 服务已接入 Bot 管理接口与 OAuth 固定错误回跳。目录响应�
     "system.read": true,
     "system.configure": false,
     "system.operate": true,
-    "audit.read": true
+    "audit.read": true,
+    "dsh.debug": false
   },
-  "navigation": {"workbench": false, "system": true},
+  "navigation": {"workbench": false, "system": true, "dshbot": false},
   "default_route": "/#/system/users",
   "permission_version": "7"
 }

@@ -1,0 +1,10 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: omnirelay
+          volumeMounts:
+            - {name: dshbot-ipc, mountPath: /run/omnirelay-dshbot, subPath: ipc, readOnly: true}
+      volumes:
+        - name: dshbot-ipc
+          persistentVolumeClaim: {claimName: omnirelay-dshbot, readOnly: true}

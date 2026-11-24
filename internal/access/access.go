@@ -255,6 +255,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 	view := identity.WorkbenchAccess{
 		Roles: roles, Permissions: permissions, Admin: admin,
 		Navigation: map[string]bool{
+			"dshbot":    permissions["dsh.debug"],
 			"workbench": true,
 			"bot_chats": p.OpenID != "",
 			"system":    admin["users"] || admin["roles"] || admin["audit"] || admin["feishu_bot"],

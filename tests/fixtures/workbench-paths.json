@@ -1,13 +1,14 @@
 {
   "access": {
     "普通用户": {"navigation":{"workbench":true,"bot_chats":true}},
-    "管理员": {"navigation":{"system":true,"workbench":true,"bot_chats":true},"admin":{"users":true,"roles":true,"audit":true,"settings":true,"feishu_bot":true}},
+    "管理员": {"navigation":{"system":true,"workbench":true,"bot_chats":true,"dshbot":true},"admin":{"users":true,"roles":true,"audit":true,"settings":true,"feishu_bot":true}},
     "运维": {"navigation":{"system":true},"admin":{"users":true,"roles":true,"settings":true,"feishu_bot":true,"audit":true}},
     "审计": {"navigation":{"system":true,"workbench":true},"admin":{"audit":true}},
     "无页面": {"admin":{"feishu_bot":true}}
   },
   "cases": [
     ["/#/workbench","/#/workbench",["普通用户","管理员","审计"]],
+    ["/#/dshbot","/#/dshbot",["管理员"]],
     ["/#/system/users","/#/system/users",["管理员","运维"]],
     ["/#/system/roles","/#/system/roles",["管理员","运维"]],
     ["/#/system/audit","/#/system/audit",["管理员","运维","审计"]],

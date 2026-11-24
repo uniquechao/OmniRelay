@@ -7,9 +7,28 @@ docker build -t omnirelay-dsh-runtime:group-request runtime/dsh
 bash tests/integration/group-agent-gate.sh
 ```
 
+## 系统管理员原生调试
+
+系统管理员登录工作台，点击一级菜单 **dshbot**（`/#/dshbot`）即可打开官方 DSH Web。Go 对 `/dshbot/` 下的页面、资源、API 和 WebSocket 使用当前登录会话校验 `dsh.debug`，退出、停用或撤权后终止长连接。所有具有该权限的管理员共用一个调试工作区。调试会话与飞书、项目 PM 的会话分别保存。
+
+在独立的调试服务账号下安装本目录的固定版本，将虚拟环境的 `bin` 加入该账号的 `PATH`，并从仓库根目录构建启动器。下面的地址须替换为工作台实际的 `OMNIRELAY_PUBLIC_ORIGIN`。
+
+```sh
+python -m pip install -r runtime/dsh/requirements.txt
+go build -o bin/dshbot ./cmd/dshbot
+bin/dshbot -origin https://relay.example.test \
+  -home /var/lib/omnirelay-dshbot -socket /run/omnirelay-dshbot/web.sock
+```
+
+部署时为调试进程提供独立的系统身份、可写的 home 和专用调试模型配置。该进程启动 `dsh web`，仅监听回环地址（默认端口 3080，`-port` 可修改），在进程内交换原生登录凭据。为服务预建 socket 父目录，属主为调试账号，属组包含 Go 服务账号，目录权限设为 `2750` 以继承属组。启动器创建权限为 `0660` 的 socket；工作区仅授予调试账号访问。使用进程管理器同时管理启动器和其子进程，并在每次启动前准备专属运行目录。
+
+Go 默认连接上述 socket，使用其他位置时设置 `OMNIRELAY_DSHBOT_SOCKET`。Go 和调试进程须能访问同一 socket。HTTPS 入口将整个 `/dshbot/` 路径原样转发给 Go，支持 WebSocket Upgrade 和流式响应。管理员遇到 HTTP 503 时，检查调试进程、socket 路径和属组权限。未登录请求返回 401，已登录且缺少权限的请求返回 403。
+
+在 Kubernetes 中，使用仓库根目录为构建上下文，以 `deploy/k8s/base/dshbot/image.Dockerfile` 构建调试镜像。在 Go 所在命名空间，将 `deploy/k8s/base/dshbot/debug.yaml` 中的 `OMNIRELAY_DSHBOT_IMAGE` 替换为已验证的镜像后应用。独立 Deployment 的就绪探针通过 socket 验证原生页面返回 200，再将同目录的 `gateway-patch.yaml` 作为 strategic merge patch 应用到 Go Deployment。此卷仅向 Go 挂载 `ipc` 子目录。调试 Pod 的网络策略默认禁止入站和出站流量，调试工作区可离线使用；调用在线模型需要单独配置调试供应商、凭据和对应的出站访问。
+
 ## 内部验收
 
-在仓库根目录运行上面的脚本。需要 Linux、Docker、Go（版本见 go.mod）、Python、OpenSSL 和 curl。脚本默认启动独立 PostgreSQL 16，也可用 `OMNIRELAY_TEST_DATABASE_URL` 指定隔离数据库。模型响应、账号和收件地址使用合成数据。真实 Go 服务逻辑、会籍、双向 TLS、镜像内 Harness 定时器、工具和持久卷均参与验收。脚本要求下列验收测试逐一通过，跳过任一测试即失败。日志位于脚本输出的 `.runtime/group-gate.*` 目录。
+在仓库根目录运行 `bash tests/integration/group-agent-gate.sh`。需要 Linux、Docker、Go（版本见 go.mod）、Python、OpenSSL 和 curl。脚本默认启动独立 PostgreSQL 16，也可用 `OMNIRELAY_TEST_DATABASE_URL` 指定隔离数据库。模型响应、账号和收件地址使用合成数据。真实 Go 服务逻辑、会籍、双向 TLS、镜像内 Harness 定时器、工具和持久卷均参与验收。脚本要求下列验收测试逐一通过，跳过任一测试即失败。日志位于脚本输出的 `.runtime/group-gate.*` 目录。
 
 | 门槛 | 放行条件 |
 | --- | --- |
