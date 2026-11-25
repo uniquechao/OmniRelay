@@ -178,7 +178,7 @@ func (s *Service) localPanelSources(ctx context.Context, actor identity.Principa
 		JOIN project_members m ON (m.tenant_key,m.app_id,m.project_id,m.account_id)=(r.tenant_key,r.app_id,r.project_id,r.account_id)
 		JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
 		WHERE (s.tenant_key,s.app_id,s.project_id,r.account_id)=($1,$2,$3,$4) AND (s.kind='document' OR ($6 AND s.kind='minutes'))
-		  AND m.role<>'revoked' AND a.active AND a.open_id=$5`, scope(actor, id).args(actor.AccountID, actor.OpenID, includeMinutes)...)
+		  AND m.role<>'revoked' AND a.active AND a.open_id IS NOT DISTINCT FROM nullif($5,'')`, scope(actor, id).args(actor.AccountID, actor.OpenID, includeMinutes)...)
 	if err != nil {
 		return nil, err
 	}

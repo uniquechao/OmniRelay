@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const latestMigration = 45
+const latestMigration = 46
 
 func TestEmbeddedMigrationsAreOrdered(t *testing.T) {
 	versions, err := readMigrations()

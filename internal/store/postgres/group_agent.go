@@ -32,7 +32,7 @@ func FeishuGroupScope(credentials int64) func(context.Context, pgx.Tx, group.Env
 			}
 			a.Project = e.Project
 			err = tx.QueryRow(ctx, `SELECT b.bot_open_id,b.version,u.open_id FROM feishu_bot_configs b JOIN accounts u USING(tenant_key,app_id)
-               WHERE u.tenant_key=$1 AND u.app_id=$2 AND u.id=$3 AND u.active AND b.enabled AND b.bot_open_id<>''
+               WHERE u.tenant_key=$1 AND u.app_id=$2 AND u.id=$3 AND u.active AND u.open_id IS NOT NULL AND b.enabled AND b.bot_open_id<>''
                AND b.credentials_generation=$4 AND b.version=$5`, e.Tenant, e.App, e.Account, credentials, e.Config).Scan(&a.Bot, &a.Version, &a.Recipient)
 		default:
 			a.Recipient = e.Chat

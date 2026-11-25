@@ -238,7 +238,7 @@ func (s *Service) check(ctx context.Context, actor identity.Principal, id string
 	if account == "" {
 		account = actor.AccountID
 	}
-	err = s.pool.QueryRow(ctx, `SELECT id,open_id FROM accounts
+	err = s.pool.QueryRow(ctx, `SELECT id,coalesce(open_id,'') FROM accounts
 		WHERE (tenant_key,app_id,id)=($1,$2,$3) AND active`, actor.TenantKey, actor.AppID, account).
 		Scan(&subject.AccountID, &subject.OpenID)
 	switch {

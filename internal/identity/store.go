@@ -116,7 +116,7 @@ VALUES ($1, $2, CURRENT_TIMESTAMP + make_interval(secs => $3), CURRENT_TIMESTAMP
 }
 
 func (s *Service) loadSession(ctx context.Context, token string, policy SessionPolicy) (Principal, error) {
-	const fields = `account.id, account.tenant_key, account.app_id, account.open_id, account.name, account.avatar_url, session.auth_method,
+	const fields = `account.id, account.tenant_key, account.app_id, coalesce(account.open_id,''), account.name, account.avatar_url, session.auth_method,
 		EXISTS (SELECT 1 FROM account_passwords WHERE account_id=account.id)`
 	const conditions = `session.token_digest=$1 AND account.id=session.account_id AND account.active
 		AND account.tenant_key=$2 AND account.app_id=$3

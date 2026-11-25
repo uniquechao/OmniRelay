@@ -24,7 +24,7 @@ type Account struct {
 	DisableProtected bool       `json:"disableProtected,omitempty"`
 }
 
-var accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + identity.FeishuPersonKeySQL("a.open_id") + ", " + systemGrantRoles + ", " + resignationColumn
+var accountColumns = "a.id, a.name, a.avatar_url, a.active, a.created_at, a.updated_at, " + "coalesce(" + identity.FeishuPersonKeySQL("a.open_id") + ",'')" + ", " + systemGrantRoles + ", " + resignationColumn
 
 // Read only the durable departure marker here. The directory API supplies
 // current directory fields under its separate read permission.
@@ -238,7 +238,7 @@ func (s *Service) grantRoleInMutation(ctx context.Context, tx pgx.Tx, actor iden
 		source = "project_manager"
 	}
 	target := identity.Principal{TenantKey: s.tenantKey, AppID: s.appID, AccountID: r.AccountID}
-	err := tx.QueryRow(ctx, `SELECT open_id, name, avatar_url FROM accounts
+	err := tx.QueryRow(ctx, `SELECT coalesce(open_id,''), name, avatar_url FROM accounts
 			WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND active`, s.tenantKey, s.appID, r.AccountID).
 		Scan(&target.OpenID, &target.Name, &target.AvatarURL)
 	if errors.Is(err, pgx.ErrNoRows) {

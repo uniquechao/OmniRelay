@@ -24,7 +24,7 @@ func (s *Service) handleAccountProjects(w http.ResponseWriter, r *http.Request, 
 	err := s.pool.QueryRow(ctx, `WITH managed AS (
         SELECT m.project_id FROM project_members m JOIN accounts a
         ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
-        WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.account_id=$3 AND a.open_id=$4 AND a.active AND m.role='manager'
+        WHERE m.tenant_key=$1 AND m.app_id=$2 AND m.account_id=$3 AND a.open_id IS NOT DISTINCT FROM nullif($4,'') AND a.active AND m.role='manager'
     ), target AS (
         SELECT id,active FROM accounts WHERE tenant_key=$1 AND app_id=$2 AND id=$5
     ), candidates AS (

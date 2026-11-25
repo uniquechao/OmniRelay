@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/feishu"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/migrations"
@@ -62,9 +63,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	valid := (command == "serve" || command == "migrate") && len(args) <= 1 ||
-		command == "password" && len(args) == 3
+		command == "password" && len(args) == 3 || command == "create-local-admin" && len(args) == 1
 	if !valid && !(command == "candidate-operation" && len(args) == 1) {
-		return errors.New("usage: omnirelay [serve|migrate|setup-token|password <account-id> <username>]")
+		return errors.New("usage: omnirelay [serve|migrate|setup-token|create-local-admin|password <account-id> <username>]")
 	}
 	cfg, err := readConfig(os.Getenv, (command == "serve" || command == "candidate-operation") && candidate == "")
 	if err != nil {
@@ -116,8 +117,8 @@ func run(ctx context.Context, args []string) error {
 	if err := migrations.Check(startup, pool); err != nil {
 		return errors.New("required PostgreSQL schema missing or changed; run omnirelay migrate for this release")
 	}
-	if command == "password" {
-		return setAccountPassword(startup, pool, args[1], args[2])
+	if command == "password" || command == "create-local-admin" {
+		return runPasswordCommand(startup, pool, args)
 	}
 	var handler http.Handler
 	var workers *backendWorkers
@@ -206,7 +207,7 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
-func setAccountPassword(ctx context.Context, pool *pgxpool.Pool, accountID, username string) error {
+func runPasswordCommand(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	tenant := strings.TrimSpace(os.Getenv("OMNIRELAY_FEISHU_TENANT_KEY"))
 	app := strings.TrimSpace(os.Getenv("OMNIRELAY_FEISHU_APP_ID"))
 	if tenant == "" && app == "" && strings.TrimSpace(os.Getenv("OMNIRELAY_SETUP_MODE")) == "true" {
@@ -236,7 +237,15 @@ func setAccountPassword(ctx context.Context, pool *pgxpool.Pool, accountID, user
 	if err != nil {
 		return errors.New("could not read the password")
 	}
-	if err := identity.ProvisionPassword(ctx, pool, tenant, app, accountID, username, string(password)); err != nil {
+	if args[0] == "create-local-admin" {
+		id, err := access.New(pool, tenant, app).CreateLocalAdmin(ctx, string(password))
+		if err != nil {
+			return fmt.Errorf("create local admin: %w", err)
+		}
+		slog.Info("Local administrator created", "account_id", id)
+		return nil
+	}
+	if err := identity.ProvisionPassword(ctx, pool, tenant, app, args[1], args[2], string(password)); err != nil {
 		return errors.New("password provisioning failed; verify the active account, username and password requirements")
 	}
 	slog.Info("Account password provisioned; existing sessions revoked")

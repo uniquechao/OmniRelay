@@ -39,7 +39,7 @@ func (s *Service) apiCredentials(r *http.Request, policy SessionPolicy) (Princip
 		return invalid()
 	}
 	var p Principal
-	err := s.pool.QueryRow(r.Context(), `SELECT a.id,a.tenant_key,a.app_id,a.open_id,a.name,a.avatar_url
+	err := s.pool.QueryRow(r.Context(), `SELECT a.id,a.tenant_key,a.app_id,coalesce(a.open_id,''),a.name,a.avatar_url
 		FROM account_api_keys k JOIN accounts a ON a.id=k.account_id
 		WHERE k.secret_digest=$1 AND k.realm=$2 AND k.expires_at>clock_timestamp()
 		AND a.active AND a.tenant_key=$3 AND a.app_id=$4`, digest(key), s.cookieName(sessionCookie), s.cfg.TenantKey, s.cfg.AppID).
