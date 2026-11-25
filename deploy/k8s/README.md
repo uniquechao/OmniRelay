@@ -24,6 +24,28 @@
 4. 按版本发布 Go、DSH 桥和运行时，通过各自探针后，再配置目标主机的 Web NodePort。确认外部 TLS、OAuth 回调和内网依赖。
 5. 通过应用身份访问 MinIO 时，给 Go Pod 加 `omnirelay.io/s3-access: "true"`，挂载 CA，并配置仅能操作应用 bucket 的 S3 身份。
 
+### 预览 Bot 与 DSH Runtime
+
+`omni` 命名空间的预览环境使用以下两个单副本工作负载。排查 Bot 收到的工作时先看 Gateway，排查 DSH 执行和会话历史时看 Runtime。
+
+| 工作负载 | 职责 | 集群内入口 |
+| --- | --- | --- |
+| `Deployment/preview-project-bot` | 预览项目 Bot 的 Go Gateway，分派工作、校验 Runtime 回调，连接预览库 | `omnirelay-agent-gateway.omni.svc:8444`（mTLS 回调） |
+| `StatefulSet/preview-dsh-runtime` | 执行 DSH 工作，在原卷上保存 Agent 和会话 | `omnirelay-dsh-runtime.omni.svc:8443`（mTLS 执行接口） |
+
+Runtime 的 `AGENT_OWNER` 和 Gateway 的 `OMNIRELAY_AGENT_RUNTIME_URL` 使用同一个 Service 主机名。Runtime 显式挂载 `data-omnirelay-dsh-runtime-0`，同一时刻只运行一个写入副本。正式工作台的 **dshbot** 菜单连接 `StatefulSet/omnirelay-dsh-prod` 的 `console` 容器。
+
+预览环境的后续部署使用目标主机 `deploy/k8s/private/dsh-server/project-bot-preview/workloads.json`。其中保存两个工作负载和两个 Service 的实际配置。`base/dsh/runtime.yaml` 是独立安装模板。检查预览环境可运行以下命令。
+
+```sh
+kubectl -n omni get sts/preview-dsh-runtime deploy/preview-project-bot
+kubectl -n omni get endpointslice -l 'kubernetes.io/service-name in (omnirelay-dsh-runtime,omnirelay-agent-gateway)' \
+  -o 'custom-columns=SERVICE:.metadata.labels.kubernetes\.io/service-name,POD:.endpoints[*].targetRef.name,READY:.endpoints[*].conditions.ready'
+kubectl -n omni get pvc data-omnirelay-dsh-runtime-0
+```
+
+2026-11-25 UTC 改名验收通过。两个新工作负载均为 1/1 Ready，原预览控制器已删除。逐项核对了唯一 Agent 的归属与代次、4 条已完成工作的数据库记录及 Runtime 返回结果、2 个会话标识，以及原 PVC、SQLite 工作账本和 12 个 Agent 文件。Gateway 到 Runtime 的就绪检查和 Runtime 到 Gateway 的计划查询均通过双向 TLS。正式控制台所在 Pod 的 UID、镜像和重启次数与切换前一致。
+
 ### 镜像仓库直连不可用时
 
 从下文指定版本的上游制品取得与目标节点架构匹配的静态 `silo`，按上游校验清单核对后，将其放入目标主机的 `deploy/k8s/private/assets/silo/`。也可从固定摘要的上游镜像提取对应平台二进制并校验传输前后的 SHA256。在目标主机为其构建镜像，再将镜像引用写入私有环境配置。多节点部署应把构建结果推送到内部镜像仓库。

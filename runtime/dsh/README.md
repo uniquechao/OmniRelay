@@ -11,6 +11,8 @@ bash tests/integration/group-agent-gate.sh
 
 系统管理员登录工作台，从 **dshbot** 打开官方 DSH Web。Gateway 对页面、资源、WebSocket 和 RPC 校验浏览器会话与 `dsh.debug`。通过后使用 DSH 原生 owner 权限，退出或撤权会断开活动连接。
 
+正式控制台运行在 `omnirelay-dsh-prod` 的 `console` 容器内。预览项目 Bot 使用 `preview-project-bot` 和 `preview-dsh-runtime`。两个预览工作负载的服务地址、存储和检查命令见[预览 Bot 与 DSH Runtime](../../deploy/k8s/README.md#预览-bot-与-dsh-runtime)。
+
 Web 容器随生产 Runtime StatefulSet 启动。两个入口使用同一个模型 Secret。管理页按工作区列出 Agent 原有的原生会话。打开历史调用 DSH 的 JSONL 读取接口，继续会话和改名使用同一文件及原生写锁。管理员在项目工作区新建的会话也写入该 Agent 的 store。在管理页主动占用会话后，可在该会话执行 `/handoff`，将空闲会话交还给项目 Bot。
 
 构建 `deploy/k8s/base/dshbot/image.Dockerfile`，将镜像填入 [Runtime 清单](../../deploy/k8s/base/dsh/runtime.yaml) 的 `OMNIRELAY_DSHBOT_IMAGE`。应用 [IPC 卷清单](../../deploy/k8s/base/dshbot/debug.yaml)，并对 Gateway 应用同目录的 `gateway-patch.yaml`。Gateway 只读挂载 IPC 目录。Web 容器挂载 Agent 数据、管理工作区及模型 Secret，Runtime 的工作账本和 mTLS 客户端私钥由工作容器持有。
@@ -58,7 +60,7 @@ Runtime 通过双向 TLS 发现归属自己的计划，为每个计划保留独�
 
 工作台的「项目 → Bot」以当前登录会话向 `/api/v1/projects/{projectID}/bot/messages` 提交消息。Go 核验 CSRF、账号和当前会籍，按成员与项目保留独立 DSH 会话。回复从模型轮次持久化到成员自己的对话记录，署名从 Go 的项目档案生成。页面可展示最近 50 条问答，撤权后再次打开会重新检查权限。
 
-Go 侧使用 `bootstrap-gateway-tls.sh` 签发独立身份，在 Go 容器只读挂载 `omnirelay-agent-gateway-tls`，配置下表的 CA、证书、私钥和 Runtime Pod 稳定地址。集群私有回调使用 [Gateway Service](../../deploy/k8s/base/dsh/gateway-service.yaml) 的 8444 端口。只启用站内对话时设置 `OMNIRELAY_AGENT_FEISHU_ENABLED=0`。镜像验收脚本另外执行 `TestWorkbenchChatGate`，覆盖签名回程、重放、连续对话和成员隔离。
+Go 侧使用 `bootstrap-gateway-tls.sh` 签发独立身份，在 Go 容器只读挂载 `omnirelay-agent-gateway-tls`，配置下表的 CA、证书、私钥和证书覆盖的 Runtime 稳定地址。集群私有回调使用 [Gateway Service](../../deploy/k8s/base/dsh/gateway-service.yaml) 的 8444 端口。只启用站内对话时设置 `OMNIRELAY_AGENT_FEISHU_ENABLED=0`。镜像验收脚本另外执行 `TestWorkbenchChatGate`，覆盖签名回程、重放、连续对话和成员隔离。
 
 独立部署使用 [StatefulSet 与内部 Service](../../deploy/k8s/base/dsh/runtime.yaml)。在目标工程构建带提交号的镜像，将清单中的 `omnirelay/dsh-runtime:release` 替换为该不可变版本。先用 `bash deploy/k8s/scripts/bootstrap-dsh-tls.sh CONTEXT NAMESPACE PRIVATE_DIRECTORY` 签发单实例服务证书，签发目录须由部署者保管。将清单在指定命名空间执行服务端 dry-run 后应用。Pod 将在专属卷中建立工作日志，私有端口 8443 使用双向 TLS。Go 后续接入时须使用同一 CA 签发、带 Gateway DNS 身份的独立客户端证书。
 

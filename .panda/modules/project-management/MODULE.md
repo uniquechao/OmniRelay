@@ -84,3 +84,5 @@ last_used_ts: 1795349556499
 项目成员列表按有效项目角色排序，项目管理员始终在前。同一角色内按查看者可见的已绑定项目群中最近发言时间倒序，无发言在组末。发言时间取未撤回人员消息的发送时间，时间相同按成员 ID 稳定排列。
 
 项目 Bot 的 SDK 和系统管理员原生 DSH Web 共享 Runtime Pod 内的 Agent 会话存储及模型 Secret。工作台校验浏览器登录与 `dsh.debug`；进入后使用 DSH owner 权限。SDK 和 Web 通过原生会话锁串行写入。管理员可在会话中执行 `/handoff` 交还空闲写入权。
+
+预览环境由 `preview-project-bot` 调用 `preview-dsh-runtime`，Runtime 归属使用内部 Service 主机名。正式 `dshbot` 控制台运行在 `omnirelay-dsh-prod` 的 `console` 容器。工作负载与数据卷映射见[部署说明](../../../deploy/k8s/README.md#预览-bot-与-dsh-runtime)。
