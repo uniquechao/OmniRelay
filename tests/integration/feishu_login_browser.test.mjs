@@ -127,6 +127,99 @@ async function startFeishu(page) {
   await page.waitForURL('**/authorize');
 }
 
+test('新版登录品牌：八秒整组切页、手动重置、隐藏暂停和减少动态', {skip: !!goOrigin}, () => withPage(async page => {
+  await page.clock.install();
+  await page.goto(origin + '/#/login');
+  const current = () => page.locator('.login-brand-copy[data-current]');
+  await current().waitFor();
+  await page.locator('#login-username').fill('保留的账号');
+  await page.locator('#login-password').fill('unsent-draft');
+  const mark = await page.locator('.login-orbit').boundingBox();
+  await page.clock.fastForward(8100);
+  assert.match(await current().innerText(), /任务交下去/);
+  assert.match(await page.locator('.login-features[data-current]').innerText(), /责任到人/);
+  for (const stack of ['.login-copy-stack', '.login-feature-stack']) {
+    assert.equal(await page.locator(stack + ' > [data-outgoing]').evaluate(node => getComputedStyle(node).animationName), 'login-card-out');
+    assert.equal(await page.locator(stack + ' > [data-entering]').evaluate(node => getComputedStyle(node).animationName), 'login-card-in');
+  }
+  assert.deepEqual(await page.locator('.login-orbit').boundingBox(), mark);
+  assert.equal(await page.locator('#login-username').inputValue(), '保留的账号');
+  assert.equal(await page.locator('#login-password').inputValue(), 'unsent-draft');
+  await page.getByRole('button', {name:'细微发现', exact:true}).click();
+  await page.clock.fastForward(7000);
+  assert.match(await current().innerText(), /在延期前/);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', {value:true, configurable:true});
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForFunction(() => document.querySelector('.login-brand').hasAttribute('data-ambient-paused'));
+  assert.equal(await page.locator('.login-visual').evaluate(node => getComputedStyle(node, '::before').animationPlayState), 'paused');
+  await page.clock.fastForward(16000);
+  assert.match(await current().innerText(), /在延期前/);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', {value:false, configurable:true});
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForFunction(() => !document.querySelector('.login-brand').hasAttribute('data-ambient-paused'));
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.waitForFunction(() => document.querySelector('.login-brand').hasAttribute('data-ambient-paused'));
+  await page.clock.fastForward(16000);
+  assert.match(await current().innerText(), /在延期前/);
+  await page.getByRole('button', {name:'项目全貌', exact:true}).click();
+  assert.match(await current().innerText(), /碎片化信息/);
+  assert.equal(await page.locator('.login-visual').evaluate(node => getComputedStyle(node, '::before').animationName), 'none');
+}));
+
+test('新版登录在桌面、窄屏和放大文字下保持表单可达、页面无滚动', {skip: !!goOrigin}, () => withPage(async page => {
+  await page.goto(origin + '/#/login');
+  await page.locator('#login-username').waitFor();
+  const reference = await page.context().newPage();
+  await reference.goto(origin + '/prototype/omni-relay-workbench.html?theme=light#/login');
+  await reference.locator('.login-orbit svg').waitFor();
+  const brandStyles = target => target.evaluate(() => Object.fromEntries([
+    '.login-brand', '.login-wordmark', '.login-brand h2', '.login-brand-description', '.login-orbit', '.login-features', '.login-carousel'
+  ].map(selector => {
+    const node = document.querySelector(selector), style = getComputedStyle(node);
+    return [selector, ['color','backgroundColor','padding','fontSize','fontWeight','width','height'].map(key => style[key])];
+  })));
+  for (const [width, height] of [[1440,900], [1100,720], [820,720], [390,844], [320,620]]) {
+    await page.setViewportSize({width, height});
+    await reference.setViewportSize({width, height});
+    for (const theme of ['light','dark']) {
+      if (await page.locator('html').getAttribute('data-theme') !== theme) {
+        await page.locator('#login-page [data-theme-toggle]').click();
+      }
+      if (await reference.locator('html').getAttribute('data-theme') !== theme) {
+        await reference.locator('#login-page [data-theme-toggle]').click();
+      }
+      assert.deepEqual(await brandStyles(page), await brandStyles(reference));
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight));
+      await page.locator('#feishu-login').scrollIntoViewIfNeeded();
+      assert.ok(await page.locator('#feishu-login').evaluate(node => {
+        const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight;
+      }));
+      const visibleMeteors = await page.locator('.login-meteor').evaluateAll(nodes => nodes.filter(node => getComputedStyle(node).display !== 'none').length);
+      assert.equal(visibleMeteors, width <= 720 ? 7 : 10);
+      if (screenshotDir) await page.screenshot({path:join(screenshotDir, `login-${width}-${theme}.png`)});
+    }
+  }
+  await page.evaluate(() => document.documentElement.style.fontSize = '200%');
+  for (const [width,height] of [[320,568], [390,716]]) {
+    await page.setViewportSize({width,height});
+    await page.locator('#login-username').click();
+    assert.equal(await page.evaluate(() => document.activeElement?.id),'login-username');
+    await page.locator('#login-password').click();
+    assert.equal(await page.evaluate(() => document.activeElement?.id),'login-password');
+    await page.locator('#feishu-login').click({trial:true});
+    assert.ok(await page.locator('#feishu-login').evaluate(node => {
+      const rect=node.getBoundingClientRect(); return rect.top>=-1 && rect.bottom<=innerHeight+1;
+    }));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight));
+  }
+  await startFeishu(page);
+  await reference.close();
+}, {reducedMotion:'reduce'}));
+
 test('取消与失败后刷新登录页，重试仍返回原 Bot 页', { skip: !!goOrigin }, () => withPage(async page => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin + '/' + botHash);
@@ -321,16 +414,13 @@ test('密码登录、改密、原型主题与减少动态效果', { skip: !!goOr
     assert.equal(await brand.evaluate(background), prototypeDark);
     await theme.click();
     assert.equal(await brand.evaluate(background), prototypeLight);
-    const canvas = page.locator('.login-motion');
-    const frame = await canvas.evaluate(node => node.toDataURL());
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await canvas.evaluate(node => node.toDataURL()), frame);
+    const ring = page.locator('.login-visual');
+    assert.equal(await ring.evaluate(node => getComputedStyle(node,'::before').animationName),'none');
+    assert.equal(await page.locator('.login-meteor').first().evaluate(node => getComputedStyle(node).animationName),'none');
     assert.ok(await page.locator('#feishu-login').evaluate(node => node.getBoundingClientRect().right <= innerWidth));
   }
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  const movingCanvas = page.locator('.login-motion');
-  const firstFrame = await movingCanvas.evaluate(node => node.toDataURL());
-  await page.waitForFunction(frame => document.querySelector('.login-motion').toDataURL() !== frame, firstFrame);
+  assert.equal(await page.locator('.login-visual').evaluate(node => getComputedStyle(node,'::before').animationName),'login-ring-sway');
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.locator('#password-login [name=username]').fill('测试账号');
   await page.locator('#password-login [name=password]').fill('仅限浏览器样例的旧密码');

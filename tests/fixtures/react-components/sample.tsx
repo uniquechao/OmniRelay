@@ -32,7 +32,7 @@ function Sample(){
       <C.PersonCard person={{name:'林晓',org:'研发中心',personKey:'lin'}}/></C.Panel>
     <C.Markdown source={'## 说明\n\n段落'}/><C.DateStrip mode="day" value={date} onChange={setDate}/><C.DateStrip mode="week" value={date} onChange={setDate}/>
     <C.Loading size="page" label="正在加载页面"/><C.Loading progress={42} label="正在读取"/><C.Button busy>正在保存</C.Button>
-    <div className="login-page"><C.BrandMotion tagline="让工作脉络自然浮现"/></div>
+    <div className="login-brand-example"><C.BrandMotion slides={[{label:"项目全貌",title:"让工作脉络自然浮现",english:"Work in context.",detail:"查看项目进展。",features:[{title:"项目全貌",detail:"查看项目进展。"},{title:"执行追踪",detail:"查看任务状态。"}]}]}/></div>
     {overlay==='确认' && <C.Dialog title="确认操作" variant="confirm" tone="danger" confirm="确定" onClose={()=>setOverlay('')}>确认本次操作？</C.Dialog>}
     {overlay.startsWith('抽屉') && <C.Drawer width={overlay==='抽屉加宽'?'wide':'normal'} title="编辑" variant="form" confirm="保存" isDirty={form=>!!new FormData(form).get('draft')} onClose={()=>setOverlay('')}><C.TextField label="草稿" name="draft"/></C.Drawer>}
   </C.WorkbenchLayout></>;

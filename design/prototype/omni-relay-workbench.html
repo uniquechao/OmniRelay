@@ -20,7 +20,7 @@ button, select { cursor: pointer; }
 .shell { display: grid; grid-template-columns: 166px minmax(0, 1fr); min-height: 100dvh; }
 .rail { position: sticky; top: 0; height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; background: var(--or-rail); color: var(--or-rail-text); padding: 12px 10px; }
 .rail :focus-visible { outline-color: var(--or-rail-accent); }
-.brand { display: grid; place-items: center; width: 132px; height: 41px; margin: 0 auto; border-radius: 6px; background: var(--or-brand-plate); }
+.brand { display: grid; place-items: center; width: 132px; height: 41px; margin: 0 auto; border-radius: 6px; }
 .brand img { display: block; width: 118px; height: auto; }
 .brand .compact-logo { display: none; }
 .rail-caption { color: var(--or-rail-muted); margin: 0 8px 5px; font-size: .75rem; }
@@ -295,38 +295,117 @@ td a:hover { text-decoration: underline; }
   <button type="button" data-account="logout">退出</button>
 </div>
 <main class="login-page" id="login-page" hidden aria-labelledby="login-heading">
-  <div class="login-brand">
-    <canvas class="login-motion" aria-hidden="true"></canvas>
-    <p class="login-tagline">让工作脉络自然浮现</p>
+  <button class="button neutral theme-toggle login-theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button>
+  <section class="login-brand" aria-label="OmniRelay 产品介绍">
+    <div class="login-atmosphere" aria-hidden="true">
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <span class="login-meteor"></span>
+      <div class="login-stars">
+        <span class="login-star" style="left:1.905717%;top:4.137235%;animation-delay:-0.00s"></span>
+        <span class="login-star" style="left:9.227683%;top:7.870838%;animation-delay:-0.73s"></span>
+        <span class="login-star" style="left:16.549649%;top:19.071645%;animation-delay:-1.46s"></span>
+        <span class="login-star" style="left:23.871615%;top:37.739657%;animation-delay:-2.19s"></span>
+        <span class="login-star" style="left:31.193581%;top:63.874874%;animation-delay:-2.92s"></span>
+        <span class="login-star" style="left:38.515547%;top:97.477296%;animation-delay:-3.65s"></span>
+        <span class="login-star" style="left:45.837513%;top:38.546922%;animation-delay:-4.38s"></span>
+        <span class="login-star" style="left:53.159478%;top:87.083754%;animation-delay:-5.11s"></span>
+        <span class="login-star" style="left:60.481444%;top:43.087790%;animation-delay:-5.84s"></span>
+        <span class="login-star" style="left:67.803410%;top:6.559031%;animation-delay:-6.57s"></span>
+        <span class="login-star" style="left:75.125376%;top:77.497477%;animation-delay:-7.30s"></span>
+        <span class="login-star" style="left:82.447342%;top:55.903128%;animation-delay:-8.03s"></span>
+        <span class="login-star" style="left:89.769308%;top:41.775984%;animation-delay:-8.76s"></span>
+        <span class="login-star" style="left:97.091274%;top:35.116044%;animation-delay:-9.49s"></span>
+        <span class="login-star" style="left:4.413240%;top:35.923310%;animation-delay:-0.22s"></span>
+        <span class="login-star" style="left:11.735206%;top:44.197780%;animation-delay:-0.95s"></span>
+        <span class="login-star" style="left:19.057172%;top:59.939455%;animation-delay:-1.68s"></span>
+        <span class="login-star" style="left:26.379137%;top:83.148335%;animation-delay:-2.41s"></span>
+        <span class="login-star" style="left:33.701103%;top:13.824420%;animation-delay:-3.14s"></span>
+        <span class="login-star" style="left:41.023069%;top:51.967709%;animation-delay:-3.87s"></span>
+        <span class="login-star" style="left:48.345035%;top:97.578204%;animation-delay:-4.60s"></span>
+        <span class="login-star" style="left:55.667001%;top:50.655903%;animation-delay:-5.33s"></span>
+        <span class="login-star" style="left:62.988967%;top:11.200807%;animation-delay:-6.06s"></span>
+        <span class="login-star" style="left:70.310933%;top:79.212916%;animation-delay:-6.79s"></span>
+        <span class="login-star" style="left:77.632899%;top:54.692230%;animation-delay:-7.52s"></span>
+        <span class="login-star" style="left:84.954865%;top:37.638749%;animation-delay:-8.25s"></span>
+        <span class="login-star" style="left:92.276830%;top:28.052472%;animation-delay:-8.98s"></span>
+        <span class="login-star" style="left:99.598796%;top:25.933401%;animation-delay:-9.71s"></span>
+        <span class="login-star" style="left:6.920762%;top:31.281534%;animation-delay:-0.44s"></span>
+        <span class="login-star" style="left:14.242728%;top:44.096872%;animation-delay:-1.17s"></span>
+        <span class="login-star" style="left:21.564694%;top:64.379415%;animation-delay:-1.90s"></span>
+        <span class="login-star" style="left:28.886660%;top:92.129162%;animation-delay:-2.63s"></span>
+        <span class="login-star" style="left:36.208626%;top:27.346115%;animation-delay:-3.36s"></span>
+        <span class="login-star" style="left:43.530592%;top:70.030272%;animation-delay:-4.09s"></span>
+        <span class="login-star" style="left:50.852558%;top:20.181635%;animation-delay:-4.82s"></span>
+        <span class="login-star" style="left:58.174524%;top:77.800202%;animation-delay:-5.55s"></span>
+        <span class="login-star" style="left:65.496489%;top:42.885974%;animation-delay:-6.28s"></span>
+        <span class="login-star" style="left:72.818455%;top:15.438951%;animation-delay:-7.01s"></span>
+        <span class="login-star" style="left:80.140421%;top:95.459132%;animation-delay:-7.74s"></span>
+        <span class="login-star" style="left:87.462387%;top:82.946519%;animation-delay:-8.47s"></span>
+        <span class="login-star" style="left:94.784353%;top:77.901110%;animation-delay:-9.20s"></span>
+        <span class="login-star" style="left:2.106319%;top:80.322906%;animation-delay:-9.93s"></span>
+        <span class="login-star" style="left:9.428285%;top:90.211907%;animation-delay:-0.66s"></span>
+        <span class="login-star" style="left:16.750251%;top:7.568113%;animation-delay:-1.39s"></span>
+        <span class="login-star" style="left:24.072217%;top:32.391524%;animation-delay:-2.12s"></span>
+        <span class="login-star" style="left:31.394183%;top:64.682139%;animation-delay:-2.85s"></span>
+        <span class="login-star" style="left:38.716148%;top:4.439960%;animation-delay:-3.58s"></span>
+        <span class="login-star" style="left:46.038114%;top:51.664985%;animation-delay:-4.31s"></span>
+        <span class="login-star" style="left:53.360080%;top:6.357215%;animation-delay:-5.04s"></span>
+        <span class="login-star" style="left:60.682046%;top:68.516650%;animation-delay:-5.77s"></span>
+        <span class="login-star" style="left:68.004012%;top:38.143290%;animation-delay:-6.50s"></span>
+        <span class="login-star" style="left:75.325978%;top:15.237134%;animation-delay:-7.23s"></span>
+        <span class="login-star" style="left:82.647944%;top:99.798184%;animation-delay:-7.96s"></span>
+        <span class="login-star" style="left:89.969910%;top:91.826438%;animation-delay:-8.69s"></span>
+        <span class="login-star" style="left:97.291876%;top:91.321897%;animation-delay:-9.42s"></span>
+        <span class="login-star" style="left:4.613842%;top:98.284561%;animation-delay:-0.15s"></span>
+        <span class="login-star" style="left:11.935807%;top:12.714430%;animation-delay:-0.88s"></span>
+        <span class="login-star" style="left:19.257773%;top:34.611504%;animation-delay:-1.61s"></span>
+        <span class="login-star" style="left:26.579739%;top:63.975782%;animation-delay:-2.34s"></span>
+        <span class="login-star" style="left:33.901705%;top:0.807265%;animation-delay:-3.07s"></span>
+        <span class="login-star" style="left:41.223671%;top:45.105954%;animation-delay:-3.80s"></span>
+        <span class="login-star" style="left:48.545637%;top:96.871847%;animation-delay:-4.53s"></span>
+        <span class="login-star" style="left:55.867603%;top:56.104945%;animation-delay:-5.26s"></span>
+        <span class="login-star" style="left:63.189569%;top:22.805247%;animation-delay:-5.99s"></span>
+      </div>
+    </div>
+    <img class="login-wordmark" src="omni-relay-logo-bicolor.png" width="144" height="48" alt="OmniRelay">
+    <div class="login-scene-glow" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="login-copy-stack">
+      <div class="login-brand-copy" data-current>
+        <p class="login-english" data-login-copy="brand-english" lang="en">A clear view of every project.</p>
+        <h2 data-login-copy="brand-title">碎片化信息，汇成项目全貌</h2>
+        <p class="login-brand-description" data-login-copy="brand-detail">团队的进展散在 IM、会议纪要和任务里。按项目串起来，汇报前也能快速看清现状。</p>
+      </div>
+    </div>
     <div class="login-visual">
-      <div class="login-orbit" aria-hidden="true"><span></span><span></span><span></span><span></span><img src="omni-relay-avatar.png" width="160" height="160" alt=""></div>
-      <ul class="login-features" aria-label="OmniRelay 产品特性">
-        <li>
-          <div class="login-feature-head">
-            <span class="login-feature-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8.5-4 6m8-6 4 6m-10 3h8"/><circle cx="12" cy="6.5" r="2.5"/><circle cx="5.5" cy="17.5" r="2.5"/><circle cx="18.5" cy="17.5" r="2.5"/></svg>
-            </span>
-            <strong>上下文聚合</strong>
-          </div>
-          <p>串联项目进展、任务与对话，让团队共享同一条工作脉络。</p>
-        </li>
-        <li>
-          <div class="login-feature-head">
-            <span class="login-feature-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a2 2 0 0 0 1-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1v4l4-4h2m-5-5h9m1 3 3 3-3 3m-4-3h7"/></svg>
-            </span>
-            <strong>飞书联动</strong>
-          </div>
-          <p>在飞书查进展、收简报、分派任务，让协作在对话中继续。</p>
-        </li>
+      <div class="login-orbit" aria-hidden="true"></div>
+    </div>
+    <div class="login-feature-stack">
+      <ul class="login-features" data-current aria-label="OmniRelay 产品特性">
+        <li><span class="login-feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8.5-4 6m8-6 4 6m-10 3h8"/><circle cx="12" cy="6.5" r="2.5"/><circle cx="5.5" cy="17.5" r="2.5"/><circle cx="18.5" cy="17.5" r="2.5"/></svg></span><div><strong data-login-copy="feature-one">信息归位</strong><p data-login-copy="feature-one-detail">把 IM 对话、会议纪要和任务归到同一个项目。</p></div></li>
+        <li><span class="login-feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a2 2 0 0 0 1-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1v4l4-4h2m-5-5h9m1 3 3 3-3 3m-4-3h7"/></svg></span><div><strong data-login-copy="feature-two">汇报有据</strong><p data-login-copy="feature-two-detail">从里程碑和简报掌握进展与关键决策。</p></div></li>
       </ul>
     </div>
-  </div>
+    <div class="login-carousel" hidden role="group" aria-label="切换产品介绍">
+      <button type="button" data-login-slide="0" aria-pressed="true">项目全貌</button>
+      <button type="button" data-login-slide="1" aria-pressed="false">执行追踪</button>
+      <button type="button" data-login-slide="2" aria-pressed="false">细微发现</button>
+    </div>
+  </section>
   <section class="login-content">
-    <div class="login-top"><span class="sample">演示环境</span><button class="button neutral theme-toggle" type="button" data-theme-toggle data-theme-icon aria-label="切换深色主题" aria-pressed="false" title="切换深色主题"></button></div>
     <div class="login-entry">
-      <div class="login-logo"><img src="omni-relay-logo-bicolor.png" width="195" height="65" alt="OmniRelay"></div>
-      <h1 id="login-heading" tabindex="-1">登录工作台</h1>
+      <div class="login-entry-title">
+        <span class="sample">演示环境</span>
+        <h1 id="login-heading" tabindex="-1">登录工作台</h1>
+        <p lang="en">Sign in to OmniRelay</p>
+      </div>
       <form class="login-form" id="password-login" method="post">
         <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
         <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
@@ -336,10 +415,20 @@ td a:hover { text-decoration: underline; }
       <div class="login-divider"><span>或</span></div>
       <button class="button neutral login-button" type="button" id="feishu-login">
         <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M3 11.2 20.3 3a.65.65 0 0 1 .9.8l-4.6 16.5a.7.7 0 0 1-1.1.4l-4.5-3.4-2.6 2.3a.6.6 0 0 1-1-.4l.2-4.6 9.7-8.2-11.2 6-3.1-.5c-.6-.1-.6-.5 0-.7Z"/></svg>
-        使用飞书登录
+        使用企业 IM 账号登录
       </button>
       <p id="login-feedback" class="login-feedback" role="status" hidden></p>
     </div>
+    <aside class="login-motion-review" aria-label="文案轮换动效预览" hidden>
+      <div class="login-motion-review-head"><strong>轮换动效预览</strong><a href="#/login">返回登录页</a></div>
+      <div class="login-motion-options" role="group" aria-label="轮换方案">
+        <button class="button neutral" type="button" data-login-effect="fade" aria-pressed="false">A 整组淡换</button>
+        <button class="button neutral" type="button" data-login-effect="ambient" aria-pressed="false">B 光晕换场</button>
+        <button class="button neutral" type="button" data-login-effect="cut" aria-pressed="true">C 定场切页</button>
+      </div>
+      <p class="login-motion-note">整组文案同步向左滑出，下一组从右侧滑入。</p>
+      <button class="button neutral login-motion-next" type="button">播放下一组</button>
+    </aside>
   </section>
 </main>
 <script src="omni-relay-ui.js"></script>

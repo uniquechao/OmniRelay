@@ -47,7 +47,7 @@ test('预发布构建运行工作台和首次配置两个入口', { skip: !dist 
     });
     await page.goto(workbench + '/#/workbench');
     await page.getByRole('heading', { name: '登录工作台' }).waitFor();
-    await page.getByRole('button', {name:'使用飞书登录'}).waitFor();
+    await page.getByRole('button', {name:'使用企业 IM 账号登录'}).waitFor();
     const favicon = () => page.locator('link[rel="icon"]').evaluate(async link => {
       const icon = new Image();
       icon.src = link.href;

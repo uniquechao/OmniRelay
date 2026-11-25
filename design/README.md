@@ -16,6 +16,8 @@
 
 工作台、登录和卡片使用演示数据。双击 HTML 可在浏览器本地打开。登录页提供账号密码和飞书授权演示。构建正式工作台时，源码放在工程根目录的 `frontend/src/`，按本目录最新确认的原型验收视觉、交互和功能。
 
+登录和品牌动效基准：2026-11-25 会话「OmniRelay-设计」最后确认的「定场切页」版本。三组文案每 8 秒轮换，Logo 使用共享「循光成环」矢量，背景为椭圆线圈、紫青光晕与流星；替代旧四圈波纹和二进制信息流版本。正式入口使用 `frontend/src/features/workbench/Login.tsx`，品牌组件为 `frontend/src/ui/components/BrandMotion.tsx`，矢量来源统一为 `frontend/src/ui/loading.ts`。正式认证接现有同源接口，演示授权和账号不会打包进入正式页面。
+
 ## 系统设计
 
 - [本轮需求改动与开发交接](specs/omni-relay-development-handoff-2026-11-19.md)

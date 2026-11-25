@@ -112,5 +112,9 @@ window.OmniRelayLoading = (() => {
   const documentMotion = () => document.documentElement.toggleAttribute('data-loading-paused',document.hidden);
   document.addEventListener('visibilitychange',documentMotion);
   documentMotion();
-  return { markup, mount, button };
+  function brandMark() {
+    return '<span class="or-loading or-loading-brand" aria-hidden="true">' +
+      '<span class="or-loading-mark">' + logo('or-loading-' + ++sequence) + '</span></span>';
+  }
+  return { markup, mount, button, brandMark };
 })();

@@ -66,13 +66,10 @@ test('共享组件六个原型入口的交互和视觉状态',async t=>{
       await swatch.focus();await p.keyboard.press('Enter');
       assert.equal((await p.evaluate(()=>navigator.clipboard.readText())).toLowerCase(),(await swatch.locator('code').innerText()).toLowerCase());
       await button('关闭提示').click();
-      await p.locator('.login-brand[data-motion-ready]').waitFor({state:'attached'});
-      const changing=await p.locator('.login-motion').evaluate(async canvas=>{
-        const before=canvas.toDataURL();
-        await new Promise(resolve=>setTimeout(resolve,130));
-        return before!==canvas.toDataURL();
-      });
-      assert.equal(changing,theme!=='dark');
+      const brand=p.locator('.login-brand');
+      assert.equal(await brand.locator('.login-meteor').count(),10);
+      const motion=await brand.locator('.login-visual').evaluate(node=>getComputedStyle(node,'::before').animationName);
+      assert.equal(motion,theme==='dark'?'none':'login-ring-sway');
       const animations=await p.locator('.or-loading .ink').first().evaluate(el=>getComputedStyle(el).animationName);
       if(theme==='dark') assert.equal(animations,'none');
       assert.equal(await p.locator('.crumb [aria-current]').innerText(),'组件');
@@ -109,6 +106,22 @@ test('共享组件六个原型入口的交互和视觉状态',async t=>{
         await p.keyboard.press('Escape'); await button('不保存').click();
         await p.waitForFunction(s=>document.activeElement?.textContent===s,label);
       }
+      // A queued close event must not steal focus from the next interaction.
+      await button('确认').click();
+      await p.getByRole('dialog',{name:'确认操作'}).evaluate(dialog=>{
+        dialog.close('cancel');
+        const input=document.querySelector('[role="combobox"]');
+        input.focus();input.value='linx';input.dispatchEvent(new Event('input',{bubbles:true}));
+        input.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+      });
+      await p.waitForFunction(()=>!document.querySelector('dialog.or-dialog'));
+      const nextCombo=p.getByRole('combobox',{name:'分类',exact:true});
+      assert.equal(await nextCombo.evaluate(node=>document.activeElement===node),true,'延迟关闭不能抢走新输入的焦点');
+      assert.ok(await nextCombo.getAttribute('aria-activedescendant'));
+      await p.keyboard.press('Enter');
+      assert.equal(await p.locator('input[name="category"]').inputValue(),'lin');
+      await nextCombo.locator('..').getByRole('button',{name:'移除 林晓',exact:true}).click();
+      await nextCombo.fill('');
       await p.getByRole('textbox',{name:'标题',exact:true}).fill('组件验收');
       await p.getByLabel('备注').fill('备注内容');
       await p.getByLabel('日期',{exact:true}).fill('2026-12-31');

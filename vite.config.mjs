@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 
 const upstream = process.env.OMNIRELAY_DEV_ORIGIN || 'http://127.0.0.1:8080';
 const licenseRevision = createHash('sha256').update(readFileSync(new URL('./package-lock.json', import.meta.url))).digest('hex').slice(0, 8);
+const licenseFile = `assets/third-party-licenses-${licenseRevision}.txt`;
 export default defineConfig({
   root: 'frontend',
   plugins: [react(), {
@@ -20,11 +21,15 @@ export default defineConfig({
         next();
       });
     }
+  }, {
+    name: 'third-party-license-link',
+    apply: 'build',
+    transformIndexHtml: () => [{tag: 'link', attrs: {rel: 'license', href: '/' + licenseFile}, injectTo: 'head'}]
   }],
   server: { proxy: { '/api': upstream, '/auth': upstream, '^/setup(?:\\?|$)': upstream } },
   build: {
     outDir: '../internal/webui/dist', emptyOutDir: true, assetsInlineLimit: 0,
-    license: {fileName: `assets/third-party-licenses-${licenseRevision}.txt`},
+    license: {fileName: licenseFile},
     rollupOptions: { input: [resolve('frontend/index.html'), resolve('frontend/setup.html')] }
   }
 });

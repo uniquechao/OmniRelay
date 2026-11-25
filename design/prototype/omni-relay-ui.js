@@ -171,6 +171,7 @@ window.OmniRelayUI = (() => {
 
   function openDialog({title, description, body, variant = 'detail', tone = 'default',
     confirm, cancelLabel, discard, onSubmit, onClose, restoreFocus, drawer, isDirty}) {
+    const opener = document.activeElement;
     const base = 'workspace-dialog-' + ++dialogNumber;
     const dialog = document.createElement('dialog');
     const symbol = tone === 'danger' ? 'status-danger' : tone === 'warning' ? 'status-warning' : 'nav-logs';
@@ -280,11 +281,18 @@ window.OmniRelayUI = (() => {
       dialog.addEventListener('click',event => { if (startedOutside && outside(event)) requestClose(); });
     }
     dialog.addEventListener('close',() => {
+      const focused = document.activeElement;
+      const ownsFocus = !focused || focused === document.body || focused === opener ||
+        dialog.contains(focused) || Boolean(guard?.contains(focused));
       guard?.close();
       const confirmed = dialog.returnValue === 'confirm';
       dialog.remove();
+      const beforeCallback = document.activeElement;
       onClose?.(confirmed,dialog.returnValue);
-      restoreFocus?.(confirmed)?.focus();
+      if (ownsFocus && (document.activeElement === beforeCallback ||
+          !document.activeElement || document.activeElement === document.body)) {
+        restoreFocus?.(confirmed)?.focus();
+      }
     },{once:true});
     document.body.append(dialog);
     dialog.showModal();

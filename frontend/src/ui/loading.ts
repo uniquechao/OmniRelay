@@ -14,6 +14,10 @@ const logo = (id:string) => `<svg aria-hidden="true" focusable="false" xmlns="ht
       <mask id="violetInk__ID__" maskUnits="userSpaceOnUse" x="0" y="0" width="646" height="585"><path class="ink violet-ink" d="M 509 200 Q 458 150 419 150 H 222 Q 191 150 169 180 L 117 249 Q 83 294 112 333 L 143 367" fill="none" stroke="white" stroke-width="175" stroke-linecap="round" pathLength="1" stroke-dasharray="1 2"/></mask><mask id="tealInk__ID__" maskUnits="userSpaceOnUse" x="0" y="0" width="646" height="585"><path class="ink teal-ink" d="M 150 356 Q 188 434 231 434 H 389 Q 452 434 485 391 L 535 328 Q 561 293 543 260 L 497 209" fill="none" stroke="white" stroke-width="175" stroke-linecap="round" pathLength="1" stroke-dasharray="1 2"/></mask></defs>
       <g class="orbit"><path class="arc violet" mask="url(#violetInk__ID__)" fill="url(#violetFacetrace__ID__)" d="M 101 400 L 76 367 Q 20 296 76 220 L 139 139 Q 168 103 222 103 H 420 Q 477 103 512 148 L 531 172 L 469 264 Q 442 201 386 201 H 261 Q 226 201 202 231 Q 164 275 178 317 Z"/>
       <path class="arc teal" mask="url(#tealInk__ID__)" fill="url(#tealFacetrace__ID__)" d="M 530.5 171.5 L 572 224 Q 624 292 574 361 L 509 445 Q 480 482 422 482 H 230 Q 171 482 137 446 L 100.5 399.5 L 177.5 316.5 Q 211 384 266 384 H 383 Q 427 384 450 348 Q 482 306 468.5 263.5 Z"/></g></svg>`.replaceAll('__ID__', id);
+export function brandMark() {
+  return '<span class="or-loading or-loading-brand" aria-hidden="true"><span class="or-loading-mark">' +
+    logo('or-loading-' + ++sequence) + '</span></span>';
+}
 export function markup({ size = 'compact', label = '正在加载…', progress = null, active = true }:LoadingOptions = {}) {
   if (!['page','compact','inline'].includes(size)) size = 'compact';
   const id = 'or-loading-' + ++sequence;

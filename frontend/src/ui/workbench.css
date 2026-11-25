@@ -10,7 +10,7 @@ button, select { cursor: pointer; }
 .shell { display: grid; grid-template-columns: 166px minmax(0, 1fr); min-height: 100dvh; }
 .rail { position: sticky; top: 0; height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; background: var(--or-rail); color: var(--or-rail-text); padding: 12px 10px; }
 .rail :focus-visible { outline-color: var(--or-rail-accent); }
-.brand { display: grid; place-items: center; width: 132px; height: 41px; margin: 0 auto; border-radius: 6px; background: var(--or-brand-plate); }
+.brand { display: grid; place-items: center; width: 132px; height: 41px; margin: 0 auto; border-radius: 6px; }
 .brand img { display: block; width: 118px; height: auto; }
 .brand .compact-logo { display: none; }
 .rail-caption { color: var(--or-rail-muted); margin: 0 8px 5px; font-size: .75rem; }

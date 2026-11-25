@@ -1,144 +1,144 @@
-window.OmniRelayLoginMotion = function mountLoginMotion(stage) {
-  const orbit = stage.querySelector('.login-orbit');
-  const canvas = stage.querySelector('.login-motion');
-  const context = canvas.getContext('2d');
-  if (!context) return;
-
+(() => {
+  const page = document.getElementById('login-page');
+  const mark = page.querySelector('.login-orbit');
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  const fullTurn = 2 * Math.PI;
-  const fraction = value => value - Math.floor(value);
-  const palette = getComputedStyle(stage);
-  const indigo = palette.getPropertyValue('--or-indigo-300').trim();
-  const teal = palette.getPropertyValue('--or-teal-300').trim();
-  const rings = [
-    { radius:.320, speed:.32, phase:.35, color:indigo, opacity:.75 },
-    { radius:.382, speed:-.27, phase:1.9, color:teal, opacity:.66 },
-    { radius:.446, speed:.22, phase:3.5, color:indigo, opacity:.55 },
-    { radius:.510, speed:-.17, phase:5.1, color:teal, opacity:.48 }
+  const review = page.querySelector('.login-motion-review');
+  const effectButtons = Array.from(review.querySelectorAll('[data-login-effect]'));
+  const effectNotes = {
+    fade: '整组文案在原位快速交接，画面保持安静。',
+    ambient: '背景光晕随主题换色，文案轻柔衔接。',
+    cut: '整组文案同步向左滑出，下一组从右侧滑入。'
+  };
+  let effect = 'cut';
+  const controls = page.querySelector('.login-carousel');
+  const buttons = Array.from(controls.querySelectorAll('[data-login-slide]'));
+  const rotationDelay = 8000;
+  let index = 0;
+  let timer;
+  const copy = [
+    [
+      '碎片化信息，汇成项目全貌', 'A clear view of every project.',
+      '团队的进展散在 IM、会议纪要和任务里。按项目串起来，汇报前也能快速看清现状。',
+      '信息归位', '把 IM 对话、会议纪要和任务归到同一个项目。',
+      '汇报有据', '从里程碑和简报掌握进展与关键决策。'
+    ],
+    [
+      '任务交下去，进度看得见', 'Know where execution stands.',
+      '谁在跟、什么时候交、卡在哪一步，打开项目就能查到。少一轮追问，多一点时间解决问题。',
+      '责任到人', '查看任务负责人、截止时间和完成情况。',
+      '卡点可见', '按里程碑定位受阻任务，知道先跟进哪一件。'
+    ],
+    [
+      '在延期前，看见小偏差', 'Spot early signs of delay.',
+      '一句「再等等」、一次交付改期，可能就是需要介入的信号。从 IM 和任务更新中及时发现变化。',
+      '变更线索', '查看任务改期、状态变化和关联对话。',
+      '项目简报', '把值得关注的变化带到下一次项目同步。'
+    ]
   ];
-  const packets = Array.from({ length:34 }, (_,index) => ({
-    angle:fullTurn * fraction(index * .618034),
-    speed:30 + index % 5 * 3,
-    offset:fraction(index * .414214),
-    color:index % 2 === 0 ? teal : indigo,
-    text:Array.from({ length:3 + index % 4 }, (_,glyphIndex) => {
-      const sample = Math.sin((index + 1) * 75.81 + glyphIndex * 34.17) * 847.31;
-      return fraction(sample) < .5 ? '0' : '1';
-    }).join('')
-  }));
 
-  let width = 0;
-  let height = 0;
-  let scale = 0;
-  let centerX = 0;
-  let centerY = 0;
-  let frame = 0;
-  let elapsed = 0;
-  let previousTime;
+  const stacks = [
+    [page.querySelector('.login-copy-stack'), ['brand-title', 'brand-english', 'brand-detail'], 0],
+    [page.querySelector('.login-feature-stack'), ['feature-one', 'feature-one-detail', 'feature-two', 'feature-two-detail'], 3]
+  ];
+  const slides = stacks.map(([stack, fields, offset]) => {
+    const first = stack.firstElementChild;
+    return copy.map((text, slideIndex) => {
+      const slide = slideIndex === 0 ? first : first.cloneNode(true);
+      fields.forEach((field, i) => {
+        const element = slide.querySelector('[data-login-copy="' + field + '"]');
+        const value = text[offset + i];
+        if (field === 'brand-title') {
+          const lines = value.split(/(?<=，)/u).map(line => {
+            const span = document.createElement('span');
+            span.className = 'login-title-line';
+            span.textContent = line;
+            return span;
+          });
+          element.replaceChildren(...lines);
+        } else {
+          element.textContent = value;
+        }
+      });
+      if (slideIndex !== 0) {
+        slide.removeAttribute('data-current');
+        slide.setAttribute('aria-hidden', 'true');
+        stack.append(slide);
+      }
+      return slide;
+    });
+  });
 
-  function drawStreams(time) {
-    const compact = scale <= 140;
-    const fontSize = compact ? 9 : 11;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.font = '500 ' + fontSize + 'px ui-monospace, Menlo, monospace';
-    const count = compact ? 19 : packets.length;
-    for (let index = 0; index < count; index += 1) {
-      const packet = packets[index];
-      const directionX = Math.cos(packet.angle);
-      const directionY = Math.sin(packet.angle);
-      const roomX = directionX < 0 ? centerX : width - centerX;
-      const roomY = directionY < 0 ? centerY : height - centerY;
-      const edge = Math.min(
-        (roomX + 12) / Math.max(.001,Math.abs(directionX)),
-        (roomY + 12) / Math.max(.001,Math.abs(directionY))
-      );
-      const length = edge - scale * .28;
-      if (length <= 0) continue;
-      const progress = fraction(packet.offset + time * packet.speed / length);
-      const distance = edge - progress * length;
-      const fade = Math.min(1,progress * 5,(1 - progress) * 5);
-      context.save();
-      context.translate(directionX * distance,directionY * distance);
-      context.rotate(packet.angle + Math.PI);
-      context.fillStyle = packet.color;
-      context.globalAlpha = fade * .56;
-      context.fillText(packet.text,0,0);
-      context.restore();
+  function play() {
+    mark.innerHTML = OmniRelayLoading.brandMark();
+  }
+
+  function canRotate() {
+    return !page.hidden && !document.hidden && !reducedMotion.matches;
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    if (canRotate()) {
+      timer = setTimeout(nextSlide, rotationDelay);
     }
   }
 
-  function drawRing(ring,time) {
-    const { phase, speed, radius, color, opacity } = ring;
-    const rotation = phase + time * speed;
-    const swell = Math.pow(.5 + .5 * Math.sin(time * 3.7 + phase),3);
-    context.globalAlpha = opacity * (.82 + .18 * swell);
-    context.strokeStyle = color;
-    context.lineWidth = scale <= 140 ? 1 : 1.25;
-    context.beginPath();
-    for (let step = 0; step < 120; step += 1) {
-      const angle = fullTurn * step / 120;
-      const ripple = Math.sin(angle * 3 + phase + time * 1.6) * .014 +
-        Math.sin(angle * 7 - time * 2.5 + phase) * (.003 + .009 * swell) +
-        Math.sin(angle * 11 + time * 3.2) * (.001 + .003 * swell);
-      const distance = scale * (radius + .008 * swell + ripple);
-      context[step === 0 ? 'moveTo' : 'lineTo'](
-        Math.cos(angle + rotation) * distance,Math.sin(angle + rotation) * distance
-      );
+  function selectSlide(next) {
+    if (next !== index) {
+      slides.forEach(stack => stack.forEach((slide, i) => {
+        slide.toggleAttribute('data-outgoing', i === index);
+        slide.toggleAttribute('data-entering', i === next);
+        slide.toggleAttribute('data-current', i === next);
+        slide.setAttribute('aria-hidden', String(i !== next));
+      }));
+      index = next;
+      page.dataset.loginScene = String(index);
+      buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)));
     }
-    context.closePath();
-    context.stroke();
+    schedule();
   }
 
-  function draw(time) {
-    context.clearRect(0,0,width,height);
-    context.save();
-    context.translate(centerX,centerY);
-    context.lineCap = 'round';
-    drawStreams(time);
-    rings.forEach(ring => drawRing(ring,time));
-    context.restore();
+  function nextSlide() {
+    selectSlide((index + 1) % copy.length);
   }
 
-  function tick(now) {
-    if (previousTime !== undefined) elapsed += Math.min(now - previousTime,50) / 1000;
-    previousTime = now;
-    draw(elapsed);
-    frame = requestAnimationFrame(tick);
+  function syncReview() {
+    const reviewing = location.hash === '#/login/motion';
+    page.toggleAttribute('data-motion-review', reviewing);
+    page.dataset.copyEffect = reviewing ? effect : 'cut';
+    page.dataset.loginScene = String(index);
+    review.hidden = !reviewing;
   }
+
+  effectButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      effect = button.dataset.loginEffect;
+      page.dataset.copyEffect = effect;
+      review.querySelector('.login-motion-note').textContent = effectNotes[effect];
+      effectButtons.forEach(option => option.setAttribute('aria-pressed', String(option === button)));
+      nextSlide();
+    });
+  });
+  review.querySelector('.login-motion-next').addEventListener('click', nextSlide);
+  window.addEventListener('hashchange', syncReview);
+  syncReview();
 
   function syncMotion() {
-    cancelAnimationFrame(frame);
-    previousTime = undefined;
-    const bounds = stage.getBoundingClientRect();
-    ({ width,height } = bounds);
-    if (!width || !height || document.hidden) return;
-
-    const orbitBounds = orbit.getBoundingClientRect();
-    scale = orbitBounds.width;
-    centerX = orbitBounds.left - bounds.left + scale / 2;
-    centerY = orbitBounds.top - bounds.top + orbitBounds.height / 2;
-    const density = Math.min(devicePixelRatio || 1,2);
-    canvas.width = Math.round(width * density);
-    canvas.height = Math.round(height * density);
-    context.setTransform(density,0,0,density,0,0);
-    draw(reducedMotion.matches ? 0 : elapsed);
-    stage.dataset.motionReady = '';
-    if (!reducedMotion.matches) frame = requestAnimationFrame(tick);
+    page.toggleAttribute('data-ambient-paused', !canRotate());
+    schedule();
   }
 
-  const observer = new ResizeObserver(syncMotion);
-  observer.observe(stage);
-  document.addEventListener('visibilitychange',syncMotion);
-  reducedMotion.addEventListener('change',syncMotion);
-  return () => {
-    observer.disconnect();
-    cancelAnimationFrame(frame);
-    document.removeEventListener('visibilitychange',syncMotion);
-    reducedMotion.removeEventListener('change',syncMotion);
-  };
-};
-if (document.currentScript) {
-  const stage = document.querySelector('.login-brand');
-  if (stage) window.OmniRelayLoginMotion(stage);
-}
+  buttons.forEach((button, i) => {
+    button.addEventListener('click', () => selectSlide(i));
+  });
+  function syncVisibility() {
+    if (page.hidden) mark.replaceChildren();
+    else play();
+    syncMotion();
+  }
+  new MutationObserver(syncVisibility).observe(page, { attributes: true, attributeFilter: ['hidden'] });
+  document.addEventListener('visibilitychange', syncMotion);
+  reducedMotion.addEventListener('change', syncMotion);
+  controls.hidden = false;
+  syncVisibility();
+})();

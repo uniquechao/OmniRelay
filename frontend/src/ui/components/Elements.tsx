@@ -1,10 +1,9 @@
 import * as loadingUI from '../loading';
-import {mountLoginMotion} from './login-motion';
+export {BrandMotion} from './BrandMotion';
 import {syncThemeControls,toggleTheme} from './theme';
 import {useId, useLayoutEffect, useMemo, useRef, type ComponentProps, type ReactNode} from 'react';
 import {mountRail} from '../rail';
 import symbols from './symbols.svg?raw';
-import avatar from '../../../../design/prototype/omni-relay-avatar.png';
 import {ui, type Tone, type Wait} from './runtime';
 
 export function Icon({name, className='icon'}: {name: string; className?: string}) {
@@ -72,13 +71,6 @@ export function DateStrip({mode,value,onChange}: {mode:'day'|'week';value:string
     <div className="date-summary" aria-live="polite" aria-atomic="true"><strong>{week?`${year} 年第 ${1+Math.round((start-monday(Date.UTC(year,0,4)))/(7*day))} 周`:format(start,{...options,year:'numeric'})}</strong>
     <span className="aux">{week?`${format(start,options)}（周一）– ${format(end,options)}（周日）`:format(start,{weekday:'long'})}</span></div>
     <Button className="date-arrow" aria-label={week?'下一周':'后一天'} onClick={()=>move(1)}><Icon name="action-expand"/></Button></div>;
-}
-export function BrandMotion({children,tagline}: {children?:ReactNode;tagline?:string}) {
-  const ref=useRef<HTMLDivElement>(null);
-  useLayoutEffect(()=>mountLoginMotion(ref.current!),[]);
-  return <div ref={ref} className="login-brand"><canvas className="login-motion" aria-hidden="true"/>
-    {tagline && <p className="login-tagline">{tagline}</p>}<div className="login-visual"><div className="login-orbit" aria-hidden="true">
-    {Array.from({length:4},(_,i)=><span key={i}/>)}<img src={avatar} width="160" height="160" alt=""/></div>{children}</div></div>;
 }
 export function WorkbenchLayout({brand,navigation,mobileNavigation,breadcrumb,account,tools,page,layout,children}: {
   brand?:ReactNode;navigation:ReactNode;mobileNavigation:ReactNode;breadcrumb:ReactNode;account?:ReactNode;tools?:ReactNode;page?:ReactNode;layout?:"list"|"detail"|"content"|"project"|"bot-chat";children:ReactNode;
