@@ -182,7 +182,7 @@ test('新版登录在桌面、窄屏和放大文字下保持表单可达、页�
     const node = document.querySelector(selector), style = getComputedStyle(node);
     return [selector, ['color','backgroundColor','padding','fontSize','fontWeight','width','height'].map(key => style[key])];
   })));
-  for (const [width, height] of [[1440,900], [1100,720], [820,720], [390,844], [320,620]]) {
+  for (const [width, height] of [[1440,900], [1100,720], [820,720], [721,720], [720,720], [390,844], [320,620]]) {
     await page.setViewportSize({width, height});
     await reference.setViewportSize({width, height});
     for (const theme of ['light','dark']) {
@@ -193,6 +193,19 @@ test('新版登录在桌面、窄屏和放大文字下保持表单可达、页�
         await reference.locator('#login-page [data-theme-toggle]').click();
       }
       assert.deepEqual(await brandStyles(page), await brandStyles(reference));
+      const brand = await page.locator('.login-brand').boundingBox();
+      const login = await page.locator('.login-content').boundingBox();
+      assert.ok(brand && login);
+      if (width > 720) {
+        assert.ok(Math.abs(brand.width - width * 0.7) < 1, '品牌区占 70%');
+        assert.ok(Math.abs(login.width - width * 0.3) < 1, '登录区占 30%');
+        assert.ok(Math.abs(brand.x + brand.width - login.x) < 1);
+      } else {
+        assert.equal(brand.width, width);
+        assert.equal(login.width, width);
+        assert.ok(brand.y + brand.height <= login.y + 1);
+      }
+      assert.ok(await page.locator('.login-content').evaluate(node => node.scrollWidth <= node.clientWidth));
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight));
       await page.locator('#feishu-login').scrollIntoViewIfNeeded();
       assert.ok(await page.locator('#feishu-login').evaluate(node => {
