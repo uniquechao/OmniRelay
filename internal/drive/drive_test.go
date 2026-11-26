@@ -3,6 +3,7 @@ package drive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -343,7 +344,18 @@ func TestFileArchiveAccess(t *testing.T) {
 	if allowed, err := s.CanMarkProjectFile(ctx, alice, "unrelated", docs[0].ID); err != nil || allowed {
 		t.Fatal(allowed, err)
 	}
+	if docs[0].Version == nil {
+		t.Fatal("missing synced document version")
+	}
+	documentID, version := docs[0].ID, *docs[0].Version
+	body, err := s.ProjectText(ctx, alice, "p", documentID, version, 1)
+	if err != nil || body.State != "ready" || body.Text == "" {
+		t.Fatalf("authorized excerpt %+v: %v", body, err)
+	}
 	exec("UPDATE project_members SET role='revoked'")
+	if _, err := s.ProjectText(ctx, alice, "p", documentID, version, 1); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("revoked excerpt: %v", err)
+	}
 	if allowed, err := s.CanMarkProjectFile(ctx, alice, "p", docs[0].ID); err != nil || allowed {
 		t.Fatal(allowed, err)
 	}

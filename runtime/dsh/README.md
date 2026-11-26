@@ -1,11 +1,23 @@
 # 项目 Agent Runtime
 
-项目 PM 和全局查询助手使用独立于 OmniRelay Go 服务的 Runtime 镜像。本目录是其构建上下文，包含固定版本的 DSH SDK、原生 Harness、两类人设初始化模板、身份工具和项目 PM 业务工具桥。Harness 管理定时器。Go 内部的 Gateway 和权限模块决定使用哪个 Agent、它可以读取哪些字段，以及 Channel 最终向谁投递。
+全局管理、项目 PM 和知识问答共用独立 Runtime 镜像。Go Gateway 提供角色、项目和逐轮授权并控制结果交付。Runtime 管理原生 Harness 实例、会话、定时器和业务工具桥。
 
 ```sh
 docker build -t omnirelay-dsh-runtime:group-request runtime/dsh
 bash tests/integration/group-agent-gate.sh
 ```
+
+### 角色、版本及工作恢复
+
+Gateway 向 `/works/{work}` 提交包含 `role`、`config_version`、可选 `persona` 的工作。角色为 `management-pm`、`project-pm` 或 `query`。版本 0 使用默认模板。每个会话轮次启动时载入该角色的模板和本版配置，首次成功加载在实例目录记录版本与人设摘要。原生会话、工作区和逻辑 Agent ID 在配置更新后保持稳定。
+
+正式聊天启动前，Runtime 将本工作绑定 POST 到 Gateway 的 `/internal/tools/project/catalog`。Gateway 按当前授权返回目录，模型只能调用其中的业务工具及身份工具。知识问答收到带写能力的目录时拒绝执行。固定身份查询及定时通知使用专用提示。应用请求按文本输入处理。
+
+工作结果带原生会话、轮次、实际使用的配置版本和结果种类。`write_slots` 列出成功写入的序号。`failed_writes` 列出 Gateway 明确拒绝的序号、工具和状态码。正式业务对象与逐项结果以 Go 的事务回执为准。重试先查询同一工作，已完成的结果从 SQLite 读取。运行中失去写入确认时，在封存结果或恢复执行前用原序号向 Gateway 对账。
+
+旧卷就地升级并保留原生会话、工作与槽位。旧版本没有逐槽成功位，其历史操作需以 Go 事务回执核对。原卷首次初始化产生的 `persona.md` 与 `origin.json` 保留用于迁移核验。在 Runtime 容器运行 `python instance.py legacy-personas` 可列出与首建模板有差异或文件缺失的实例。按 Agent ID 核对租户和项目后，管理员可在对应 Agent 配置中保存所需自定义内容。工具只输出文件位置和摘要。
+
+固定版 SDK 的本地回归可在装好 `requirements.txt` 后运行 `python runtime/dsh/test_runtime.py`。测试使用原生 Harness、本机合成模型和受控的工具目录。
 
 ## 系统管理员原生调试
 
@@ -33,6 +45,7 @@ Web 容器随生产 Runtime StatefulSet 启动。两个入口使用同一个模�
 | `TestProjectToolRecoveryGate` | 并发和跨代次重试仅写入一次；相同命令序号换参数、过期轮次和撤权重放被拒 |
 | `TestProjectToolHistoryGate` | 来源撤权后抑制交付与历史正文；后续模型会话与受限正文隔离 |
 | `TestProjectToolAudienceImageGate` | 内部群请求经真实 DSH 镜像、双向 TLS 在正确项目建任务，原话题得到署名回执，个人工作台显示结果 |
+| `TestAgentRolesImageGate` | 在正式工作台查询获准的纪要正文和修订、区分仅标题结果、汇总允许的项目、按原用户委派给项目 PM 并查询子工作。原生 Runtime 回调后按正式任务记录与投递回执对账。 |
 
 镜像还会验证 SQLite 命令日志重新打开后保留待核对的写入及其序号。目录、角色与每个工具的放行条件见[项目 PM 工具验收表](../../design/engineering/project-pm-tool-capabilities.md)。
 
@@ -75,6 +88,6 @@ Pod 的 `livez` 探针检查私有 TLS 服务。`readyz` 检查本地工作日�
 | 模型与存储 | 提供 `DEEPSEEK_BASE_URL`、`DEEPSEEK_API_KEY`、`DSH_MODEL`。挂载可供 UID/GID 10001 写入的卷到 `/var/lib/omnirelay-agent`。只读根文件系统时给 `/tmp` 挂载可执行的临时文件系统，原生 Harness 会在其中装入动态库 |
 | 飞书入口 | 启用 Bot 长连接与发送配置后，新收到的群「@Bot 我是谁」和私聊「我是谁」可进入各自的 Agent。启用发送适配器和 Runtime 后可登记定向提醒 |
 
-每个 Runtime 卷有一个常驻写者，每个 Agent 还有实例锁。模板在首次创建时复制。Go 共享 PostgreSQL 持久化业务工作、owner、权限绑定、工具回执、交付 ID 和外部回执；Runtime 用本地 SQLite 保存接受与完成记录，DSH 单独保存会话。若进程在只读轮次完成前中断，恢复后允许重新执行该读取。飞书发送发起后未知的结果需要按原交付 ID 对账。
+每个 Runtime 卷有一个常驻写者，每个 Agent 还有实例锁。Go 使用 PostgreSQL 持久化业务工作、owner、权限绑定、工具回执、交付 ID 和外部回执。Runtime 在本地 SQLite 保存工作结果，DSH 保存原生会话。若进程在只读轮次完成前中断，恢复后可重新执行该读取。飞书发送结果未知时按原交付 ID 对账。
 
-本期覆盖单 owner 原卷恢复、私聊身份查询和单次项目提醒。每个 Runtime 同时托管到期时间最早的四个计划，Go 接受原定时器到期后十分钟内的回调。跨节点自动迁移仍需旧写者隔离和卷交接。业务会话仅开放无参身份工具，定时会话只可激活已授权的定时器。模型、工具和桥处在同一容器信任边界。
+同一 owner 按发现接口返回的全部有效计划恢复或启动原生单次定时器。计划在 Go 侧失效后，发现循环停止对应的时钟进程。Go 接受到期后十分钟内的回调并逐目标复核。跨节点迁移需要旧写者隔离和卷交接。

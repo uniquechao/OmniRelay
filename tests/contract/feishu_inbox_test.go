@@ -188,7 +188,7 @@ func TestFeishuInboxConcurrentDuplicateBeforeCapacity(t *testing.T) {
 		FROM feishu_inbound_work w JOIN feishu_inbound_events e USING (app_id,tenant_id,message_id)`).
 		Scan(&id, &actor, &state, &eventID, &chatID, &kind, &thread, &parent, &sender, &received, &body))
 	e := f.event
-	if id != string(first) || actor != account || state != "pending_route" || eventID != e.EventID ||
+	if id != string(first) || actor != account || state != "agent_disabled" || eventID != e.EventID ||
 		chatID != e.ChatID || kind != string(e.ChatKind) || thread != e.ThreadID ||
 		parent != e.ReplyToMessageID || sender != e.SenderOpenID || !received.Equal(e.ReceivedAt) || body != e.Text {
 		t.Fatal("persisted fields differ from the initial event and enabled account")
@@ -203,12 +203,13 @@ func TestFeishuInboxConcurrentDuplicateBeforeCapacity(t *testing.T) {
 	if repeated.WorkID != first {
 		t.Fatal("new event ID must not change the original work ID")
 	}
-	e.MessageID = "om_over_capacity"
-	f.reject(t, e, orchestrator.ErrInboxFull)
-	f.counts(t, 1)
 	if current := f.lastMessage(t); current == nil || !current.Equal(*last) {
-		t.Fatal("replay or capacity rejection changed receive time")
+		t.Fatal("duplicate event changed receive time")
 	}
+	e.MessageID = "om_disabled_is_terminal"
+	_, err = f.inbox.AcceptInbound(t.Context(), e)
+	must(t, err)
+	f.counts(t, 2)
 }
 
 func TestFeishuInboxAdmissionBoundary(t *testing.T) {

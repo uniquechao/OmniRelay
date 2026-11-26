@@ -52,15 +52,28 @@ func (g Gateway) Resolve(ctx context.Context, actor identity.Principal, intent, 
 		}
 		// Hours uses the global assistant while its target project requires membership.
 		action = "project.read"
-	} else if project != "" {
+	} else if project != "" && intent != "knowledge" && intent != "admin" {
 		return Target{}, errInvalidIntent
 	}
-	ok, err := g.Check(ctx, actor, action, project)
+	grantProject := project
+	if intent == "admin" || intent == "knowledge" {
+		grantProject = ""
+	}
+	ok, err := g.Check(ctx, actor, action, grantProject)
 	if err != nil {
 		return Target{}, err
 	}
 	if !ok {
 		return Target{}, access.ErrForbidden
+	}
+	if project != "" && (intent == "knowledge" || intent == "admin") {
+		ok, err = g.Check(ctx, actor, "project.read", project)
+		if err != nil {
+			return Target{}, err
+		}
+		if !ok {
+			return Target{}, access.ErrForbidden
+		}
 	}
 	// Length-delimited JSON strings keep all namespace components unambiguous.
 	key, err := json.Marshal([]string{actor.TenantKey, actor.AppID, role, space})

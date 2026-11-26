@@ -99,7 +99,7 @@ func TestFeishuCandidateQueueRecoveryAndOwnership(t *testing.T) {
 	accept(archiveOnly, true)
 	prod.counts(t, 5)
 	var productionReady int
-	must(t, prod.pool.QueryRow(ctx, `SELECT count(*) FROM feishu_inbound_work WHERE state='pending_route'`).Scan(&productionReady))
+	must(t, prod.pool.QueryRow(ctx, `SELECT count(*) FROM feishu_inbound_work WHERE state='agent_disabled'`).Scan(&productionReady))
 	if productionReady != 2 {
 		t.Fatalf("candidate work entered the production route: %d", productionReady)
 	}

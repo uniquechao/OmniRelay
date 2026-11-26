@@ -15,6 +15,7 @@ import (
 )
 
 type ProjectFiles interface {
+	ProjectText(context.Context, identity.Principal, string, int64, int64, int) (drive.ProjectExcerpt, error)
 	ProjectListEntries(context.Context, identity.Principal, string) ([]drive.ListEntry, error)
 	ProjectSources(context.Context, identity.Principal, string) ([]drive.ProjectSource, error)
 	CanMarkProjectFile(context.Context, identity.Principal, string, int64) (bool, error)

@@ -82,7 +82,7 @@ function ProjectContent({
   const { workspace, data: raw, directory, contentRoute, partial } = loaded
   const project = workspace?.project
   if (tab === 'bot' && contentRoute.tab === 'bot')
-    return <ProjectBot project={id} {...{ base, request, signal }} />
+    return <ProjectBot project={id} settings={route.params.get('view')==='settings'} {...{ base, request, signal }} />
   if (tab === 'docs')
     return (
       <DrivePage projectId={id} initialQuery={route.params.get('q') || ''} memory={(memory.files ??= {})} />

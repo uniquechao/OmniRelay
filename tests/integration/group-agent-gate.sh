@@ -65,8 +65,8 @@ chmod 444 "$suite/model/DEEPSEEK_API_KEY"
 docker exec "$OMNI_GATE_CONTAINER" python probe.py readyz
 docker exec "$OMNI_GATE_CONTAINER" python probe.py model
 grep -q '^DSH model probe path /anthropic/v1/messages$' "$suite/model.log"
-go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate|TestWorkbenchChatGate|TestProjectToolHistoryGate|TestProjectToolRecoveryGate|TestProjectToolAudienceImageGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
-for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate TestWorkbenchChatGate TestProjectToolHistoryGate TestProjectToolRecoveryGate TestProjectToolAudienceImageGate; do
+go test -count=1 -v -run '^(TestGatewayPermissionGate|TestRuntimeImageGate|TestPrivateReplyGate|TestDirectedNoticeGate|TestNoticePermissionGate|TestWorkbenchChatGate|TestProjectToolHistoryGate|TestProjectToolRecoveryGate|TestProjectToolAudienceImageGate|TestAgentRolesImageGate)$' ./internal/orchestrator/group | tee "$suite/gates.log"
+for gate in TestGatewayPermissionGate TestRuntimeImageGate TestPrivateReplyGate TestDirectedNoticeGate TestNoticePermissionGate TestWorkbenchChatGate TestProjectToolHistoryGate TestProjectToolRecoveryGate TestProjectToolAudienceImageGate TestAgentRolesImageGate; do
     grep -q "^--- PASS: $gate " "$suite/gates.log"
 done
 go test -count=1 -v -run '^TestProjectPMToolMatrix$' ./internal/project | tee "$suite/pm-tools.log"

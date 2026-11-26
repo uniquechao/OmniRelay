@@ -147,6 +147,30 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	check("chat_unbind", "manager", `{"chat_id":"oc","expected_version":2}`, `"project_id":""`)
 	check("file_search", "reader", `{"q":"私有"}`, "document:doc")
 	check("file_get", "reader", `{"file_ref":"document:doc"}`, "私有文件")
+	t.Run("versioned_file_pages_and_reference_proof", func(t *testing.T) {
+		sql("UPDATE project_sources SET body=repeat('文',1500)||'第二页' WHERE id='doc'")
+		got := call(t, "reader", "file_get", `{"file_ref":"document:doc","page":2}`, 200)
+		if !strings.Contains(got, `"excerpt":"第二页"`) || !strings.Contains(got, `"pages":2`) {
+			t.Fatal(got)
+		}
+		call(t, "reader", "file_get", `{"file_ref":"document:doc","page":3}`, 400)
+		args := pmtools.Args{"file_ref": json.RawMessage(`"document:doc"`)}
+		actor := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "reader", OpenID: "ou_reader"}
+		err := roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+			proof, err := svc.RecheckToolRead(ctx, tx, actor, "north", fileReferenceRead, args)
+			if err != nil {
+				return err
+			}
+			meta := proof.(map[string]any)
+			if len(meta) != 2 || meta["file"] == nil || meta["excerpt"] != strings.Repeat("文", 1500) {
+				t.Fatal("reference proof must match the excerpt the original reader saw")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 	call(t, "manager", "file_get", `{"file_ref":"document:doc"}`, 403)
 	call(t, "manager", "meeting_mark", `{"file_ref":"document:doc"}`, 403)
 	sql(`INSERT INTO project_sources(tenant_key,app_id,project_id,kind,id,title,body) VALUES('tenant','app','north','document','notes','讨论要点','记录');

@@ -229,7 +229,7 @@ func (s *Service) registerSchedule(mux *http.ServeMux) {
 		rows, err := s.DB.Query(r.Context(), `SELECT p.id::text FROM agent_notice_plans p JOIN agent_instances i USING(agent_id)
            WHERE i.owner_id=$1 AND i.tenant_key=$2 AND i.app_id=$3 AND p.enabled
            AND p.due_at+interval '10 minutes'>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM agent_group_work w WHERE w.plan_id=p.id)
-           ORDER BY p.due_at,p.id LIMIT 4`, s.Owner, s.Tenant, s.App)
+           ORDER BY p.due_at,p.id`, s.Owner, s.Tenant, s.App)
 		if err != nil {
 			http.Error(w, "unavailable", 503)
 			return

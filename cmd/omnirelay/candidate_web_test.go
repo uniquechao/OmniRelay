@@ -170,7 +170,7 @@ func TestCandidateWebRun(t *testing.T) {
 		return w
 	}
 	if got := post(`{"text":"已收到","target":"oc_other"}`); got.Code != http.StatusBadRequest {
-		t.Fatal("工作台回复接受了来源之外的目标")
+		t.Fatalf("指定来源之外的目标应返回 400，实际 %d %s", got.Code, got.Body)
 	}
 	if got := post(`{"text":"已收到"}`); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"state":"success"`) {
 		t.Fatalf("候选工作台受限回执失败: %d %s", got.Code, got.Body)

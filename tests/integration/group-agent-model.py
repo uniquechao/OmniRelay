@@ -27,12 +27,37 @@ class Model(BaseHTTPRequestHandler):
         smoke = not tools and "Reply with exactly DSH_OK." in str(req["messages"][-1])
         if smoke:
             print("DSH model probe path", self.path, flush=True)
-        elif tools != PROJECT_TOOLS and tools not in ({"context_whoami"}, {"activate_notice"}):
+        elif tools != {"activate_notice"} and (
+            "context_whoami" not in tools or not tools <= PROJECT_TOOLS | {"visible_projects", "delegate_project", "delegation_status"}
+        ):
             print("model-visible tools", sorted(tools), flush=True)
             self.send_error(400, "Unexpected tool roster")
             return
         last = req["messages"][-1]["content"]
         finished = isinstance(last, list) and any(x.get("type") == "tool_result" for x in last)
+        question = ""
+        recent = []
+        for message in reversed(req["messages"]):
+            if message.get("role") != "user":
+                recent.append(message)
+                continue
+            content = message["content"]
+            if isinstance(content, list) and any(x.get("type") == "tool_result" for x in content):
+                continue
+            question = str(content)
+            break
+        source_test = "ROLE_QA_GATE" in question
+        list_test = "ROLE_LIST_GATE" in question
+        delegate_test = "ROLE_DELEGATE_GATE" in question
+        denied_test = "ROLE_DENIED_GATE" in question
+        fabricated_test = "ROLE_RECEIPT_GATE" in question
+        progress_test = "ROLE_PROGRESS_GATE" in question
+        title_only_test = "ROLE_TITLE_GATE" in question
+        partial_test = "ROLE_PARTIAL_GATE" in question
+        tool_uses = sum(1 for message in recent for item in message.get("content", [])
+                        if isinstance(item, dict) and item.get("type") == "tool_use")
+        if partial_test and tool_uses == 1:
+            finished = False
         history = str(req["messages"])
         if "群可见的项目提醒" in history and ("PRIVATE_ONLY_GATE" in history or "user_id" in history):
             self.send_error(400,"private field in group context")
@@ -40,15 +65,49 @@ class Model(BaseHTTPRequestHandler):
         if tools == {"activate_notice"} and "OMNI_NOTICE_DUE" in json.dumps(last):
             finished = True
         if finished or smoke:
-            if isinstance(last, list) and any(x.get("is_error") for x in last):
+            if isinstance(last, list) and any(x.get("is_error") for x in last) and not (denied_test or partial_test):
                 self.send_error(400, "synthetic tool failed")
                 return
-            block, delta, reason = {"type":"text","text":""}, {"type":"text_delta","text":"DSH_OK" if smoke else "已核对"}, "end_turn"
+            reply = "DSH_OK" if smoke else "已核对"
+            if source_test:
+                receipt = str(last)
+                if "ROLE_PROOF_721" not in receipt or "document:meeting-gate" not in receipt or "revision" not in receipt:
+                    self.send_error(400, "Missing permitted body or citation")
+                    return
+                reply = "ROLE_PROOF_721，依据 document:meeting-gate"
+            if list_test or progress_test:
+                reply = str(last)
+            if title_only_test:
+                reply = "FAKE_SOURCE_CONCLUSION"
+            if fabricated_test or delegate_test or denied_test or partial_test:
+                reply = "FAKE_MODEL_RECEIPT 已经成功创建任务"
+            block, delta, reason = {"type":"text","text":""}, {"type":"text_delta","text":reply}, "end_turn"
         else:
-            name = "project_get" if "project_get" in tools else next(iter(tools))
+            name = next((name for name in ("project_get", "visible_projects", "context_whoami") if name in tools), "activate_notice")
             args = {}
             if "task_create" in tools and "PM_GATE_CREATE" in str(last):
                 name, args = "task_create", {"title":"组内创建的验收任务"}
+            if source_test:
+                if "file_get" not in tools or "task_create" in tools:
+                    self.send_error(400, "Incorrect Q&A projection")
+                    return
+                name, args = "file_get", {"file_ref": "document:meeting-gate"}
+            if list_test:
+                name = "visible_projects"
+            if progress_test:
+                name = "delegation_status"
+            if title_only_test:
+                name, args = "file_search", {"q": "项目纪要"}
+            if partial_test:
+                name = "task_create"
+                args = {"title":"已办事项"} if tool_uses == 0 else {"title":"待澄清事项", "owner_member_id":"ROLE_MISSING_MEMBER"}
+            if fabricated_test:
+                name = "context_whoami"
+            if delegate_test or denied_test:
+                if "delegate_project" in tools:
+                    name, args = "delegate_project", {"project_id": "locked" if denied_test else "north"}
+                elif "task_create" in tools and not denied_test:
+                    name, args = "task_create", {"title": "集成角色任务"}
             block = {"type":"tool_use","id":"call_"+uuid.uuid4().hex,"name":name,"input":{}}
             delta, reason = {"type":"input_json_delta","partial_json":json.dumps(args)}, "tool_use"
         usage = {"input_tokens":10,"output_tokens":3}

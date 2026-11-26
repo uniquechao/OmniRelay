@@ -44,16 +44,20 @@ func (s *Service) Register(mux *http.ServeMux, auth authenticate, permissions Pe
 	handle("GET /api/v1/system/connections", "system.read", identity.ValidateSession, s.getConnections)
 }
 
-func (s *Service) getConnections(w http.ResponseWriter, _ *http.Request, _ identity.Principal) {
+func (s *Service) getConnections(w http.ResponseWriter, r *http.Request, _ identity.Principal) {
 	type connectionSetting struct {
 		ID    string `json:"id"`
 		State string `json:"state"`
+	}
+	state := "not_configured"
+	if s.RuntimeReadiness != nil {
+		state = s.RuntimeReadiness(r.Context())
 	}
 	respond(w, http.StatusOK, struct {
 		Items []connectionSetting `json:"items"`
 	}{Items: []connectionSetting{
 		{ID: "omnirelay", State: "local"},
-		{ID: "deepseek_harness", State: "not_configured"},
+		{ID: "deepseek_harness", State: state},
 	}})
 }
 

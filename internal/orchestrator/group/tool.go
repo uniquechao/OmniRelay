@@ -18,6 +18,9 @@ type ToolCall struct {
 }
 
 func (s *Service) useTurn(ctx context.Context, c ToolCall, bind bool) (Who, error) {
+	if c.Turn <= 0 {
+		return Who{}, access.ErrForbidden
+	}
 	var who Who
 	err := pgx.BeginTxFunc(ctx, s.DB, pgx.TxOptions{IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
 		w, err := s.boundWork(ctx, tx, c)
@@ -66,7 +69,7 @@ func (s *Service) boundWork(ctx context.Context, tx pgx.Tx, c ToolCall) (work, e
 	if err != nil {
 		return work{}, err
 	}
-	if c.Kind != w.Kind || c.Owner != s.Owner || c.Session != w.Session || c.Agent != w.Agent || c.Turn <= 0 {
+	if c.Kind != w.Kind || c.Owner != s.Owner || c.Session != w.Session || c.Agent != w.Agent || c.ConfigVersion != w.ConfigVersion || c.Role != w.Role {
 		return work{}, access.ErrForbidden
 	}
 	return w, nil

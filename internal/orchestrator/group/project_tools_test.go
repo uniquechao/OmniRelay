@@ -38,7 +38,7 @@ func (g *gate) projectMention(key, text string) string {
 }
 func TestProjectToolRecoveryGate(t *testing.T) {
 	g := newGate(t)
-	id := g.projectMention("retry", "创建我的任务")
+	id := g.projectMention("retry", "创建我的任务 recover 并追加任务 recover 进度")
 	claim := func() ToolCall {
 		t.Helper()
 		w, err := g.claim(g.ctx)
@@ -206,15 +206,21 @@ func TestProjectPrimaryReceiptAndStaleHistory(t *testing.T) {
 	g.RegisterWorkbench(mux, func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool) {
 		return identity.Principal{TenantKey: g.Tenant, AppID: g.App, AccountID: "alice", OpenID: "login-a"}, true
 	})
+	var target string
 	request := func(method, key string) *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(method, "/api/v1/projects/north/bot/messages", strings.NewReader(`{"text":"项目主群"}`))
+		question := "查询项目主群"
+		if target != "" {
+			question = "设置项目主群 " + target
+		}
+		payload, _ := json.Marshal(map[string]string{"text": question})
+		req := httptest.NewRequest(method, "/api/v1/projects/north/bot/messages", bytes.NewReader(payload))
 		req.Header.Set("Idempotency-Key", key)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		return w
 	}
-	var target string
+
 	g.Execute = func(ctx context.Context, b dsh.Binding) (dsh.Result, error) {
 		c := ToolCall{Binding: b, Turn: 1}
 		for _, bind := range []bool{true, false} {
@@ -329,7 +335,7 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 		}
 		return w.Body.String()
 	}
-	id := g.projectMention("group-tool", "PM_GATE_CREATE")
+	id := g.projectMention("group-tool", "创建任务 组内创建的验收任务 PM_GATE_CREATE")
 	g.step()
 	g.state(id, "ready")
 	g.step()
@@ -341,7 +347,7 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 	if len(g.replies) != 1 || g.replies[0].Thread != "topic-tools" || g.replies[0].Message != "group-tool" || g.texts[0] != "项目 PM · 北辰项目\n请在本项目工作台的 Bot 对话中查看本次请求的结果。" {
 		t.Fatal("public receipt", g.texts)
 	}
-	if !strings.Contains(history(), "已核对") {
+	if !strings.Contains(history(), "task_create") {
 		t.Fatal("private answer missing")
 	}
 	who = "bob"
@@ -354,7 +360,7 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 func TestProjectToolCRUDRecoveryGate(t *testing.T) {
 	g := newGate(t)
 	g.sql("UPDATE project_members SET role='manager' WHERE account_id='alice'")
-	g.projectMention("crud-recovery", "维护成员职责并清理重复任务")
+	g.projectMention("crud-recovery", "更新成员 bob 职责，创建任务重复任务样本，批量修改任务重复任务样本，取消任务重复任务样本，删除重复任务样本，提交候选并忽略候选")
 	work, err := g.claim(g.ctx)
 	if err != nil {
 		t.Fatal(err)

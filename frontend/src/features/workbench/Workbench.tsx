@@ -1,6 +1,7 @@
 import {UsersPage} from "../users/UsersPage";
 import {BotPage,ConnectionSettings} from '../connections/Pages';
 import {AuditPage} from '../audit/AuditPage';
+import {AgentManagement,AgentRuns} from '../agents/AgentPages';
 import {useLayoutEffect,useRef,useState} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {projectFollowsChanged} from '../projects/projects';
@@ -117,6 +118,8 @@ export function Workbench({locked,onLogout}:{locked:boolean;onLogout:()=>Promise
     ['projects','drive','users','roles','audit'].includes(target?.route.id ?? '')?'list':'content';
   let page;
   switch(target?.route.id){
+    case 'agents': page=!locked && <AgentManagement key={visit}/>;break;
+    case 'runs': page=!locked && <AgentRuns key={visit}/>;break;
     case 'dshbot':
       page=!locked && <main className="dshbot-console"><iframe title="DSH 原生调试界面" src="/dshbot/"/></main>;
       break;

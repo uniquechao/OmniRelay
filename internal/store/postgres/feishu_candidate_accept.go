@@ -58,7 +58,7 @@ func (s *CandidateMessages) AcceptCandidateMessage(ctx context.Context, item orc
 				return ErrCandidateScope
 			}
 			if e.MessageID != "" && rev == 0 {
-				if _, err := s.inbox.insertInbound(ctx, tx, e); err != nil {
+				if _, err := recordInbound(ctx, tx, e, &id, "candidate"); err != nil {
 					return err
 				}
 			}

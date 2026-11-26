@@ -142,7 +142,7 @@ func registerCandidateReplies(mux *http.ServeMux, pool *pgxpool.Pool,
 		}
 		id := r.PathValue("messageID")
 		var state string
-		if err := pool.QueryRow(ctx, `SELECT state FROM (`+source+` AND e.message_id=$5) AS received`, append(key, id)...).Scan(&state); err != nil || state != "pending_route" {
+		if err := pool.QueryRow(ctx, `SELECT state FROM (`+source+` AND e.message_id=$5) AS received`, append(key, id)...).Scan(&state); err != nil || state != "candidate" {
 			http.NotFound(w, r)
 			return
 		}

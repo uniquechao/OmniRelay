@@ -29,7 +29,7 @@ var catalog = []Tool{
 	{"chat_unbind", "按绑定版本解绑本项目群", "project.settings", true, false, "!chat_id !expected_version"},
 	{"chat_set_primary", "按绑定版本和主群版本指定项目主群", "project.settings", true, false, "!chat_id !expected_version !primary_version"},
 	{"file_search", "搜索本人有来源读权的项目文件，返回引用和元数据", "project.read", false, true, "q page"},
-	{"file_get", "用搜索结果的 file_ref 查询单个文件元数据", "project.read", false, true, "!file_ref"},
+	{"file_get", "用 file_ref 读取可见文件引用、已同步的正文片段和修订，核对引用依据", "project.read", false, true, "!file_ref page"},
 	{"meeting_mark", "将 file_search 返回的飞书文档或文件标记为当前项目的会议纪要，重复标记不会创建副本", "project.assign", true, false, "!file_ref"},
 	{"task_search", "按关键词、状态、负责人搜索当前项目的任务", "project.read", false, false, "q status owner_member_id page"},
 	{"task_get", "取得项目任务及当前版本", "project.read", false, false, "!task_id"},
@@ -140,9 +140,37 @@ func (t Tool) Validate(a Args) error {
 	}
 	return nil
 }
-func Schemas() []map[string]any {
-	out := []map[string]any{}
+
+var management = []Tool{
+	{"visible_projects", "列出发起人当前可见项目及其受阻任务", "", false, true, ""},
+	{"delegation_status", "查询本人委派的子工作及状态；可按父工作编号筛选", "", false, true, "parent_work"},
+	{"delegate_project", "将用户明确要求跟进的原始请求交办给指定项目的 PM；返回子工作编号", "", true, false, "!project_id"},
+}
+
+func RoleTools(role string) []Tool {
+	if role == "management-pm" {
+		return management
+	}
+	tools := []Tool{}
 	for _, t := range catalog {
+		if role == "project-pm" || role == "query" && !t.Write {
+			tools = append(tools, t)
+		}
+	}
+	return tools
+}
+func RoleNames(role string) []string {
+	names := []string{}
+	for _, t := range RoleTools(role) {
+		names = append(names, t.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+func Schemas() []map[string]any { return ToolSchemas(catalog) }
+func ToolSchemas(tools []Tool) []map[string]any {
+	out := []map[string]any{}
+	for _, t := range tools {
 		props := map[string]any{}
 		req := []string{}
 		for _, f := range strings.Fields(t.fields) {

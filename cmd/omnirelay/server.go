@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/agentadmin"
 	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/directory"
 	"github.com/uniquechao/OmniRelay/internal/drive"
@@ -21,8 +22,8 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/routing"
 	"github.com/uniquechao/OmniRelay/internal/store/postgres"
 	"github.com/uniquechao/OmniRelay/internal/system"
-	"github.com/uniquechao/OmniRelay/migrations"
 	"github.com/uniquechao/OmniRelay/internal/webui"
+	"github.com/uniquechao/OmniRelay/migrations"
 )
 
 func newBackend(ctx context.Context, pool *pgxpool.Pool, cfg configuration, transport http.RoundTripper) (http.Handler, *backendWorkers, error) {
@@ -95,7 +96,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 	workers := &backendWorkers{directory: directoryService, bot: system.New(botStore, check)}
 	mux := http.NewServeMux()
 	registerDSHBot(mux, cfg.publicOrigin, identityService, roles)
-	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore, projectService)
+	workers.groupAgent, err = groupWorker(pool, cfg, roles, chatSource, mux, identityService, botStore, projectService, workers.bot, chatService)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -138,6 +139,7 @@ func newBackendWithIntegrations(ctx context.Context, pool *pgxpool.Pool, cfg con
 		workers.connection = func(ctx context.Context) { lease.Run(ctx, connection.Run) }
 	}
 	routing.Gateway{Check: roles.Check}.Register(mux, identityService.AuthenticateWorkbench)
+	agentadmin.Service{DB: pool, Roles: roles}.Register(mux, identityService.AuthenticateWorkbench)
 	if run := cfg.candidateMessageRun; run != nil && run.MessageProject != "" {
 		registerCandidateReplies(mux, pool, identityService.AuthenticateWorkbench, roles, *run)
 	}

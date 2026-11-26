@@ -14,6 +14,7 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/chat"
+	"github.com/uniquechao/OmniRelay/internal/drive"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
@@ -301,6 +302,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		return s.markMeetingFile(ctx, k, actor, a.String("file_ref"))
 	case "file_search", "file_get":
 		if name == "file_get" {
+			q.Del("page")
 			q.Set("file_ref", a.String("file_ref"))
 		}
 		view, err := s.sourcePanel(ctx, actor, k.project, "agent_files", q)
@@ -314,13 +316,32 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			}
 			item := items[0]
 			if item.FileID != 0 {
-				return map[string]any{"file": item, "authorized_path": fmt.Sprintf("/api/v1/feishu/files/%d", item.FileID)}, nil
+				result := map[string]any{"file": item, "authorized_path": fmt.Sprintf("/api/v1/feishu/files/%d?source_project=%s", item.FileID, url.QueryEscape(k.project)), "state": "unavailable"}
+				if item.Status == "complete" && item.VersionID != nil {
+					body, err := s.files.ProjectText(ctx, actor, k.project, item.FileID, *item.VersionID, int(page))
+					if errors.Is(err, drive.ErrRevoked) {
+						return nil, errDenied
+					}
+					if err != nil {
+						return nil, err
+					}
+					result["body"], result["state"] = body, body.State
+				}
+				return result, nil
 			}
-			var excerpt string
-			err = tx.QueryRow(ctx, `SELECT left(s.body,1500) FROM project_sources s JOIN project_source_readers r
+			var excerpt, revision string
+			var pages int
+			err = tx.QueryRow(ctx, `SELECT substring(s.body FROM $7 FOR 1500), encode(sha256(convert_to(s.body,'UTF8')),'hex'),greatest(1,ceil(length(s.body)/1500.0)::int) FROM project_sources s JOIN project_source_readers r
    ON (r.tenant_key,r.app_id,r.project_id,r.kind,r.source_id)=(s.tenant_key,s.app_id,s.project_id,s.kind,s.id)
-   WHERE (s.tenant_key,s.app_id,s.project_id,s.kind,s.id,r.account_id)=($1,$2,$3,$4,$5,$6)`, k.args(item.Kind, item.RefID, actor.AccountID)...).Scan(&excerpt)
-			return map[string]any{"file": item, "excerpt": excerpt}, err
+   WHERE (s.tenant_key,s.app_id,s.project_id,s.kind,s.id,r.account_id)=($1,$2,$3,$4,$5,$6)`, k.args(item.Kind, item.RefID, actor.AccountID, 1+(page-1)*1500)...).Scan(&excerpt, &revision, &pages)
+			if err == nil && page > int64(pages) {
+				return nil, errInput
+			}
+			state := "ready"
+			if strings.TrimSpace(excerpt) == "" {
+				state = "no_text"
+			}
+			return map[string]any{"file": item, "excerpt": excerpt, "revision": revision, "page": page, "pages": pages, "state": state}, err
 		}
 		return view, nil
 	case "briefing_get":
@@ -383,7 +404,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		if err = json.Unmarshal(result.(json.RawMessage), &saved); err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": saved.ID, "version": saved.Version, "status": saved.Status}, nil
+		return map[string]any{"id": saved.ID, "task_code": saved.TaskCode, "version": saved.Version, "status": saved.Status}, nil
 	case "task_delete":
 		return s.removeTask(ctx, k, a.String("task_id"), actor, deleteTaskInput{Expected: version, Reason: a.String("change_reason")})
 	case "task_add_progress":

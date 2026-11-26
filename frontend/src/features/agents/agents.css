@@ -1,0 +1,104 @@
+.agent-settings {
+  margin-block-end: 1rem;
+}
+.agent-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+}
+.agent-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.agent-facts dt {
+  color: var(--or-text-muted);
+}
+.agent-editor {
+  max-inline-size: min(35rem, 94vw);
+  max-block-size: 88dvh;
+  overflow: auto;
+  border: 1px solid var(--or-border);
+  color: var(--or-text);
+  background: var(--or-surface);
+  padding: 1.5rem;
+  border-radius: 12px;
+}
+.agent-editor form,
+.agent-editor form > label:not(:has(input[type='checkbox'])) {
+  display: grid;
+  gap: 0.5rem;
+}
+.agent-editor form {
+  gap: 1rem;
+}
+.agent-tools {
+  display: grid;
+  max-block-size: 12rem;
+  overflow: auto;
+}
+.agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.agent-runs {
+  padding: 0;
+  list-style: none;
+}
+.agent-runs li {
+  padding-block: 1rem;
+  border-bottom: 1px solid var(--or-border);
+}
+.agent-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(9rem, 16rem) minmax(0, 1fr);
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+.agent-chat-layout aside {
+  overflow: auto;
+  padding: 0.75rem;
+  border-inline-end: 1px solid var(--or-border);
+}
+.agent-chat-layout aside button {
+  display: block;
+  text-align: start;
+  overflow-wrap: anywhere;
+  margin-block: 0.3rem;
+  width: 100%;
+}
+.agent-chat-layout aside button[aria-pressed='true'] {
+  font-weight: 700;
+  border-color: var(--or-focus);
+}
+.agent-chat-room {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+@media (max-width: 680px) {
+  .agent-chat-layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .agent-chat-layout aside {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-inline-end: 0;
+    padding: 0.25rem;
+    flex: none;
+  }
+  .agent-chat-layout aside button,
+  .agent-chat-layout aside h3 {
+    width: auto;
+    white-space: nowrap;
+  }
+  .agent-chat-room {
+    flex: 1;
+  }
+}

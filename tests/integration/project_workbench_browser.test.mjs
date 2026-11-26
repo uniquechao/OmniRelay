@@ -127,6 +127,7 @@ async function fixture(page) {
           public_scope: 'project_only',
         });
       }
+      if (section === 'bot/conversations') return respond({items:[{id:'',title:'项目对话'}]});
       if (section === 'bot/messages') {
         if (route.request().method() === 'POST') {
           assert.deepEqual(route.request().postDataJSON(), {text:'你好，项目 PM'});
@@ -188,6 +189,92 @@ async function fixture(page) {
     },
   };
 }
+test('真实数据库运行记录展示逐槽位失败', {skip:!moduleName||!process.env.OMNIRELAY_RUNS_ORIGIN}, async t=>{
+  const browser=await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  await page.goto(process.env.OMNIRELAY_RUNS_ORIGIN+'/#/runs');
+  await page.getByLabel('工作编号').fill(process.env.OMNIRELAY_RUNS_WORK);
+  await page.getByRole('button',{name:'查询',exact:true}).click();
+  await page.getByText('部分成功 · 1 条未提交',{exact:true}).waitFor();
+  const failures=page.getByRole('list',{name:'未提交的操作'});
+  assert.deepEqual(await failures.getByRole('listitem').allTextContents(),['槽位 2 · task_update · 403 无权限']);
+  assert.doesNotMatch(await page.locator('main').innerText(),/private-|sensitive-hash/);
+});
+test('工作台全局 Agent 管理和本人运行记录', {skip:!moduleName}, async t=>{
+  const browser=await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  const f=await fixture(page);
+  await page.route(origin+'/api/v1/me',route=>route.fulfill({json:{
+    principal:{account_id:'reader'},csrf_token:'token',access:{navigation:{workbench:true,agents:true,runs:true},default_route:'/#/workbench'}
+  }}));
+  await page.route(origin+'/api/v1/agents/configurations/*',route=>{
+    const role=new URL(route.request().url()).pathname.split('/').at(-1);
+    return route.fulfill({json:{can_edit:true,available_tools:[],config:{role,name:role==='query'?'资料助手':'协调助手',enabled:true,tools:[],persona:'',version:2,applied_version:1,failed_version:2}}});
+  });
+  await page.route(origin+'/api/v1/agent-runs*',route=>route.fulfill({json:{items:[{
+    id:'work-search',project:'p-21',state:'unknown',mode:'group_reply',writes:1,delivery_id:'local-receipt',platform_id:'',
+    intent:'project',parent_work:'parent-work',channel:'feishu',source_id:'original-feishu',turn:1,reason:'receipt_unknown',task_codes:['LDX-T002'],
+    write_failures:[{slot:2,tool:'task_update',status:409}]
+  }]}}));
+  await page.goto(origin+'/#/agents');
+  await page.getByRole('heading',{name:'资料助手'}).waitFor();
+  assert.equal(await page.getByText('应用失败',{exact:true}).count(),2);
+  await page.getByRole('link',{name:'运行记录',exact:true}).click();
+  await page.getByText('parent-work',{exact:true}).waitFor();
+  await page.getByText('1 条 LDX-T002',{exact:true}).waitFor();
+  await page.getByText('部分成功 · 1 条未提交',{exact:true}).waitFor();
+  await page.getByText('槽位 2 · task_update · 409 状态冲突',{exact:true}).waitFor();
+  await page.getByText('无已确认平台消息号',{exact:true}).waitFor();
+  assert.deepEqual(f.errors,[]);
+});
+test('项目 Bot 切换个人会话保留草稿，配置按版本保存', {skip:!moduleName}, async t=>{
+  const browser=await require(moduleName).chromium.launch({executablePath:process.env.OMNIRELAY_CHROME});
+  t.after(()=>browser.close());
+  const page=await browser.newPage();
+  const state=await fixture(page);
+  const conversations=[{id:'',title:'项目对话'}];
+  await page.route(origin+root+'/bot/conversations',route=>{
+    if(route.request().method()==='POST'){
+      assert.ok(route.request().headers()['idempotency-key']);
+      const item={id:'test-session',title:route.request().postDataJSON().title};
+      conversations.push(item);return route.fulfill({json:item});
+    }
+    return route.fulfill({json:{items:conversations}});
+  });
+  await page.route(origin+root+'/bot/messages?conversation=*',route=>route.fulfill({json:{items:[]}}));
+  let config={role:'project-pm',name:'项目 PM',persona:'',enabled:true,tools:null,version:0,applied_version:0,failed_version:0};
+  await page.route(origin+root+'/agents/configurations/project-pm',route=>{
+    if(route.request().method()==='PUT'){
+      const draft=route.request().postDataJSON();
+      assert.equal(draft.reason,'发布人设');assert.equal(draft.expected_version,0);assert.deepEqual(draft.tools,[]);
+      config={...config,version:1,persona:draft.persona,tools:draft.tools};
+    }
+    return route.fulfill({json:{config,can_edit:true,available_tools:['task_get']}});
+  });
+  await page.goto(origin+'/#/projects/p-21/bot');
+  const editor=page.getByRole('textbox',{name:'给项目 PM 发消息…'});
+  await editor.fill('尚未发送的项目草稿');
+  await page.getByRole('button',{name:'新建会话'}).click();
+  await page.getByLabel('会话名称').fill('核对来源');
+  await page.getByRole('button',{name:'创建',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[aria-pressed="true"]')?.textContent==='核对来源');
+  await editor.fill('第二个会话的草稿');
+  await page.getByRole('button',{name:'项目对话',exact:true}).click();
+  assert.equal(await editor.innerText(),'尚未发送的项目草稿');
+  await page.getByRole('button',{name:'核对来源',exact:true}).click();
+  assert.equal(await editor.innerText(),'第二个会话的草稿');
+  await page.getByRole('link',{name:'Bot 设置'}).click();
+  await page.getByRole('button',{name:'编辑配置'}).click();
+  await page.getByLabel('人设与职责').fill('核对可读来源');
+  await page.getByLabel('使用角色默认工具').uncheck();
+  await page.getByLabel('task_get').uncheck();
+  await page.getByLabel('变更原因').fill('发布人设');
+  await page.getByRole('button',{name:'保存配置'}).click();
+  await page.getByText('待应用',{exact:true}).waitFor();
+  assert.deepEqual(state.errors,[]);
+});
 test('关注项目后可以从主导航打开详情，取消关注后入口消失', { skip: !moduleName }, async (t) => {
   const browser = await require(moduleName).chromium.launch({ executablePath: process.env.OMNIRELAY_CHROME });
   t.after(() => browser.close());
@@ -854,6 +941,7 @@ test('切换项目隔离延迟响应、栏目状态和简报回执', { skip: !mo
       case 'members':
         return send({ project_id: other.id, data: {...directory,members:[{...directoryMember,id:'member-22',display_name:'启明成员'}]} });
       case 'bot/messages': return send({items:[]});
+      case 'bot/conversations': return send({items:[{id:'',title:'项目对话'}]});
       case 'feishu':
         return send({ project_id: other.id, state: 'available', can_check: false, target_name: '启明群',
           plan: { plan_enabled: false }, briefings: list([run]) });

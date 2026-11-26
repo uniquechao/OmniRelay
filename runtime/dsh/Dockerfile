@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/var/lib/omnirelay-agent
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt && python -c "from deepseek_harness import DeepSeekHarness" \
     && mkdir -p /var/lib/omnirelay-agent && chown 10001:10001 /var/lib/omnirelay-agent
-COPY instance.py runtime.py whoami.cjs group.patch.yml project-pm.md query.md clock.cjs clock.patch.yml notice_clock.py probe.py probe.patch.yml ./
+COPY instance.py runtime.py whoami.cjs group.patch.yml project-pm.md management-pm.md query.md clock.cjs clock.patch.yml notice_clock.py probe.py probe.patch.yml ./
 USER 10001:10001
 VOLUME ["/var/lib/omnirelay-agent"]
 EXPOSE 8443

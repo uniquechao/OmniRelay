@@ -18,12 +18,39 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from deepseek_harness.api import final_response
 from deepseek_harness.errors import JsonRpcError
-from instance import open_instance
+from instance import ConfigurationConflict, open_instance
 
 HERE = Path(__file__).resolve().parent
 WORK = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 HASH = re.compile("[0-9a-f]{64}")
+ROLE_TEMPLATE = {"management-pm": "management-pm.md", "project-pm": "project-pm.md", "query": "query.md"}
+CHAT_KINDS = {"private_chat", "project_group_chat", "project_chat"}
+FIXED_PROMPTS = {
+    "": "请用 context_whoami 核对本轮发起人和当前项目。",
+    "private_reply": "请用 context_whoami 核对我的账号。",
+    "group_notice": "请用 context_whoami 获取群可见的项目提醒上下文。",
+    "person_notice": "请用 context_whoami 获取本人的项目提醒上下文。",
+}
+
+
+def valid_binding(b, job):
+    if not isinstance(b, dict):
+        return False
+    kind = b.get("kind", "")
+    chat = kind in CHAT_KINDS
+    required = {"work", "agent", "session", "owner", "epoch", "generation", "role", "config_version"}
+    if chat:
+        required.add("prompt")
+    return (required <= b.keys() <= required | {"kind", "persona"}
+            and (chat or kind in FIXED_PROMPTS) and b["work"] == job
+            and b["role"] in ROLE_TEMPLATE
+            and all(type(b[k]) is int and 0 < b[k] < 2**63 for k in ("epoch", "generation"))
+            and type(b["config_version"]) is int and 0 <= b["config_version"] < 2**63
+            and isinstance(b.get("persona", ""), str)
+            and all(isinstance(b[k], str) for k in ("owner", "session", "agent"))
+            and (not chat or isinstance(b["prompt"], str) and bool(b["prompt"].strip())))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -86,7 +113,23 @@ class Runtime:
                     work_id TEXT NOT NULL, signature TEXT NOT NULL, slot INTEGER NOT NULL,
                     pending TEXT, PRIMARY KEY(work_id,signature), UNIQUE(work_id,slot));
                 CREATE TABLE IF NOT EXISTS owners(agent TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS failed_writes(work_id TEXT NOT NULL, slot INTEGER NOT NULL,
+                    tool TEXT NOT NULL, status INTEGER NOT NULL, PRIMARY KEY(work_id,slot));
             """)
+            # Upgrade the original volume in place, retaining session IDs and command slots.
+            db.execute("BEGIN IMMEDIATE")
+            columns = {c[1] for c in db.execute("PRAGMA table_info(work)")}
+            if "config_version" not in columns:
+                db.execute("ALTER TABLE work ADD COLUMN config_version INTEGER NOT NULL DEFAULT 0")
+            if "request_digest" not in columns:
+                db.execute("ALTER TABLE work ADD COLUMN request_digest TEXT")
+            if "requires_reconciliation" not in columns:
+                db.execute("ALTER TABLE work ADD COLUMN requires_reconciliation INTEGER NOT NULL DEFAULT 0")
+                db.execute("""UPDATE work SET requires_reconciliation=1
+                              WHERE request_digest IS NULL AND EXISTS
+                              (SELECT 1 FROM tool_commands WHERE work_id=work.id)""")
+            if "succeeded" not in {c[1] for c in db.execute("PRAGMA table_info(tool_commands)")}:
+                db.execute("ALTER TABLE tool_commands ADD COLUMN succeeded INTEGER NOT NULL DEFAULT 0")
         # One active DSH per logical instance. Other HTTP callers can query its journal.
         self.lock = threading.Lock()
         self.busy = set()
@@ -111,7 +154,7 @@ class Runtime:
                 try:
                     with self.http.open(self.gateway + "/internal/schedules", timeout=5) as response:
                         pending = json.load(response) or []
-                    if not isinstance(pending, list) or len(pending) > 4 or not all(WORK.fullmatch(p) for p in pending):
+                    if not isinstance(pending, list) or not all(isinstance(p, str) and WORK.fullmatch(p) for p in pending):
                         raise ValueError("invalid schedule assignment")
                     for plan in set(clocks) - set(pending):
                         stop(clocks.pop(plan))
@@ -128,7 +171,19 @@ class Runtime:
 
     def status(self, work):
         with self.db() as db:
-            return db.execute("SELECT session,turn,completed,answer FROM work LEFT JOIN chat_answers ON work_id=id WHERE id=?", (work,)).fetchone()
+            row = db.execute("""SELECT session,turn,completed,answer,config_version,requires_reconciliation FROM work
+                                LEFT JOIN chat_answers ON work_id=id WHERE id=?""", (work,)).fetchone()
+            if not row or not row[2]:
+                return (202 if row else 404), {}
+            slots = [r[0] for r in db.execute("""SELECT slot FROM tool_commands
+                         WHERE work_id=? AND succeeded=1 ORDER BY slot""", (work,))]
+            failures = [{"slot": slot, "tool": tool, "status": status} for slot, tool, status in
+                        db.execute("SELECT slot,tool,status FROM failed_writes WHERE work_id=? ORDER BY slot", (work,))]
+            kind = "writes" if slots else "answer" if row[3] else "notice"
+            return 200, {"session": row[0], "turn": row[1], "applied_version": row[4], "write_slots": slots,
+                         "failed_writes": failures,
+                         "kind": "reconcile" if row[5] else kind,
+                         **({"answer": row[3]} if row[3] else {})}
 
     def command_slot(self, work, tool, args):
         command = json.dumps({"tool": tool, "args": args}, sort_keys=True, separators=(",", ":"))
@@ -142,12 +197,28 @@ class Runtime:
             slot, = db.execute("SELECT coalesce(max(slot),0)+1 FROM tool_commands WHERE work_id=?", (work,)).fetchone()
             if slot > 128:
                 raise ValueError("tool command limit")
-            db.execute("INSERT INTO tool_commands VALUES(?,?,?,?)", (work, signature, slot, command))
+            db.execute("INSERT INTO tool_commands(work_id,signature,slot,pending) VALUES(?,?,?,?)",
+                       (work, signature, slot, command))
             return slot
 
-    def settled(self, work, slot):
+    def settled(self, work, slot, *, rejected_tool=None, status=None):
         with self.db() as db:
-            db.execute("UPDATE tool_commands SET pending=NULL WHERE work_id=? AND slot=?", (work, slot))
+            db.execute("""UPDATE tool_commands SET pending=NULL,succeeded=max(succeeded,?)
+                          WHERE work_id=? AND slot=?""", (int(rejected_tool is None), work, slot))
+            if rejected_tool is None:
+                db.execute("DELETE FROM failed_writes WHERE work_id=? AND slot=?", (work, slot))
+            else:
+                db.execute("""INSERT INTO failed_writes(work_id,slot,tool,status)
+                              SELECT work_id,slot,?,? FROM tool_commands WHERE work_id=? AND slot=? AND succeeded=0
+                              ON CONFLICT(work_id,slot) DO NOTHING""",
+                           (rejected_tool, status, work, slot))
+
+    def complete(self, b, turn, answer):
+        with self.db() as db:
+            changed = db.execute("""UPDATE work SET completed=1,turn=? WHERE id=?
+                                    AND completed=0 AND generation=?""", (turn, b["work"], b["generation"]))
+            if changed.rowcount and answer:
+                db.execute("INSERT INTO chat_answers(work_id,answer) VALUES(?,?)", (b["work"], answer))
 
     def execute(self, b):
         agent, session, job = b["agent"], b["session"], b["work"]
@@ -159,10 +230,13 @@ class Runtime:
                 return 202, {}
             self.busy.add(agent)
         try:
+            immutable = [b.get("kind", ""), b["role"], b.get("prompt", ""), b["config_version"], b.get("persona", "")]
+            digest = hashlib.sha256(json.dumps(immutable, ensure_ascii=False).encode()).hexdigest()
             with self.db() as db:
                 db.execute("BEGIN IMMEDIATE")
-                row = db.execute("SELECT agent,session,epoch,generation,turn,completed FROM work WHERE id=?", (job,)).fetchone()
-                if row and (row[:2] != (agent, session) or row[3] > b["generation"]):
+                row = db.execute("SELECT agent,session,epoch,generation,turn,completed,request_digest FROM work WHERE id=?", (job,)).fetchone()
+                if row and (row[:2] != (agent, session) or row[3] > b["generation"]
+                            or row[6] is not None and row[6] != digest):
                     return 409, {}
                 current = db.execute("SELECT epoch FROM owners WHERE agent=?", (agent,)).fetchone()
                 if current and current[0] > b["epoch"]:
@@ -171,32 +245,36 @@ class Runtime:
                 db.execute("INSERT INTO owners VALUES(?,?) ON CONFLICT(agent) DO UPDATE SET epoch=excluded.epoch",
                            (agent, epoch))
                 if row and row[5]:
-                    answer = db.execute("SELECT answer FROM chat_answers WHERE work_id=?", (job,)).fetchone()
-                    return 200, {"session": session, "turn": row[4], **({"answer": answer[0]} if answer else {})}
-                db.execute("""INSERT INTO work(id,agent,session,epoch,generation) VALUES(?,?,?,?,?)
-                           ON CONFLICT(id) DO UPDATE SET epoch=excluded.epoch,generation=excluded.generation""",
-                           (job, agent, session, epoch, b["generation"]))
+                    return self.status(job)
+                db.execute("""INSERT INTO work(id,agent,session,epoch,generation,config_version,request_digest)
+                           VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET epoch=excluded.epoch,
+                           generation=excluded.generation,config_version=excluded.config_version,
+                           request_digest=excluded.request_digest""",
+                           (job, agent, session, epoch, b["generation"], b["config_version"], digest))
             turn, answer = self.run_turn(b)
-            with self.db() as db:
-                if answer:
-                    db.execute("INSERT INTO chat_answers VALUES(?,?) ON CONFLICT(work_id) DO NOTHING", (job, answer))
-                db.execute("UPDATE work SET completed=1,turn=? WHERE id=?", (turn, job))
-            return 200, {"session": session, "turn": turn, **({"answer": answer} if answer else {})}
+            self.complete(b, turn, answer)
+            return self.status(job)
+        except ConfigurationConflict:
+            return 422, {}
         finally:
             with self.lock:
                 self.busy.remove(agent)
 
     def run_turn(self, b):
-        binding = {k: v for k, v in b.items() if k != "prompt"}
-        chat = b.get("kind") in ("project_chat", "project_group_chat")
+        binding = {k: v for k, v in b.items() if k not in ("prompt", "persona")}
+        chat = b.get("kind") in CHAT_KINDS
         nonce = secrets.token_urlsafe(32)
         started = threading.Event()
         observed = {}
         runtime = self
         catalog = []
         if chat:
-            with self.http.open(self.gateway + "/internal/tools/project/catalog", timeout=10) as response:
-                catalog = json.load(response)
+            request = urllib.request.Request(self.gateway + "/internal/tools/project/catalog",
+                                             json.dumps(binding).encode(), headers={"Content-Type": "application/json"})
+            with self.http.open(request, timeout=10) as response:
+                catalog = json.load(response) or []
+            if b["role"] == "query" and any(item["write"] for item in catalog):
+                raise ConfigurationConflict("write tool on a read-only role")
         tools = {item["name"]: item for item in catalog}
         def project_request(tool, args, slot):
             payload = {**binding, "turn": observed["turn"], "tool": tool, "args": args, "slot": slot}
@@ -207,11 +285,23 @@ class Runtime:
                     value = json.load(response)
             except urllib.error.HTTPError as exc:
                 if slot and exc.code in (400, 403, 409):
-                    self.settled(b["work"], slot)
+                    self.settled(b["work"], slot, rejected_tool=tool, status=exc.code)
                 raise
             if slot:
                 self.settled(b["work"], slot)
             return value
+
+        def reconcile_pending():
+            with self.db() as db:
+                pending = db.execute("""SELECT slot,pending FROM tool_commands
+                    WHERE work_id=? AND pending IS NOT NULL ORDER BY slot""", (b["work"],)).fetchall()
+            for slot, raw in pending:
+                command = json.loads(raw)
+                try:
+                    project_request(command["tool"], command["args"], slot)
+                except urllib.error.HTTPError as exc:
+                    if exc.code not in (400, 403, 409):
+                        raise
 
         class LocalTool(Handler):
             def do_POST(self):
@@ -245,12 +335,16 @@ class Runtime:
                 return
             event = notification.payload.get("event", {})
             data = event.get("data", {})
-            if (not chat and event.get("type") == "turn/end" and observed.get("tool")
+            if event.get("type") == "assistant/message" and chat:
+                observed["answer"] = final_response([event]).strip()[:12000]
+            if (event.get("type") == "turn/end" and observed.get("tool")
+                    and (not chat or observed.get("answer"))
                     and data.get("turn") == observed.get("turn") and data.get("reason", {}).get("kind") == "completed"):
-                # Persist before SDK shutdown or a lost HTTP acknowledgement.
-                with self.db() as db:
-                    db.execute("UPDATE work SET completed=1,turn=? WHERE id=? AND generation=?",
-                               (observed["turn"], b["work"], b["generation"]))
+                if chat:
+                    # A model may finish after a lost write acknowledgement. Seal the
+                    # real Gateway result before caching the turn for all future retries.
+                    reconcile_pending()
+                self.complete(b, observed["turn"], observed.get("answer", ""))
             if event.get("type") == "turn/start":
                 observed["turn"] = event["data"]["turn"]
                 request = urllib.request.Request(self.gateway + "/internal/turns/start",
@@ -260,28 +354,20 @@ class Runtime:
                     pass
                 if chat:
                     # Reconcile a lost acknowledgement before admitting new model writes.
-                    with self.db() as db:
-                        pending = db.execute("SELECT slot,pending FROM tool_commands WHERE work_id=? AND pending IS NOT NULL ORDER BY slot",
-                                             (b["work"],)).fetchall()
-                    for slot, raw in pending:
-                        command = json.loads(raw)
-                        try:
-                            project_request(command["tool"], command["args"], slot)
-                        except urllib.error.HTTPError as exc:
-                            if exc.code not in (400, 403, 409):
-                                raise
-                started.set()
+                    reconcile_pending()
                 if chat:
                     # Keep a current grant receipt even when a conversational turn needs no model tool.
                     scope = urllib.request.Request(self.gateway + "/internal/tools/context.whoami", request.data,
                                                    headers={"Content-Type": "application/json"})
                     with self.http.open(scope, timeout=10):
                         observed["tool"] = True
+                started.set()
 
         with ThreadingHTTPServer(("127.0.0.1", 0), LocalTool) as bridge:
             threading.Thread(target=bridge.serve_forever, daemon=True).start()
             try:
-                with open_instance(self.root / "agents", b["agent"], HERE / ("query.md" if b.get("kind") == "private_reply" else "project-pm.md"),
+                with open_instance(self.root / "agents", b["agent"], HERE / ROLE_TEMPLATE[b["role"]],
+                                   role=b["role"], config_version=b["config_version"], persona=b.get("persona", ""),
                                    patches=(str(HERE / "group.patch.yml"),),
                                    tool_env={"OMNI_TOOL_URL": f"http://127.0.0.1:{bridge.server_port}",
                                              "OMNI_PROJECT_TOOLS": json.dumps(catalog, ensure_ascii=False),
@@ -295,10 +381,10 @@ class Runtime:
                     watchdog = threading.Timer(60, host.close)
                     watchdog.start()
                     try:
-                        prompt = {"private_reply": "请用 context_whoami 核对我的账号。", "group_notice": "请用 context_whoami 获取群可见的项目提醒上下文。",
-                                  "person_notice": "请用 context_whoami 获取本人的项目提醒上下文。"}.get(b.get("kind"), "请用 context_whoami 核对本轮发起人和当前项目。")
-                        result = session.run(b["prompt"] if chat else prompt,
-                                             on_notification=events)
+                        # Start the first block with application text so a user's leading slash
+                        # stays model input rather than a native owner command.
+                        prompt = "用户请求\n" + b["prompt"] if chat else FIXED_PROMPTS[b.get("kind", "")]
+                        result = session.run(prompt, on_notification=events)
                     finally:
                         watchdog.cancel()
                         watchdog.join()
@@ -322,19 +408,15 @@ class API(Handler):
             return self.reply(404)
         try:
             if post:
-                b = self.payload(32 << 10)
-                chat = b.get("kind") in ("project_chat", "project_group_chat")
-                if (b.get("kind", "") not in ("", "private_reply", "group_notice", "person_notice", "project_chat", "project_group_chat")
-                        or (set(b) - {"kind"}) != ({"work", "agent", "session", "owner", "epoch", "generation"} | ({"prompt"} if chat else set()))
-                        or (chat and (not isinstance(b["prompt"], str) or not b["prompt"].strip()))
-                        or any(type(b[k]) is not int for k in ("epoch", "generation")) or b["work"] != job):
+                b = self.payload(128 << 10)
+                if isinstance(b, dict) and (b.get("role") not in ROLE_TEMPLATE or not isinstance(b.get("persona", ""), str)
+                                            or type(b.get("config_version")) is not int or b["config_version"] < 0):
+                    return self.reply(422)
+                if not valid_binding(b, job):
                     return self.reply(400)
                 status, value = self.server.runtime.execute(b)
                 return self.reply(status, value)
-            row = self.server.runtime.status(job)
-            if row and row[2]:
-                return self.reply(200, {"session": row[0], "turn": row[1], **({"answer": row[3]} if row[3] else {})})
-            return self.reply(202 if row else 404)
+            return self.reply(*self.server.runtime.status(job))
         except (ValueError, TypeError, KeyError):
             return self.reply(400)
         except Exception as exc:

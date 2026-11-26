@@ -14,13 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
-
+	"github.com/uniquechao/OmniRelay/internal/agentadmin"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/internal/routing"
 )
 
 type Service struct {
+	ReadThread         func(context.Context, pgx.Tx, identity.Principal, string, string, string, string, time.Time) (json.RawMessage, error)
 	DB                 *pgxpool.Pool
 	Roles              *access.Service
 	Projects           *project.Service
@@ -40,6 +41,11 @@ type work struct {
 	Address                    Envelope
 	Actor                      identity.Principal
 	Scope                      Who
+	Config                     agentadmin.Config
+	LiveTools                  []string
+	WriteRequested             bool
+	LegacyOutput               bool
+	Frozen                     json.RawMessage
 }
 
 // The same current account, group assignment, membership lifetime and Bot
@@ -50,13 +56,13 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	var scope, member, plan string
 	var pv, av int64
 	err := tx.QueryRow(ctx, `SELECT a.id,coalesce(a.open_id,''),a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
-            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,'')
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,w.direct_question,''),w.intent,w.write_requested,coalesce(w.choice_prompt,''),w.config_snapshot,w.legacy_output
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
         LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
         WHERE w.id=$1 AND w.tenant_key=$2 AND w.app_id=$3 AND a.active AND a.permission_version=w.permission_version
         AND (w.mode='private_reply' OR p.project_id IS NOT NULL) AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
-		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan, &w.Address.Text)
+		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan, &w.Address.Text, &w.Address.Intent, &w.WriteRequested, &w.Address.ChoicePrompt, &w.Frozen, &w.LegacyOutput)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return w, access.ErrForbidden
 	}
@@ -88,15 +94,15 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	gateway := routing.Gateway{Check: func(ctx context.Context, p identity.Principal, action, id string) (bool, error) {
 		return s.Roles.CheckInOrganizationMutation(ctx, tx, p, action, id)
 	}}
-	intent := "project"
-	if w.Address.Mode == PrivateReply {
+	intent := w.Address.Intent
+	if w.Address.ChoicePrompt != "" {
 		intent = "knowledge"
 	}
 	target, err := gateway.Resolve(ctx, p, intent, w.Scope.ProjectID)
 	if err != nil {
 		return w, err
 	}
-	if w.Address.Mode != PrivateReply {
+	if w.Scope.ProjectID != "" {
 		grant, err := s.Roles.ProjectGrant(ctx, tx, p, w.Scope.ProjectID)
 		if err != nil {
 			return w, err
@@ -105,6 +111,23 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 			return w, access.ErrForbidden
 		}
 	}
+	w.Role = target.Role
+	cfg, err := agentadmin.Load(ctx, tx, s.Tenant, s.App, w.configScope(), w.Role)
+	if err != nil {
+		return w, err
+	}
+	if !cfg.Enabled {
+		return w, access.ErrForbidden
+	}
+	w.LiveTools = cfg.Tools
+	if len(w.Frozen) > 0 {
+		if err = json.Unmarshal(w.Frozen, &w.Config); err != nil {
+			return w, err
+		}
+	} else {
+		w.Config = cfg
+	}
+	w.ConfigVersion, w.Persona = w.Config.Version, w.Config.Persona
 	w.Work, w.Agent, w.Scope.UserID, w.Scope.UserName = id, target.AgentID, p.AccountID, p.Name
 	scope = fmt.Sprintf("%s/%d/%d", member, av, pv)
 	fields, _ := json.Marshal([]string{w.Agent, p.AccountID, w.Address.Channel, w.Address.Chat, w.Address.Thread, scope})
@@ -117,6 +140,15 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		// Tool outputs belong to a private workbench result for this person, never to the original group.
 		fields, _ = json.Marshal([]string{w.Kind, id, w.Agent, p.AccountID, scope})
 		w.Prompt = w.Address.Text
+		if err := s.attachThreadContext(ctx, tx, &w); err != nil {
+			return w, err
+		}
+	}
+	if w.Address.Mode == PrivateReply && w.Address.Text != "" {
+		w.Kind = "private_chat"
+		w.Prompt = w.Address.Text
+		// Private retrieval and global summaries contain changing project grants.
+		fields, _ = json.Marshal([]string{w.Agent, p.AccountID, w.Address.Project, id, scope})
 	}
 	if w.Address.Mode == GroupNotice {
 		w.Scope.UserID = ""
@@ -126,7 +158,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		// Never resume a model transcript carrying source-restricted results into a later work.
 		var boundary string
 		err := tx.QueryRow(ctx, `SELECT coalesce((SELECT old.id FROM agent_group_work old JOIN agent_group_work cur ON cur.id=$1
-   WHERE (old.tenant_key,old.app_id,old.account_id,old.project_id,old.mode)=(cur.tenant_key,cur.app_id,cur.account_id,cur.project_id,cur.mode)
+   WHERE (old.tenant_key,old.app_id,old.account_id,old.project_id,old.mode,old.thread_id,old.intent)=(cur.tenant_key,cur.app_id,cur.account_id,cur.project_id,cur.mode,cur.thread_id,cur.intent)
    AND (old.asked_at,old.id)<(cur.asked_at,cur.id) AND EXISTS(SELECT FROM agent_project_tool_reads r WHERE r.work_id=old.id)
    ORDER BY old.asked_at DESC,old.id DESC LIMIT 1),'')`, id).Scan(&boundary)
 		if err != nil {
@@ -149,8 +181,14 @@ func (s *Service) claim(ctx context.Context) (work, error) {
 		err := tx.QueryRow(ctx, `SELECT w.id,w.state FROM agent_group_work w
           LEFT JOIN agent_instances a ON a.agent_id=w.agent_id
           WHERE w.tenant_key=$1 AND w.app_id=$2 AND (a.owner_id IS NULL OR a.owner_id=$3)
-          AND w.state IN ('route','running','ready','sending') AND w.available_at<=now()
+          AND (w.state IN ('route','running','ready','sending') OR (w.state='awaiting_project' AND w.deadline<=now())) AND w.available_at<=now()
           AND (w.lease_until IS NULL OR w.lease_until<=now())
+          AND NOT EXISTS (SELECT FROM agent_group_work prior
+            WHERE w.mode='group_reply' AND w.thread_id<>'' AND prior.mode='group_reply'
+            AND prior.state IN ('route','running','ready','sending')
+            AND (prior.tenant_key,prior.app_id,prior.channel,prior.chat_id,prior.thread_id,prior.assignment_version)=
+                (w.tenant_key,w.app_id,w.channel,w.chat_id,w.thread_id,w.assignment_version)
+            AND (prior.group_asked_at,prior.id)<(w.group_asked_at,w.id))
           ORDER BY w.available_at,w.id LIMIT 1 FOR UPDATE OF w SKIP LOCKED`, s.Tenant, s.App, s.Owner).Scan(&id, &state)
 		if err != nil {
 			return err
@@ -160,15 +198,19 @@ func (s *Service) claim(ctx context.Context) (work, error) {
 			return err
 		}
 		w, err = s.authorize(ctx, tx, id)
-		if errors.Is(err, access.ErrForbidden) {
-			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state=CASE WHEN deadline<=now() THEN 'expired' ELSE 'suppressed' END,reason='scope_or_deadline' WHERE id=$1", id)
+		if errors.Is(err, access.ErrForbidden) || errors.Is(err, errToolReadStale) {
+			reason := "scope_or_deadline"
+			if errors.Is(err, errToolReadStale) {
+				reason = "tool_source_changed"
+			}
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state=CASE WHEN deadline<=now() THEN 'expired' ELSE 'suppressed' END,reason=$2 WHERE id=$1", id, reason)
 			return err
 		}
 		if err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO agent_instances(agent_id,tenant_key,app_id,project_id,owner_id)
-            VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, w.Agent, s.Tenant, s.App, w.Scope.ProjectID, s.Owner); err != nil {
+            VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, w.Agent, s.Tenant, s.App, w.configScope(), s.Owner); err != nil {
 			return err
 		}
 		if err = tx.QueryRow(ctx, "SELECT owner_id,owner_epoch FROM agent_instances WHERE agent_id=$1 FOR SHARE", w.Agent).Scan(&w.Owner, &w.Epoch); err != nil {
@@ -181,11 +223,26 @@ func (s *Service) claim(ctx context.Context) (work, error) {
 		}
 		w.State = "running"
 		if state == "ready" {
+			if w.Address.ChoicePrompt != "" {
+				options, err := project.VisiblePortfolio(ctx, tx, w.Actor.TenantKey, w.Actor.AppID, w.Actor.AccountID)
+				if err != nil {
+					return err
+				}
+				w.Address.ChoicePrompt = projectChoice(options)
+			}
+			if err = s.checkToolReads(ctx, tx, w.Work, w.Actor, w.Scope.ProjectID); err != nil {
+				if !errors.Is(err, access.ErrForbidden) && !errors.Is(err, errToolReadStale) {
+					return err
+				}
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed',lease_until=NULL WHERE id=$1", id)
+				w = work{}
+				return err
+			}
 			w.State = "sending"
 		}
-		return tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,
+		return tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,config_snapshot=coalesce(config_snapshot,$5::jsonb),
           lease_until=clock_timestamp()+interval '100 seconds' WHERE id=$1 RETURNING generation,coalesce(response_text,'')`,
-			id, w.State, w.Agent, w.Session).Scan(&w.Generation, &w.Text)
+			id, w.State, w.Agent, w.Session, w.Config).Scan(&w.Generation, &w.Text)
 	})
 	return w, err
 }
@@ -197,6 +254,9 @@ func (s *Service) Step(ctx context.Context) error {
 	if w.State == "sending" {
 		// A changed display name also invalidates a previously frozen receipt.
 		expected := w.publicReply()
+		if w.Kind == "private_chat" && w.Address.ChoicePrompt == "" {
+			expected = w.Text
+		}
 		if w.Text != expected {
 			_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed' WHERE id=$1 AND generation=$2", w.Work, w.Generation)
 			return err
@@ -207,6 +267,9 @@ func (s *Service) Step(ctx context.Context) error {
 		case "success":
 			if result.MessageID != "" {
 				state = "sent"
+				if w.Address.ChoicePrompt != "" && w.Address.ChoicePrompt != projectChoice(nil) {
+					state = "awaiting_project"
+				}
 			}
 		case "failed":
 			state = "failed"
@@ -215,16 +278,35 @@ func (s *Service) Step(ctx context.Context) error {
            WHERE id=$1 AND generation=$2 AND state IN ('sending','unknown')`, w.Work, w.Generation, state, result.MessageID, result.Reason)
 		return err
 	}
+	if w.Address.ChoicePrompt != "" {
+		_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$3,lease_until=NULL WHERE id=$1 AND generation=$2", w.Work, w.Generation, w.publicReply())
+		return err
+	}
 	result, err := s.Execute(ctx, w.Binding)
+	if errors.Is(err, dsh.ErrConfiguration) {
+		return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, "UPDATE agent_group_work SET state='failed',reason='configuration_rejected',lease_until=NULL WHERE id=$1 AND generation=$2 AND state='running'", w.Work, w.Generation)
+			if err != nil || tag.RowsAffected() == 0 {
+				return err
+			}
+			return agentadmin.ApplyFailed(ctx, tx, s.Tenant, s.App, w.configScope(), w.Role, w.ConfigVersion)
+		})
+	}
 	if err != nil {
 		_, dbErr := s.DB.Exec(ctx, `UPDATE agent_group_work SET available_at=now()+interval '3 seconds',lease_until=NULL
               WHERE id=$1 AND generation=$2 AND state='running'`, w.Work, w.Generation)
 		return errors.Join(err, dbErr)
 	}
-	if result.Session != w.Session {
+	if result.Session != w.Session || result.AppliedVersion != w.ConfigVersion {
 		return errors.New("unbound runtime session")
 	}
 	return s.Roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+		if err := agentadmin.Applied(ctx, tx, s.Tenant, s.App, w.configScope(), w.Role, result.AppliedVersion); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "UPDATE agent_group_work SET applied_config_version=$3 WHERE id=$1 AND generation=$2", w.Work, w.Generation, result.AppliedVersion); err != nil {
+			return err
+		}
 		var receipt Who
 		err := tx.QueryRow(ctx, `SELECT tool_receipt FROM agent_group_work w JOIN agent_instances a USING(agent_id)
          WHERE id=$1 AND generation=$2 AND state='running' AND tool_turn=$3 AND owner_id=$4 AND owner_epoch=$5
@@ -232,12 +314,12 @@ func (s *Service) Step(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if w.Address.Mode == ProjectChat || w.Kind == "project_group_chat" {
+		if w.Address.Mode == ProjectChat || w.Kind == "project_group_chat" || w.Kind == "private_chat" {
 			if result.Answer == "" || len(result.Answer) > 48000 {
 				return errors.New("missing or oversized project chat response")
 			}
 			current, err := s.authorize(ctx, tx, w.Work)
-			if err != nil && !errors.Is(err, access.ErrForbidden) {
+			if err != nil && !errors.Is(err, access.ErrForbidden) && !errors.Is(err, errToolReadStale) {
 				return err
 			}
 			if err == nil {
@@ -254,21 +336,48 @@ func (s *Service) Step(ctx context.Context) error {
 				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason=$2,lease_until=NULL WHERE id=$1", w.Work, reason)
 				return err
 			}
+			answer, err := s.verifiedAnswer(ctx, tx, w, result)
+			if err != nil {
+				return err
+			}
+			answer = current.signature() + "\n" + answer
+			if w.Kind == "private_chat" {
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, answer)
+				return err
+			}
 			if w.Kind == "project_group_chat" {
-				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',group_answer=$2,response_text=$3,lease_until=NULL WHERE id=$1", w.Work, "项目 PM · "+current.Scope.ProjectName+"\n"+result.Answer, current.publicReply())
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',group_answer=$2,response_text=$3,lease_until=NULL WHERE id=$1", w.Work, answer, current.publicReply())
 				return err
 			}
 			// Publication into the user's workbench and its receipt are the same database write.
-			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='sent',response_text=$2,platform_message_id=delivery_id::text,lease_until=NULL WHERE id=$1", w.Work, "项目 PM · "+current.Scope.ProjectName+"\n"+result.Answer)
+			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='sent',response_text=$2,platform_message_id=NULL,lease_until=NULL WHERE id=$1", w.Work, answer)
 			return err
 		}
 		_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$2,lease_until=NULL WHERE id=$1", w.Work, render(w.Address.Mode, receipt))
 		return err
 	})
 }
+func (w work) configScope() string {
+	if w.Role == "project-pm" {
+		return w.Scope.ProjectID
+	}
+	return ""
+}
+func (w work) signature() string {
+	if w.Scope.ProjectName != "" {
+		return w.Config.Name + " · " + w.Scope.ProjectName
+	}
+	return w.Config.Name + " · 全局服务空间"
+}
 func (w work) publicReply() string {
+	if w.Address.ChoicePrompt != "" {
+		if w.Address.ChoicePrompt == projectChoice(nil) {
+			return w.Address.ChoicePrompt
+		}
+		return w.Address.ChoicePrompt + "\n工作编号 " + w.Work
+	}
 	if w.Kind == "project_group_chat" {
-		return "项目 PM · " + w.Scope.ProjectName + "\n请在本项目工作台的 Bot 对话中查看本次请求的结果。"
+		return w.signature() + "\n请在本项目工作台的 Bot 对话中查看本次请求的结果。"
 	}
 	return render(w.Address.Mode, w.Scope)
 }

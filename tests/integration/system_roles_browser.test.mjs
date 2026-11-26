@@ -71,7 +71,7 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     assert.match(access.permission_version, /^[0-9]+$/);
     assert.deepEqual(access.roles, role ? [role, 'system_user'] : ['system_user']);
     assert.deepEqual(access.permissions, Object.fromEntries(permissionKeys.map(key => [key, permissions.includes(key)])));
-    assert.deepEqual(access.navigation, { workbench, system: sections.length > 0, bot_chats: workbench, dshbot: role === 'system_admin' });
+    assert.deepEqual(access.navigation, { workbench, system: sections.length > 0, bot_chats: workbench, dshbot: role === 'system_admin', agents: permissions.includes('system.configure'), runs: true });
     assert.equal(await page.locator('[data-nav=dshbot]').isVisible(), role === 'system_admin');
     if (role !== 'system_admin') await request(context, 'GET', '/dshbot/api', 403);
     assert.deepEqual(access.admin, Object.fromEntries(systemSections.map(section => [
@@ -88,7 +88,8 @@ test('真实 Go、PostgreSQL 与浏览器使用同一套系统角色能力', { s
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('#mobile-nav').waitFor();
     assert.deepEqual(await page.locator('#mobile-nav option:not([hidden])').evaluateAll(nodes => nodes.map(n => n.value)),
-      [...(workbench ? ['workbench', 'projects', ...(role === 'system_admin' ? ['dshbot'] : []), 'feishu/bot-chats', 'feishu/drive'] : []),
+      [...(workbench ? ['workbench', 'projects'] : []), ...(permissions.includes('system.configure') ? ['agents'] : []), 'runs',
+        ...(role === 'system_admin' ? ['dshbot'] : []), ...(workbench ? ['feishu/bot-chats', 'feishu/drive'] : []),
         ...sections.map(section => 'system/' + section)]);
     if (sections.includes('roles')) {
       await page.locator('#mobile-nav').selectOption('system/roles');

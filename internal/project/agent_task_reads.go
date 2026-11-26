@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
@@ -20,6 +21,17 @@ type ToolRead struct {
 
 const candidateRead = "task_candidate_source_check"
 const feedbackRead = "task_feedback_author_check"
+const fileReferenceRead = "file_reference_check"
+
+// A reference proves the title and version (or a local excerpt) available
+// to the reader. It carries no claim about text from a Drive document.
+func fileReferenceValue(result map[string]any) map[string]any {
+	item := result["file"].(sourceSummary)
+	if item.FileID != 0 {
+		return map[string]any{"file": item, "authorized_path": fmt.Sprintf("/api/v1/feishu/files/%d", item.FileID)}
+	}
+	return map[string]any{"file": item, "excerpt": result["excerpt"]}
+}
 
 func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, error) {
 	var out []ToolRead
@@ -28,6 +40,12 @@ func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, err
 		out = append(out, ToolRead{tool, pmtools.Args{"id": key}, proof})
 	}
 	switch name {
+	case "file_get":
+		result := value.(map[string]any)
+		if result["state"] != "ready" {
+			return []ToolRead{{fileReferenceRead, args, fileReferenceValue(result)}}, nil
+		}
+		return []ToolRead{{name, args, value}}, nil
 	case "task_candidate_list":
 		for _, c := range value.(map[string]any)["items"].([]candidateRow) {
 			add(candidateRead, c.ID, []any{c.Fields, c.Evidence})
@@ -51,6 +69,13 @@ func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, err
 }
 
 func (s *Service) RecheckToolRead(ctx context.Context, tx pgx.Tx, actor identity.Principal, projectID, name string, args pmtools.Args) (any, error) {
+	if name == fileReferenceRead {
+		result, err := s.RunTool(ctx, tx, actor, projectID, "file_get", args)
+		if err != nil {
+			return nil, err
+		}
+		return fileReferenceValue(result.(map[string]any)), nil
+	}
 	if name != candidateRead && name != feedbackRead {
 		return s.RunTool(ctx, tx, actor, projectID, name, args)
 	}

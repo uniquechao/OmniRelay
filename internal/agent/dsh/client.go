@@ -14,20 +14,34 @@ import (
 	"time"
 )
 
+var ErrConfiguration = errors.New("runtime rejected agent configuration")
+
 type Binding struct {
-	Prompt     string `json:"prompt,omitempty"`
-	Kind       string `json:"kind,omitempty"`
-	Work       string `json:"work"`
-	Agent      string `json:"agent"`
-	Owner      string `json:"owner"`
-	Epoch      int64  `json:"epoch"`
-	Generation int64  `json:"generation"`
-	Session    string `json:"session"`
+	Role          string `json:"role"`
+	ConfigVersion int64  `json:"config_version"`
+	Persona       string `json:"persona,omitempty"`
+	Prompt        string `json:"prompt,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Work          string `json:"work"`
+	Agent         string `json:"agent"`
+	Owner         string `json:"owner"`
+	Epoch         int64  `json:"epoch"`
+	Generation    int64  `json:"generation"`
+	Session       string `json:"session"`
+}
+type FailedWrite struct {
+	Slot   int    `json:"slot"`
+	Tool   string `json:"tool"`
+	Status int    `json:"status"`
 }
 type Result struct {
-	Answer  string `json:"answer,omitempty"`
-	Session string `json:"session"`
-	Turn    int    `json:"turn"`
+	FailedWrites   []FailedWrite `json:"failed_writes,omitempty"`
+	AppliedVersion int64         `json:"applied_version"`
+	Kind           string        `json:"kind"`
+	WriteSlots     []int         `json:"write_slots,omitempty"`
+	Answer         string        `json:"answer,omitempty"`
+	Session        string        `json:"session"`
+	Turn           int           `json:"turn"`
 }
 
 // TLS pins the private CA and presents this service's own certificate in both directions.
@@ -93,6 +107,9 @@ func (c *Client) Execute(ctx context.Context, b Binding) (Result, error) {
 func decode(resp *http.Response) (Result, error) {
 	defer resp.Body.Close()
 	var r Result
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		return r, ErrConfiguration
+	}
 	if resp.StatusCode != 200 {
 		return r, errors.New("runtime has no completed execution")
 	}

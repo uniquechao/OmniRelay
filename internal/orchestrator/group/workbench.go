@@ -29,12 +29,26 @@ type chatMessage struct {
 	Answer       string `json:"answer,omitempty"`
 	State        string `json:"state"`
 	PrimarySaved bool   `json:"primary_saved,omitempty"`
+	AgentName    string `json:"agent_name"`
 }
 
 func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
-	ch := Channel{Resolve: func(_ context.Context, _ pgx.Tx, e Envelope) (Assignment, error) {
-		if e.Mode != ProjectChat || e.Project != e.Chat || e.Channel != "workbench" || e.Thread != "" || e.Project == "" {
+	s.registerConversations(mux, authenticate)
+	ch := Channel{Resolve: func(ctx context.Context, tx pgx.Tx, e Envelope) (Assignment, error) {
+		if e.Mode != ProjectChat || e.Project != e.Chat || e.Channel != "workbench" || e.Project == "" {
 			return Assignment{}, access.ErrForbidden
+		}
+		if e.Thread != "" {
+			var exists bool
+			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT FROM agent_personal_conversations c JOIN project_members m
+				ON (c.tenant_key,c.app_id,c.account_id,c.project_id,c.membership_generation)=(m.tenant_key,m.app_id,m.account_id,m.project_id,m.generation)
+				WHERE (c.tenant_key,c.app_id,c.account_id,c.project_id,c.id)=($1,$2,$3,$4,$5) AND m.role!='revoked')`, e.Tenant, e.App, e.Account, e.Project, e.Thread).Scan(&exists)
+			if err != nil {
+				return Assignment{}, err
+			}
+			if !exists {
+				return Assignment{}, access.ErrForbidden
+			}
 		}
 		return Assignment{Project: e.Project, Bot: "workbench"}, nil
 	}}
@@ -54,14 +68,16 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 			http.Error(w, "forbidden", 403)
 			return
 		}
+		thread := r.URL.Query().Get("conversation")
 		var body struct {
-			Text string `json:"text"`
+			Text   string `json:"text"`
+			Intent string `json:"intent"`
 		}
 		key := r.Header.Get("Idempotency-Key")
 		if post {
 			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 20<<10))
 			d.DisallowUnknownFields()
-			if d.Decode(&body) != nil || d.Decode(&struct{}{}) != io.EOF || !validQuestion(body.Text) || !chatRequestID.MatchString(key) {
+			if d.Decode(&body) != nil || d.Decode(&struct{}{}) != io.EOF || !validQuestion(body.Text) || !chatRequestID.MatchString(key) || (body.Intent != "" && body.Intent != "project" && body.Intent != "knowledge" && body.Intent != "admin") {
 				http.Error(w, "invalid message", 400)
 				return
 			}
@@ -77,36 +93,43 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 			if !grant.Member {
 				return access.ErrForbidden
 			}
+			if thread != "" {
+				_, err = ch.Resolve(ctx, tx, Envelope{Tenant: s.Tenant, App: s.App, Account: actor.AccountID, Project: project, Chat: project, Thread: thread, Mode: ProjectChat, Channel: "workbench"})
+				if err != nil {
+					return err
+				}
+			}
 			if post {
-				lock, _ := json.Marshal([]string{s.Tenant, s.App, actor.AccountID, project})
+				lock, _ := json.Marshal([]string{s.Tenant, s.App, actor.AccountID, project, thread})
 				if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))", string(lock)); err != nil {
 					return err
 				}
 				var busy bool
-				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND account_id=$3 AND project_id=$4 AND mode='project_chat' AND message_id!=$5 AND deadline>now() AND state IN ('route','running','ready','sending')) AND NOT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND channel='workbench' AND message_id=$5)`, s.Tenant, s.App, actor.AccountID, project, key).Scan(&busy)
+				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND account_id=$3 AND project_id=$4 AND mode='project_chat' AND thread_id=$6 AND message_id!=$5 AND deadline>now() AND state IN ('route','running','ready','sending')) AND NOT EXISTS(SELECT FROM agent_group_work WHERE tenant_key=$1 AND app_id=$2 AND channel='workbench' AND message_id=$5)`, s.Tenant, s.App, actor.AccountID, project, key, thread).Scan(&busy)
 				if err != nil {
 					return err
 				}
 				if busy {
 					return errChatBusy
 				}
-				id, err = Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Channel: "workbench", Account: actor.AccountID, Chat: project, Project: project, Mode: ProjectChat, Message: key, Text: strings.TrimSpace(body.Text), Received: time.Now()})
+				id, err = Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Channel: "workbench", Account: actor.AccountID, Chat: project, Thread: thread, Project: project, Mode: ProjectChat, Message: key, Intent: body.Intent, Text: strings.TrimSpace(body.Text), Received: time.Now()})
 				return err
 			}
 			rows, err := tx.Query(ctx, `SELECT w.id,coalesce(w.question,w.group_question),CASE WHEN w.group_answer IS NOT NULL AND w.state IN ('ready','sending','sent','unknown','failed') THEN w.group_answer WHEN w.state='sent' THEN w.response_text ELSE '' END,
 				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired'
-				     WHEN w.state='suppressed' AND w.reason='tool_source_changed' THEN 'stale' ELSE w.state END
+				     WHEN w.state='suppressed' AND w.reason='tool_source_changed' THEN 'stale' ELSE w.state END,
+				coalesce(w.config_snapshot->>'name',CASE w.intent WHEN 'knowledge' THEN '知识问答 Agent' WHEN 'admin' THEN '全局管理 Agent' ELSE '项目 PM' END)
 				FROM agent_group_work w JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
 				JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(w.tenant_key,w.app_id,w.account_id,w.project_id)
-				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND (w.mode='project_chat' OR w.group_question IS NOT NULL)
-				AND w.membership_generation=$5 AND a.active AND w.permission_version=a.permission_version ORDER BY coalesce(w.asked_at,w.group_asked_at) DESC,w.id DESC LIMIT 50`, s.Tenant, s.App, actor.AccountID, project, grant.MembershipGeneration)
+				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND ((w.mode='project_chat' AND w.thread_id=$6) OR ($6='' AND w.group_question IS NOT NULL))
+				AND w.membership_generation=$5 AND a.active AND w.permission_version=a.permission_version ORDER BY coalesce(w.asked_at,w.group_asked_at) DESC,w.id DESC LIMIT 50`, s.Tenant, s.App, actor.AccountID, project, grant.MembershipGeneration, thread)
 			if err != nil {
 				return err
 			}
 			defer rows.Close()
 			for rows.Next() {
 				var m chatMessage
-				if err := rows.Scan(&m.ID, &m.Question, &m.Answer, &m.State); err != nil {
+				if err := rows.Scan(&m.ID, &m.Question, &m.Answer, &m.State, &m.AgentName); err != nil {
 					return err
 				}
 				items = append(items, m)

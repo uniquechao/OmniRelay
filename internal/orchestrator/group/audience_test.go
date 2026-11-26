@@ -75,7 +75,7 @@ func TestDirectedNoticeGate(t *testing.T) {
 	g, _, _, _ := openImageGate(t)
 	g.sql("UPDATE project_members SET role='manager' WHERE account_id='alice'")
 	g.sql("UPDATE accounts SET name='PRIVATE_ONLY_GATE' WHERE id='bob'")
-	at := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	at := time.Now().UTC().Add(50 * time.Second).Truncate(time.Second)
 	mux := http.NewServeMux()
 	operator := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "alice", OpenID: "login-a"}
 	auth := func(w http.ResponseWriter, r *http.Request, policy identity.SessionPolicy) (identity.Principal, bool) {
@@ -107,15 +107,22 @@ func TestDirectedNoticeGate(t *testing.T) {
 		t.Fatal("registration replay failed")
 	}
 	request(at.Add(time.Hour), 409)
+	for range 4 {
+		if _, err := g.plan("alice", at, NoticeTarget{GroupNotice, "group-north"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var native string
-	for native == "" {
-		err := g.DB.QueryRow(g.ctx, "SELECT coalesce(native_id,'') FROM agent_notice_plans WHERE id=$1", id).Scan(&native)
+	for {
+		var bound int
+		err := g.DB.QueryRow(g.ctx, "SELECT coalesce(max(native_id) FILTER (WHERE id=$1),''),count(native_id) FROM agent_notice_plans", id).Scan(&native, &bound)
 		if err != nil || time.Until(at) < 5*time.Second {
 			t.Fatal("native timer was not bound before restart", err)
 		}
-		if native == "" {
-			time.Sleep(200 * time.Millisecond)
+		if bound == 5 && native != "" {
+			break
 		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	if out, err := exec.Command("docker", "restart", "-t", "1", os.Getenv("OMNI_GATE_CONTAINER")).CombinedOutput(); err != nil {
 		t.Fatalf("restart with active timer: %v %s", err, out)
@@ -124,11 +131,11 @@ func TestDirectedNoticeGate(t *testing.T) {
 	until := time.Now().Add(60 * time.Second)
 	for {
 		var count int
-		err := g.DB.QueryRow(g.ctx, "SELECT count(*) FROM agent_group_work WHERE plan_id=$1", id).Scan(&count)
+		err := g.DB.QueryRow(g.ctx, "SELECT count(*) FROM agent_group_work WHERE plan_id IS NOT NULL").Scan(&count)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if count == 2 {
+		if count == 6 {
 			break
 		}
 		if time.Now().After(until) {
@@ -145,10 +152,10 @@ func TestDirectedNoticeGate(t *testing.T) {
 	if _, err = g.scheduleEvent(g.ctx, "occur", event); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 12; i++ {
 		g.step()
 	}
-	if len(g.replies) != 2 {
+	if len(g.replies) != 6 {
 		t.Fatalf("deliveries = %d", len(g.replies))
 	}
 	for i, e := range g.replies {

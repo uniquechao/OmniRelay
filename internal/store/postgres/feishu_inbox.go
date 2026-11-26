@@ -111,16 +111,8 @@ func (s *FeishuInbox) insertInbound(ctx context.Context, tx pgx.Tx, event orches
 	case err == nil:
 		account = &id
 		state = "pending_route"
-		var full bool
-		if err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM feishu_inbound_work
-			WHERE app_id=$1 AND tenant_id=$2 AND state='pending_route') +
-			(SELECT count(*) FROM agent_group_work WHERE $4 AND app_id=$1 AND tenant_key=$2
-			AND channel='feishu' AND state IN ('route','running','ready','sending')) >= $3`,
-			event.AppID, event.TenantID, s.capacity, s.groupAgent).Scan(&full); err != nil {
-			return "", err
-		}
-		if full {
-			return "", orchestrator.ErrInboxFull
+		if !s.groupAgent {
+			state = "agent_disabled"
 		}
 	case !errors.Is(err, identity.ErrNotAdmitted):
 		return "", err
