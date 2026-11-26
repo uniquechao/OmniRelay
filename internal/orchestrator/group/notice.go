@@ -148,7 +148,7 @@ func (s *Service) CreateNoticePlan(ctx context.Context, actor identity.Principal
 func (s *Service) checkNotice(ctx context.Context, tx pgx.Tx, plan string, e Envelope, a Assignment) error {
 	var actor identity.Principal
 	actor.TenantKey, actor.AppID = s.Tenant, s.App
-	err := tx.QueryRow(ctx, `SELECT p.creator,u.open_id FROM agent_notice_plans p JOIN agent_instances i USING(agent_id)
+	err := tx.QueryRow(ctx, `SELECT p.creator,coalesce(u.open_id,'') FROM agent_notice_plans p JOIN agent_instances i USING(agent_id)
  JOIN agent_notice_targets t ON t.plan_id=p.id
  JOIN project_members m ON (m.tenant_key,m.app_id,m.project_id,m.account_id)=(i.tenant_key,i.app_id,i.project_id,p.creator)
  JOIN accounts u ON (u.tenant_key,u.app_id,u.id)=(i.tenant_key,i.app_id,p.creator)

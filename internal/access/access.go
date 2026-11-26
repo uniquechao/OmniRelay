@@ -89,7 +89,7 @@ func effectiveSystemRoles(active bool, grants []string) []string {
 }
 
 func (s *Service) inScope(p identity.Principal) bool {
-	return p.AccountID != "" && p.OpenID != "" && p.TenantKey == s.tenantKey && p.AppID == s.appID
+	return p.AccountID != "" && p.TenantKey == s.tenantKey && p.AppID == s.appID
 }
 
 // Bootstrap establishes the first system administrator once for this tenant and app.
@@ -191,7 +191,7 @@ func (s *Service) check(ctx context.Context, db queryer, p identity.Principal, a
 		SELECT g.membership_generation FROM role_grants g
 		WHERE g.tenant_key=a.tenant_key AND g.app_id=a.app_id AND g.account_id=a.id
 		AND g.project_id=nullif($5,'') AND g.role='project_admin' AND g.revoked_at IS NULL
-	), '') FROM accounts a WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.id=$3 AND a.open_id=$4`,
+	), '') FROM accounts a WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.id=$3 AND a.open_id IS NOT DISTINCT FROM nullif($4,'')`,
 		s.tenantKey, s.appID, p.AccountID, p.OpenID, projectID).Scan(&active, &roles, &delegatedGeneration)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -234,7 +234,7 @@ func (s *Service) WorkbenchAccess(ctx context.Context, p identity.Principal) (id
 	var roles []string
 	var version int64
 	err := s.pool.QueryRow(ctx, `SELECT `+systemGrantRoles+`, a.permission_version
-		FROM accounts a WHERE a.id=$1 AND a.tenant_key=$2 AND a.app_id=$3 AND a.open_id=$4 AND a.active`,
+		FROM accounts a WHERE a.id=$1 AND a.tenant_key=$2 AND a.app_id=$3 AND a.open_id IS NOT DISTINCT FROM nullif($4,'') AND a.active`,
 		p.AccountID, p.TenantKey, p.AppID, p.OpenID).Scan(&roles, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return identity.WorkbenchAccess{}, identity.ErrNotAdmitted
@@ -341,7 +341,7 @@ func (s *Service) AuditIdentity(ctx context.Context, tx pgx.Tx, p identity.Princ
 	}
 	var version int64
 	err := tx.QueryRow(ctx, `SELECT permission_version FROM accounts
-		WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND open_id=$4`,
+		WHERE tenant_key=$1 AND app_id=$2 AND id=$3 AND open_id IS NOT DISTINCT FROM nullif($4,'')`,
 		s.tenantKey, s.appID, p.AccountID, p.OpenID).Scan(&version)
 	if err != nil {
 		return err

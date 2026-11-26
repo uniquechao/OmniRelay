@@ -24,7 +24,7 @@ func (s *Service) directory(ctx context.Context, actor identity.Principal, filte
 		JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(m.tenant_key,m.app_id,m.account_id)
 		LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(m.tenant_key,m.app_id,m.project_id)
 		LEFT JOIN project_task_boards b ON (b.tenant_key,b.app_id,b.project_id)=(m.tenant_key,m.app_id,m.project_id)
-		WHERE (m.tenant_key,m.app_id,m.account_id)=($1,$2,$3) AND a.open_id=$4 AND a.active AND m.role<>'revoked'
+		WHERE (m.tenant_key,m.app_id,m.account_id)=($1,$2,$3) AND a.open_id IS NOT DISTINCT FROM nullif($4,'') AND a.active AND m.role<>'revoked'
 		AND (strpos(lower(coalesce(p.name,m.project_id)),lower($5))>0 OR strpos(lower(m.project_id),lower($5))>0 OR strpos(lower(c.short_code),lower($5))>0)
 		AND ($6='' OR coalesce(p.status,'active')=$6)`
 	if status := filter.Get("status"); status != "" && !slices.Contains(projectStatuses, status) {

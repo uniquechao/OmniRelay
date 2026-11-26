@@ -256,7 +256,7 @@ func TestBackendFeishuAdmissionAndRevocation(t *testing.T) {
 		t.Fatalf("provisioning did not grant only the default role: %v", account.SystemRoles)
 	}
 	wantStatus(do("POST", accountsPath, `{"openId":"ou_member"}`, admin, csrf), http.StatusConflict)
-	member, target, memberCSRF := login("ou_member", "/#/workbench", "/#/bot-chats/oc_project/om_receipt")
+	member, target, memberCSRF := login("ou_member", "/#/workbench", "/#/feishu/bot-chats/oc_project/om_receipt")
 	wantStatus(do("GET", botAPI, "", member, ""), http.StatusForbidden)
 	syncPath := "/api/v1/system/directory/sync-runs"
 	wantStatus(do("POST", syncPath, "", member, memberCSRF), http.StatusForbidden)

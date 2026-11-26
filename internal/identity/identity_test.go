@@ -200,7 +200,7 @@ func identityPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	for _, path := range []string{"0001_identity.sql", "0004_passwords.sql", "0033_account_api_keys.sql"} {
+	for _, path := range []string{"0001_identity.sql", "0002_access.sql", "0004_passwords.sql", "0033_account_api_keys.sql", "0046_local_administrator.sql"} {
 		migration, err := os.ReadFile("../../migrations/" + path)
 		if err != nil {
 			t.Fatal(err)

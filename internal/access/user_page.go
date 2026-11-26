@@ -92,8 +92,8 @@ func (s *Service) handleUserPage(w http.ResponseWriter, r *http.Request, actor i
 	combined AS (
 		SELECT coalesce(a.id,'directory:'||p.open_id) AS id,a.id AS account_id,
 			coalesce(nullif(p.name,''),nullif(a.name,''),a.id,p.open_id) AS name,
-			`+identity.FeishuPersonKeySQL("coalesce(a.open_id,p.open_id)")+` AS "personKey",
-			'飞书'::text AS source, coalesce(paths.org,'') AS org,
+			coalesce(`+identity.FeishuPersonKeySQL("coalesce(a.open_id,p.open_id)")+`,'') AS "personKey",
+			CASE WHEN coalesce(a.open_id,p.open_id) IS NULL THEN '本地' ELSE '飞书' END AS source, coalesce(paths.org,'') AS org,
 			CASE WHEN a.id IS NULL THEN 'unprovisioned' WHEN a.active THEN 'active' ELSE 'disabled' END AS status,
 			coalesce(p.directory_status,CASE WHEN r.resigned_at IS NOT NULL THEN 'resigned' END) AS "directoryStatus",
 			coalesce(p.unactivated,false) AS "directoryUnactivated",

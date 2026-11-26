@@ -58,27 +58,37 @@ func newPasswordAcceptable(password string) bool {
 // ProvisionPassword binds credentials to an existing account in the configured organization.
 // Resetting an existing credential invalidates all sessions for the account.
 func ProvisionPassword(ctx context.Context, pool *pgxpool.Pool, tenant, app, accountID, username, password string) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if err := SetAccountPassword(ctx, tx, tenant, app, accountID, username, password); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO audit_events(tenant_key,app_id,actor_account_id,action,resource_type,resource_id,result,change_version)
+			SELECT tenant_key,app_id,id,'account.cli_password_set','account',id,'success',permission_version FROM accounts WHERE id=$1`, accountID)
+		return err
+	})
+}
+
+// SetAccountPassword participates in the caller's account creation or reset transaction.
+func SetAccountPassword(ctx context.Context, tx pgx.Tx, tenant, app, accountID, username, password string) error {
 	username = strings.ToLower(strings.TrimSpace(username))
 	if !passwordUsername.MatchString(username) || !newPasswordAcceptable(password) {
 		return errors.New("username must be 3–64 characters and password must be 15 characters or more, up to 256 bytes")
 	}
 	salt := newPasswordSalt()
 	key := passwordKey(password, salt)
-	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		var id string
-		if err := tx.QueryRow(ctx, `SELECT id FROM accounts WHERE id=$1 AND tenant_key=$2 AND app_id=$3 AND active FOR UPDATE`,
-			accountID, tenant, app).Scan(&id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO account_passwords (account_id,tenant_key,app_id,username,salt,password_hash)
+	var id string
+	if err := tx.QueryRow(ctx, `SELECT id FROM accounts WHERE id=$1 AND tenant_key=$2 AND app_id=$3 AND active
+			AND (open_id IS NOT NULL OR $4='admin') FOR UPDATE`, accountID, tenant, app, username).Scan(&id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO account_passwords (account_id,tenant_key,app_id,username,salt,password_hash)
 			VALUES ($1,$2,$3,$4,$5,$6)
 			ON CONFLICT (account_id) DO UPDATE SET username=EXCLUDED.username,salt=EXCLUDED.salt,password_hash=EXCLUDED.password_hash`,
-			id, tenant, app, username, salt, key); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `DELETE FROM web_sessions WHERE account_id=$1`, id)
+		id, tenant, app, username, salt, key); err != nil {
 		return err
-	})
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM web_sessions WHERE account_id=$1`, id)
+	return err
 }
 
 func readCredentialJSON(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -169,7 +179,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	defer func() { <-passwordSlots }()
 	var p Principal
 	var salt, hash []byte
-	err := s.pool.QueryRow(r.Context(), `SELECT a.id,a.tenant_key,a.app_id,a.open_id,a.name,a.avatar_url,c.salt,c.password_hash
+	err := s.pool.QueryRow(r.Context(), `SELECT a.id,a.tenant_key,a.app_id,coalesce(a.open_id,''),a.name,a.avatar_url,c.salt,c.password_hash
 		FROM account_passwords c JOIN accounts a ON a.id=c.account_id
 		WHERE a.tenant_key=$1 AND a.app_id=$2 AND a.active AND c.tenant_key=$1 AND c.app_id=$2 AND c.username=$3`,
 		s.cfg.TenantKey, s.cfg.AppID, username).Scan(&p.AccountID, &p.TenantKey, &p.AppID, &p.OpenID, &p.Name, &p.AvatarURL, &salt, &hash)

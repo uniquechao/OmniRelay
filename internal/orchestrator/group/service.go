@@ -49,7 +49,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	var p identity.Principal
 	var scope, member, plan string
 	var pv, av int64
-	err := tx.QueryRow(ctx, `SELECT a.id,a.open_id,a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
+	err := tx.QueryRow(ctx, `SELECT a.id,coalesce(a.open_id,''),a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
             w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,'')
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
