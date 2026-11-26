@@ -2,7 +2,7 @@ html:has(.login-page:not([hidden])) { overflow: hidden; }
 .login-page {
   --login-gutter: clamp(20px, 4vw, 64px);
   height: 100dvh; display: grid; position: relative; overflow: clip;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   grid-template-rows: minmax(0, 1fr);
   background: var(--or-surface);
 }

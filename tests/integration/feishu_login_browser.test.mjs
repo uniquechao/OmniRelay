@@ -197,8 +197,8 @@ test('新版登录在桌面、窄屏和放大文字下保持表单可达、页�
       const login = await page.locator('.login-content').boundingBox();
       assert.ok(brand && login);
       if (width > 720) {
-        assert.ok(Math.abs(brand.width - width * 0.7) < 1, '品牌区占 70%');
-        assert.ok(Math.abs(login.width - width * 0.3) < 1, '登录区占 30%');
+        assert.ok(Math.abs(brand.width - width * 0.6) < 1, '品牌区占 60%');
+        assert.ok(Math.abs(login.width - width * 0.4) < 1, '登录区占 40%');
         assert.ok(Math.abs(brand.x + brand.width - login.x) < 1);
       } else {
         assert.equal(brand.width, width);
