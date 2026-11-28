@@ -35,6 +35,7 @@ func TestBoundReportSourcesAndReplay(t *testing.T) {
      SELECT 'tenant','app','week-group',id,'关键词'||id,'关键词'||id,stamp,stamp FROM (VALUES
       ('early','2026-11-15 15:59:59+00'::timestamptz),('begin','2026-11-15 16:00:00+00'),
       ('end','2026-11-22 15:59:59+00'),('late','2026-11-22 16:00:00+00')) AS v(id,stamp);
+    UPDATE feishu_chat_messages SET sender_id='ou_author' WHERE message_id='begin';
     INSERT INTO project_sources(tenant_key,app_id,project_id,kind,id,title,body,created_at)
      SELECT 'tenant','app','north','document',id,id,body,stamp FROM (VALUES
       ('inside','周内纪要正文','2026-11-15 16:00:00+00'::timestamptz),
@@ -131,6 +132,28 @@ func TestBoundReportSourcesAndReplay(t *testing.T) {
 			return e
 		})
 	}
+	legacyArgs := pmtools.Args{"chat_id": json.RawMessage(`"week-group"`), "q": json.RawMessage(`"关键词begin"`)}
+	var legacyDigest string
+	if err := pgx.BeginFunc(g.ctx, g.DB, func(tx pgx.Tx) error {
+		val, err := g.Projects.RecheckToolRead(g.ctx, tx, w.Actor, w.Scope.ProjectID, "chat_search_messages", legacyArgs)
+		if err != nil {
+			return err
+		}
+		legacyDigest, err = toolDigest(val)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g.sql("UPDATE feishu_chat_messages SET sender_name='已补全',updated_at=now() WHERE message_id='begin'")
+	call("chat_search_messages", `{"chat_id":"week-group","q":"关键词begin"}`, 200)
+	if err := recheck(); err != nil {
+		t.Fatal("display metadata invalidated personal reads", err)
+	}
+	g.sql("INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest) VALUES($1,'chat_search_messages','old-format',$2,$3)", w.Work, legacyArgs, legacyDigest)
+	if err := recheck(); !errors.Is(err, errToolReadStale) {
+		t.Fatal("historical receipt lost its complete-response check", err)
+	}
+	g.sql("DELETE FROM agent_project_tool_reads WHERE work_id=$1 AND fingerprint='old-format'", w.Work)
 	g.sql("UPDATE feishu_chat_messages SET search_text='界外更新' WHERE message_id='late'")
 	if err := recheck(); err != nil {
 		t.Fatal("out-of-period edit invalidated the frozen source", err)

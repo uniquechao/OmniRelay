@@ -36,7 +36,8 @@ func GroupVisibleRead(name string, args pmtools.Args, value any, groupID string)
 	case "task_business_time":
 		return true
 	case "chat_search_messages":
-		return groupID != "" && args.String("chat_id") == groupID
+		page, ok := value.(chat.ProjectMessagePage)
+		return ok && args.String("chat_id") == groupID && page.VisibleInGroup(groupID)
 	case "chat_list":
 		groups, ok := value.(projectGroups)
 		return ok && len(groups.Items) == 1 && groups.Items[0].ID == groupID

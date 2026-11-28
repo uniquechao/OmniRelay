@@ -15,6 +15,8 @@ Gateway 向 `/works/{work}` 提交包含 `role`、`config_version`、可选 `per
 
 工作结果带原生会话、轮次、实际使用的配置版本和结果种类。`write_slots` 列出成功写入的序号。`failed_writes` 列出 Gateway 明确拒绝的序号、工具和状态码。正式业务对象与逐项结果以 Go 的事务回执为准。重试先查询同一工作，已完成的结果从 SQLite 读取。运行中失去写入确认时，在封存结果或恢复执行前用原序号向 Gateway 对账。
 
+每次领取工作后，Gateway 将本轮原生执行截止以 `execute_before_ms`（UTC Unix 毫秒）发送给 Runtime。最长可执行 4 分钟，且受原业务截止时间约束。租约为退出原生进程、返回 HTTP 结果和提交回执预留 15 秒。轮次重试沿用原会话和已登记写槽，可重新获得剩余执行时间。滚动更新先替换 Runtime，原 Gateway 未传截止时沿用其 60 秒预算。HTTP 409 中的 `immutable_work_binding` 表示工作所属 Agent、会话或已冻结的请求内容发生变化；旧租约或旧 owner 的请求继续按工作调度重验。
+
 旧卷就地升级并保留原生会话、工作与槽位。旧版本没有逐槽成功位，其历史操作需以 Go 事务回执核对。原卷首次初始化产生的 `persona.md` 与 `origin.json` 保留用于迁移核验。在 Runtime 容器运行 `python instance.py legacy-personas` 可列出与首建模板有差异或文件缺失的实例。按 Agent ID 核对租户和项目后，管理员可在对应 Agent 配置中保存所需自定义内容。工具只输出文件位置和摘要。
 
 固定版 SDK 的本地回归可在装好 `requirements.txt` 后运行 `python runtime/dsh/test_runtime.py`。测试使用原生 Harness、本机合成模型和受控的工具目录。
@@ -44,6 +46,7 @@ Web 容器随生产 Runtime StatefulSet 启动。两个入口使用同一个模�
 | `TestProjectPMToolMatrix` | 23 个目录项逐项验证业务结果和权限，缺少任一目录项的测试即失败 |
 | `TestProjectToolRecoveryGate` | 并发和跨代次重试仅写入一次；相同命令序号换参数、过期轮次和撤权重放被拒 |
 | `TestProjectToolHistoryGate` | 来源撤权后抑制交付与历史正文；后续模型会话与受限正文隔离 |
+| `TestLiveGroupWeeklyBriefDelivery` | 真实模型从群提问起草周简报，在原消息下返回可核对的本周进展和风险；仅要求汇总时，正式简报库不产生写入。 |
 | `TestLiveGroupBoardReply` / `TestLiveGroupReplySemantics` | 真实模型识别当前未完成任务及明确提醒意图。隔离群通道核对已关闭事项、原话题、负责人和重复事件。 |
 | `TestProjectToolAudienceImageGate` | 内部群请求经真实 DSH 镜像、双向 TLS 在正确项目建任务，原话题得到署名回执，个人工作台显示结果 |
 | `TestAgentRolesImageGate` | 在正式工作台查询获准的纪要正文和修订、区分仅标题结果、汇总允许的项目、按原用户委派给项目 PM 并查询子工作。原生 Runtime 回调后按正式任务记录与投递回执对账。 |

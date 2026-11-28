@@ -180,7 +180,17 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			} else if c.Slot != 0 {
 				return pmtools.ErrArguments
 			}
-			val, err := s.Projects.RunTool(ctx, tx, w.Actor, w.Scope.ProjectID, t.Name, c.Args)
+			readName, args, err := s.groupReadArgs(ctx, tx, w, t.Name, c.Args)
+			if err != nil {
+				return err
+			}
+			c.Args = args
+			var val any
+			if readName == groupBoardRead {
+				val, err = s.groupBoardProof(ctx, tx, w.Actor, w.Scope.ProjectID, c.Args.String("chat_id"))
+			} else {
+				val, err = s.Projects.RunTool(ctx, tx, w.Actor, w.Scope.ProjectID, readName, c.Args)
+			}
 			if err != nil {
 				return err
 			}
@@ -192,7 +202,7 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			if !live {
 				return access.ErrForbidden
 			}
-			if !t.Write && w.Plan.GroupReply != nil && !w.Plan.GroupReply.PrivateSources && !project.GroupVisibleRead(t.Name, c.Args, val, w.Address.Chat) {
+			if !t.Write && !w.groupSources() && w.Plan.GroupReply != nil && !w.Plan.GroupReply.PrivateSources && !project.GroupVisibleRead(t.Name, c.Args, val, w.Address.Chat) {
 				// This mark commits with the read before anything is returned to the model.
 				if _, err = tx.Exec(ctx, "UPDATE agent_group_work SET semantic_plan=jsonb_set(semantic_plan,'{group_reply,private_sources}','true') WHERE id=$1", w.Work); err != nil {
 					return err
@@ -231,8 +241,8 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 				}
 			}
 			personalRead := !t.Write && (w.Address.Mode == ProjectChat || w.Address.Mode == PrivateReply)
-			if t.PrivateSource || w.Role == "query" || personalRead || !t.Write && w.Plan.EvidencePeriod != nil {
-				reads, err := project.ToolReadRecords(t.Name, c.Args, val)
+			if t.PrivateSource || w.Role == "query" || personalRead || w.groupSources() || !t.Write && w.Plan.EvidencePeriod != nil {
+				reads, err := project.ToolReadRecords(readName, c.Args, val)
 				if err != nil {
 					return err
 				}
@@ -245,7 +255,7 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 					if err != nil {
 						return err
 					}
-					if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest,citations,continuity_only) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", w.Work, read.Name, fingerprint, read.Args, digest, evidenceCitations(c.Name, c.Args, result), !t.PrivateSource && w.Role != "query"); err != nil {
+					if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest,citations,continuity_only) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", w.Work, read.Name, fingerprint, read.Args, digest, evidenceCitations(c.Name, c.Args, result), !w.groupSources() && !t.PrivateSource && w.Role != "query"); err != nil {
 						return err
 					}
 				}
@@ -347,7 +357,9 @@ func (s *Service) verifyWorkReads(ctx context.Context, tx pgx.Tx, workID string,
 			return nil, access.ErrForbidden
 		}
 		var val any
-		if r.Name == "delegation_status" {
+		if r.Name == groupBoardRead {
+			val, err = s.groupBoardProof(ctx, tx, actor, projectID, r.Args.String("chat_id"))
+		} else if r.Name == "delegation_status" {
 			val, err = delegationStatus(ctx, tx, actor, r.Args.String("parent_work"))
 		} else if r.Name == "visible_projects" {
 			val, err = project.PortfolioSummary(ctx, tx, actor)
@@ -386,6 +398,12 @@ func (w work) toolConfigured(name string) bool {
 func (s *Service) allowedTools(ctx context.Context, tx pgx.Tx, w work) ([]pmtools.Tool, error) {
 	tools := []pmtools.Tool{}
 	for _, t := range pmtools.RoleTools(w.Role) {
+		if w.groupSources() {
+			var ok bool
+			if t, ok = t.GroupSource(w.Plan.EvidencePeriod != nil); !ok {
+				continue
+			}
+		}
 		if !w.toolConfigured(t.Name) || t.Write && !w.Plan.Allows(t.Name) || w.Plan.EvidencePeriod != nil && unboundedReportSource(t.Name) {
 			continue
 		}

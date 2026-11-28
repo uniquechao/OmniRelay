@@ -40,21 +40,22 @@ type Who struct {
 type work struct {
 	Plan           routing.Plan
 	PlanRequest    routing.PlanRequest
+	planDeadline   time.Time
 	ProposalParent string
 	OriginWork     string
 	OriginItem     int
 	dsh.Binding
-	State, Bot, Delivery, Text string
-	Address                    Envelope
-	Actor                      identity.Principal
-	Scope                      Who
-	Config                     agentadmin.Config
-	LiveTools                  []string
-	PersonalContext            []PriorTurn
-	liveConfigVersion          int64
-	WriteRequested             bool
-	LegacyOutput               bool
-	Frozen                     json.RawMessage
+	State, Bot, Delivery, Text, Reason string
+	Address                            Envelope
+	Actor                              identity.Principal
+	Scope                              Who
+	Config                             agentadmin.Config
+	LiveTools                          []string
+	PersonalContext                    []PriorTurn
+	liveConfigVersion                  int64
+	WriteRequested                     bool
+	LegacyOutput                       bool
+	Frozen                             json.RawMessage
 }
 
 // The same current account, group assignment, membership lifetime and Bot
@@ -65,13 +66,13 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	var scope, member, plan string
 	var pv, av int64
 	err := tx.QueryRow(ctx, `SELECT a.id,coalesce(a.open_id,''),a.name,w.project_id,coalesce(p.name,''),w.chat_id,w.thread_id,w.message_id,
-            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,w.direct_question,''),w.intent,w.write_requested,coalesce(w.choice_prompt,''),w.config_snapshot,w.legacy_output,coalesce(w.semantic_plan,'{}')
+            w.channel,w.config_version,w.membership_generation,w.assignment_version,w.permission_version,w.delivery_id::text,w.mode,coalesce(w.plan_id::text,''),coalesce(w.question,w.group_question,w.direct_question,''),w.intent,w.write_requested,coalesce(w.choice_prompt,''),w.config_snapshot,w.legacy_output,coalesce(w.semantic_plan,'{}'),w.reason
         FROM agent_group_work w
         JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
         LEFT JOIN project_profiles p ON (p.tenant_key,p.app_id,p.project_id)=(w.tenant_key,w.app_id,w.project_id)
         WHERE w.id=$1 AND w.tenant_key=$2 AND w.app_id=$3 AND a.active AND a.permission_version=w.permission_version
         AND (w.mode='private_reply' OR p.project_id IS NOT NULL) AND w.deadline>clock_timestamp()`, id, s.Tenant, s.App).Scan(&p.AccountID, &p.OpenID, &p.Name, &w.Scope.ProjectID, &w.Scope.ProjectName,
-		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan, &w.Address.Text, &w.Address.Intent, &w.WriteRequested, &w.Address.ChoicePrompt, &w.Frozen, &w.LegacyOutput, &w.Plan)
+		&w.Address.Chat, &w.Address.Thread, &w.Address.Message, &w.Address.Channel, &w.Address.Config, &member, &av, &pv, &w.Delivery, &w.Address.Mode, &plan, &w.Address.Text, &w.Address.Intent, &w.WriteRequested, &w.Address.ChoicePrompt, &w.Frozen, &w.LegacyOutput, &w.Plan, &w.Reason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return w, access.ErrForbidden
 	}
@@ -168,8 +169,14 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	}
 	if w.Kind == "project_group_chat" && w.Plan.GroupReply != nil && !w.openTaskReply() {
 		w.Prompt += "\n通过飞书回复当前群。此群的 chat_id 为 " + w.Address.Chat + "。查询本群消息时直接使用此群 ID。按实际取得的资料回答，说明查询范围。"
+		if w.groupSources() {
+			w.Prompt += "\n本轮向全群展示答复。使用本群可见的工具目录，按实际取得的资料陈述事实。查询时间范围时先核对项目业务日期，再按日期检索本群消息。"
+			if w.Plan.Mode == "draft" && singleBrief(w.Plan) {
+				w.Prompt += "简报说明实际覆盖的日期、资料和已查证的进展、风险、待跟进事项。"
+			}
+		}
 	}
-	if w.Address.Mode == GroupNotice {
+	if w.Address.Mode == GroupNotice || w.groupSources() {
 		w.Scope.UserID = ""
 		w.Scope.UserName = ""
 	}
@@ -216,7 +223,7 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 		w.Prompt += draftInstructions(w.Plan)
 	}
 	if w.Plan.Mode == "execute" || w.Plan.Mode == "confirm" {
-		w.Prompt += "\n本次用户交办的操作范围（授权详情以 Gateway 为准）：" + string(w.Plan.JSON())
+		w.Prompt += "\n本次用户交办的操作范围（授权详情以 Gateway 为准）：" + string(w.Plan.PromptJSON())
 	}
 	digest := sha256.Sum256(fields)
 	w.Session = hex.EncodeToString(digest[:])
@@ -259,8 +266,8 @@ func (s *Service) claimOne(ctx context.Context) (work, error) {
 			if err = tx.QueryRow(ctx, displayedProposalQuery, id).Scan(&w.PlanRequest.DisplayedProposal); err != nil {
 				return err
 			}
-			return tx.QueryRow(ctx, `UPDATE agent_group_work SET lease_until=now()+interval '100 seconds',generation=generation+1 WHERE id=$1
-   RETURNING coalesce(question,group_question,direct_question),requested_intent,mode='private_reply',project_id<>'',mode='group_reply',generation`, id).Scan(&w.PlanRequest.Text, &w.PlanRequest.Intent, &w.PlanRequest.Private, &w.PlanRequest.ProjectSelected, &w.PlanRequest.Group, &w.Generation)
+			return tx.QueryRow(ctx, `UPDATE agent_group_work SET lease_until=least(deadline,now()+interval '100 seconds'),generation=generation+1 WHERE id=$1
+   RETURNING coalesce(question,group_question,direct_question),requested_intent,mode='private_reply',project_id<>'',mode='group_reply',generation,lease_until`, id).Scan(&w.PlanRequest.Text, &w.PlanRequest.Intent, &w.PlanRequest.Private, &w.PlanRequest.ProjectSelected, &w.PlanRequest.Group, &w.Generation, &w.planDeadline)
 		}
 		if state == "sending" {
 			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='unknown',reason='missing_platform_receipt' WHERE id=$1", id)
@@ -299,7 +306,11 @@ func (s *Service) claimOne(ctx context.Context) (work, error) {
 				}
 				w.Address.ChoicePrompt = projectChoice(options)
 			}
-			if err = s.checkToolReads(ctx, tx, w.Work, w.Actor, w.Scope.ProjectID); err != nil {
+			// A generic failure notice contains no retrieved material.
+			if w.Reason != workBindingConflict {
+				err = s.checkToolReads(ctx, tx, w.Work, w.Actor, w.Scope.ProjectID)
+			}
+			if err != nil {
 				if !errors.Is(err, access.ErrForbidden) && !errors.Is(err, errToolReadStale) {
 					return err
 				}
@@ -319,9 +330,13 @@ func (s *Service) claimOne(ctx context.Context) (work, error) {
 			}
 			w.State = "sending"
 		}
-		return tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,config_snapshot=coalesce(config_snapshot,$5::jsonb),
-          lease_until=clock_timestamp()+interval '100 seconds' WHERE id=$1 RETURNING generation,coalesce(response_text,'')`,
-			id, w.State, w.Agent, w.Session, w.Config).Scan(&w.Generation, &w.Text)
+		var leaseUntil time.Time
+		err = tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,config_snapshot=coalesce(config_snapshot,$5::jsonb),
+          lease_until=least(deadline,clock_timestamp()+CASE WHEN $2='running' THEN make_interval(secs=>$6) ELSE interval '100 seconds' END)
+          WHERE id=$1 RETURNING generation,coalesce(response_text,''),lease_until`,
+			id, w.State, w.Agent, w.Session, w.Config, dsh.ExecutionLease.Seconds()).Scan(&w.Generation, &w.Text, &leaseUntil)
+		w.ExecuteBeforeMS = leaseUntil.Add(-dsh.ReceiptReserve).UnixMilli()
+		return err
 	})
 	return w, err
 }
@@ -356,9 +371,9 @@ func (s *Service) Step(ctx context.Context) error {
 		case "failed":
 			state = "failed"
 		}
-		_, err = s.DB.Exec(ctx, `UPDATE agent_group_work SET state=$3,platform_message_id=nullif($4,''),reason=$5,lease_until=NULL,
+		_, err = s.DB.Exec(ctx, `UPDATE agent_group_work SET state=$3,platform_message_id=nullif($4,''),reason=CASE WHEN reason=$6 AND $3='sent' THEN reason ELSE $5 END,lease_until=NULL,
               personal_displayed_at=CASE WHEN mode='private_reply' AND $3='sent' THEN clock_timestamp() END
-           WHERE id=$1 AND generation=$2 AND state IN ('sending','unknown')`, w.Work, w.Generation, state, result.MessageID, result.Reason)
+           WHERE id=$1 AND generation=$2 AND state IN ('sending','unknown')`, w.Work, w.Generation, state, result.MessageID, result.Reason, workBindingConflict)
 		return err
 	}
 	if w.Address.ChoicePrompt != "" {
@@ -379,6 +394,9 @@ func (s *Service) Step(ctx context.Context) error {
 		if settled {
 			return nil
 		}
+	}
+	if errors.Is(err, dsh.ErrWorkBindingConflict) {
+		return s.finishBindingConflict(ctx, w)
 	}
 	if errors.Is(err, dsh.ErrConfiguration) {
 		return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {

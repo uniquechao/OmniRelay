@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
+	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
@@ -47,6 +49,16 @@ func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, err
 		out = append(out, ToolRead{tool, pmtools.Args{"id": key}, proof})
 	}
 	switch name {
+	case GroupMessageRead, "chat_search_messages":
+		page, ok := value.(chat.ProjectMessagePage)
+		if !ok {
+			return nil, errUnavailable
+		}
+		if name == "chat_search_messages" {
+			args = maps.Clone(args)
+			args["read_proof"] = json.RawMessage(`"messages"`)
+		}
+		return []ToolRead{{name, args, page.Receipt()}}, nil
 	case "task_business_time":
 		return []ToolRead{{name, args, businessDateProof(value)}}, nil
 	case "file_get":
@@ -86,7 +98,19 @@ func (s *Service) RecheckToolRead(ctx context.Context, tx pgx.Tx, actor identity
 		return fileReferenceValue(result.(map[string]any)), nil
 	}
 	if name != candidateRead && name != feedbackRead {
+		stableMessages := name == GroupMessageRead || name == "chat_search_messages" && args.String("read_proof") == "messages"
+		if name == "chat_search_messages" && stableMessages {
+			args = maps.Clone(args)
+			delete(args, "read_proof")
+		}
 		value, err := s.RunTool(ctx, tx, actor, projectID, name, args)
+		if err == nil && stableMessages {
+			page, ok := value.(chat.ProjectMessagePage)
+			if !ok {
+				return nil, errUnavailable
+			}
+			return page.Receipt(), nil
+		}
 		if err == nil && name == "task_business_time" {
 			return businessDateProof(value), nil
 		}

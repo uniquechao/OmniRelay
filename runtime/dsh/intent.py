@@ -79,6 +79,7 @@ def classification_schema(group=False):
     if group:
         schema["properties"]["group_response"] = {"type":"string", "enum":["answer","open_tasks"]}
         schema["properties"]["mention_evidence"] = {"type":"string"}
+        schema["properties"]["personal_source_evidence"] = {"type":"string", "description":"Exact user clause explicitly asking for materials beyond this group, or for a personal result. Omit otherwise."}
         schema["required"].append("group_response")
     return schema
 
@@ -179,7 +180,8 @@ Determine the evidence period independently from the filing date, before returni
     group = request.get("group") is True
     if group:
         classify_system += """
-This is an authenticated group conversation. Select group_response=open_tasks when the request is to list the current outstanding work for the group/project, optionally with each item's owner or a request to notify them. Use the project's formal task board for this meaning. Notify each owner in the same reply if and only if the sender explicitly asks for an actual mention: set mention_evidence to their exact short affirmative instruction. Merely asking who is responsible, quoting someone else's instruction, or saying not to notify is not consent. For this list use project intent and inspect_existing_or_answer; notifying in the reply is presentation, not a business write. Use group_response=answer for everything else, including historical or filtered reports, lists of chat-only commitments, drafting, task changes and reminders for future delivery."""
+This is an authenticated group conversation. Select group_response=open_tasks when the request is to list the current outstanding work for the group/project, optionally with each item's owner or a request to notify them. Use the project's formal task board for this meaning. Notify each owner in the same reply if and only if the sender explicitly asks for an actual mention: set mention_evidence to their exact short affirmative instruction. Merely asking who is responsible, quoting someone else's instruction, or saying not to notify is not consent. For this list use project intent and inspect_existing_or_answer; notifying in the reply is presentation, not a business write. Use group_response=answer for everything else, including historical or filtered reports, lists of chat-only commitments, drafting, task changes and reminders for future delivery.
+A group question or report is intended for the group by default. Build it using the original group's sources. Merely asking for project progress, a weekly snapshot or a project brief is a group request. If the user explicitly requests sources outside the current group (private/shared documents, individual daily reports, another group's records, etc.) or an explicitly personal result, copy their exact clause to personal_source_evidence. Requests for a particular saved brief, full membership directory, or a specific project record outside the public group tools qualify as an explicit source. Do not infer a private source requirement just from the kind of deliverable. For a current weekly snapshot without an explicit date, classify the evidence_period as this_week with the weekly phrase from the request; the Gateway will bind it to the project's actual business date."""
     facts = tool_input(cfg, http, deadline, classify_system, request["text"],
                        "classify_request", classification_schema(group), 800)
     mode = REQUEST_KINDS[facts.pop("kind")]
@@ -193,10 +195,14 @@ This is an authenticated group conversation. Select group_response=open_tasks wh
         facts["clarification"] = "当前知识问答角色只提供查询。请在项目 PM 会话中提交这项操作。"
     response = facts.pop("group_response", None)
     mentions = facts.pop("mention_evidence", "")
+    private_clause = facts.pop("personal_source_evidence", "")
     plan = dict(facts, intent=intent, mode=mode, actions=[])
     if group:
         current_board = response == "open_tasks" and mode == "read" and intent != "admin" and not plan.get("evidence_period")
         plan["group_reply"] = {"kind":"open_tasks" if current_board else "answer"}
+        if not current_board and mode in ("read", "draft") and intent != "admin":
+            personal = isinstance(private_clause, str) and private_clause.strip() and private_clause in request["text"]
+            plan["group_reply"]["source_scope"] = "personal" if personal else "group"
         if current_board and isinstance(mentions, str) and mentions.strip() and mentions in request["text"] and len(mentions) <= 256:
             plan["group_reply"]["mention_evidence"] = mentions
     if mode not in ("draft", "execute"):

@@ -19,9 +19,9 @@ func singleBrief(p routing.Plan) bool {
 }
 func draftInstructions(p routing.Plan) string {
 	if singleBrief(p) {
-		return "\n用户本轮要审阅的是一份新项目简报草稿。通过可用工具取齐依据，只返回用户将确认保存的简报本身。第一行用 \"# 标题\"，空一行后写完整 Markdown 正文。保留用户要求的来源标识。不要输出 JSON、操作说明、确认提示或写入成功声明。草稿目标：" + string(p.JSON())
+		return "\n用户本轮要审阅的是一份新项目简报草稿。通过可用工具取齐依据，只返回用户将确认保存的简报本身。第一行用 \"# 标题\"，空一行后写完整 Markdown 正文。保留用户要求的来源标识。不要输出 JSON、操作说明、确认提示或写入成功声明。草稿目标：" + string(p.PromptJSON())
 	}
-	return "\n本轮是只读草稿，先用授权资料形成实际内容。回答末尾用一行 " + proposalMarker + " 后跟 JSON 数组，按下列候选操作顺序为每项提供可直接展示的字段键值字符串映射。完整列出 fields 及 generate 字段（不含版本），保持原指定目标。简报必须给出实际标题、正文；任务必须给出实际标题。绝不编造标识或报告已写入。操作：" + string(p.JSON())
+	return "\n本轮是只读草稿，先用授权资料形成实际内容。回答末尾用一行 " + proposalMarker + " 后跟 JSON 数组，按下列候选操作顺序为每项提供可直接展示的字段键值字符串映射。完整列出 fields 及 generate 字段（不含版本），保持原指定目标。简报必须给出实际标题、正文；任务必须给出实际标题。绝不编造标识或报告已写入。操作：" + string(p.PromptJSON())
 }
 func (s *Service) publishDraft(ctx context.Context, tx pgx.Tx, w work, answer string) (string, error) {
 	var supplied []map[string]string

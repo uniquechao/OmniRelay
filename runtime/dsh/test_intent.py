@@ -18,7 +18,7 @@ QUESTIONS = {
 }
 
 class PlannerTest(unittest.TestCase):
-    def run_model(self, text, respond):
+    def run_model(self, text, respond, **context):
         observed = []
         class Model:
             def open(inner, req, timeout):
@@ -28,7 +28,7 @@ class PlannerTest(unittest.TestCase):
                 self.assertGreater(timeout,0)
                 return io.BytesIO(json.dumps(respond(payload)).encode())
         with patch("urllib.request.build_opener",return_value=Model()):
-            result=semantic_plan(CFG,{"request":{"text":text,"intent":"project","private":False},"catalog":CATALOG,"server_fields":["expected_version","generation"]},urllib.request.HTTPRedirectHandler())
+            result=semantic_plan(CFG,{"request":{"text":text,"intent":"project","private":False, **context},"catalog":CATALOG,"server_fields":["expected_version","generation"]},urllib.request.HTTPRedirectHandler())
         return result,observed
 
     def respond(self, payload):
@@ -52,6 +52,17 @@ class PlannerTest(unittest.TestCase):
             value={"mode":mode,"actions":[{"tool":"briefing_save","evidence":text,
                    "fields":{"business_date":"@today"},"generate":["title","body"]}]}
         return {"stop_reason":"tool_use","content":[{"type":"tool_use","name":tool,"input":value}]}
+
+    def test_group_source_request_uses_only_current_user_evidence(self):
+        text = "从我的个人日报查一下现场反馈"
+        for declared, expected in [("我的个人日报", "personal"), ("另一项目的纪要", "group"), ("", "group")]:
+            def model(payload):
+                self.assertIn("personal_source_evidence", payload["tools"][0]["input_schema"]["properties"])
+                value = {"dialogue_act":"other", "kind":"inspect_existing_or_answer", "intent":"project",
+                         "evidence_period":None, "group_response":"answer", "personal_source_evidence":declared}
+                return {"stop_reason":"tool_use","content":[{"type":"tool_use","name":"classify_request","input":value}]}
+            result, _ = self.run_model(text, model, group=True)
+            self.assertEqual(result["group_reply"]["source_scope"], expected)
 
     def test_repeated_structured_results(self):
         for text,(_,mode) in QUESTIONS.items():

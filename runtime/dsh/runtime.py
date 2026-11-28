@@ -13,6 +13,7 @@ import subprocess
 import sys
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,11 +45,13 @@ def valid_binding(b, job):
     required = {"work", "agent", "session", "owner", "epoch", "generation", "role", "config_version"}
     if chat:
         required.add("prompt")
-    return (required <= b.keys() <= required | {"kind", "persona"}
+    return (required <= b.keys() <= required | {"kind", "persona", "execute_before_ms"}
             and (chat or kind in FIXED_PROMPTS) and b["work"] == job
             and b["role"] in ROLE_TEMPLATE
             and all(type(b[k]) is int and 0 < b[k] < 2**63 for k in ("epoch", "generation"))
             and type(b["config_version"]) is int and 0 <= b["config_version"] < 2**63
+            and ("execute_before_ms" not in b or type(b["execute_before_ms"]) is int
+                 and 0 < b["execute_before_ms"] < 2**53)
             and isinstance(b.get("persona", ""), str)
             and all(isinstance(b[k], str) for k in ("owner", "session", "agent"))
             and (not chat or isinstance(b["prompt"], str) and bool(b["prompt"].strip())))
@@ -80,6 +83,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class ModelUnavailable(RuntimeError):
     pass
+
+
+def turn_deadline(binding):
+    # A Gateway with the previous 100-second lease omits the deadline. Its
+    # 85-second HTTP budget must also accommodate startup and host shutdown.
+    before = binding.get("execute_before_ms")
+    remaining = 60 if before is None else min(240, before / 1000 - time.time())
+    if remaining <= 0:
+        raise TimeoutError("native turn deadline reached")
+    return time.monotonic() + remaining
+
+
+def remaining_turn_time(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("native turn deadline reached")
+    return remaining
 
 
 def model_config():
@@ -236,12 +256,11 @@ class Runtime:
             with self.db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute("SELECT agent,session,epoch,generation,turn,completed,request_digest FROM work WHERE id=?", (job,)).fetchone()
-                if row and (row[:2] != (agent, session) or row[3] > b["generation"]
-                            or row[6] is not None and row[6] != digest):
-                    return 409, {}
                 current = db.execute("SELECT epoch FROM owners WHERE agent=?", (agent,)).fetchone()
-                if current and current[0] > b["epoch"]:
+                if (row and row[3] > b["generation"]) or (current and current[0] > b["epoch"]):
                     return 409, {}
+                if row and (row[:2] != (agent, session) or row[6] is not None and row[6] != digest):
+                    return 409, {"error": "immutable_work_binding"}
                 epoch = b["epoch"]
                 db.execute("INSERT INTO owners VALUES(?,?) ON CONFLICT(agent) DO UPDATE SET epoch=excluded.epoch",
                            (agent, epoch))
@@ -262,7 +281,8 @@ class Runtime:
                 self.busy.remove(agent)
 
     def run_turn(self, b):
-        binding = {k: v for k, v in b.items() if k not in ("prompt", "persona")}
+        deadline = turn_deadline(b)
+        binding = {k: v for k, v in b.items() if k not in ("prompt", "persona", "execute_before_ms")}
         chat = b.get("kind") in CHAT_KINDS
         nonce = secrets.token_urlsafe(32)
         started = threading.Event()
@@ -272,7 +292,7 @@ class Runtime:
         if chat:
             request = urllib.request.Request(self.gateway + "/internal/tools/project/catalog",
                                              json.dumps(binding).encode(), headers={"Content-Type": "application/json"})
-            with self.http.open(request, timeout=10) as response:
+            with self.http.open(request, timeout=min(10, remaining_turn_time(deadline))) as response:
                 catalog = json.load(response) or []
             if b["role"] == "query" and any(item["write"] for item in catalog):
                 raise ConfigurationConflict("write tool on a read-only role")
@@ -282,7 +302,7 @@ class Runtime:
             request = urllib.request.Request(self.gateway + "/internal/tools/project", json.dumps(payload).encode(),
                                              headers={"Content-Type": "application/json"})
             try:
-                with self.http.open(request, timeout=10) as response:
+                with self.http.open(request, timeout=min(10, remaining_turn_time(deadline))) as response:
                     value = json.load(response)
             except urllib.error.HTTPError as exc:
                 if slot and exc.code in (400, 403, 409):
@@ -322,7 +342,7 @@ class Runtime:
                         return self.reply(200, project_request(name, args, slot))
                     request = urllib.request.Request(runtime.gateway + path, json.dumps(data).encode(),
                                                      headers={"Content-Type": "application/json"})
-                    with runtime.http.open(request, timeout=10) as resp:
+                    with runtime.http.open(request, timeout=min(10, remaining_turn_time(deadline))) as resp:
                         data = json.load(resp)
                     observed["tool"] = True
                     return self.reply(200, data)
@@ -351,7 +371,7 @@ class Runtime:
                 request = urllib.request.Request(self.gateway + "/internal/turns/start",
                                                  json.dumps({**binding, "turn": observed["turn"]}).encode(),
                                                  headers={"Content-Type": "application/json"})
-                with self.http.open(request, timeout=10):
+                with self.http.open(request, timeout=min(10, remaining_turn_time(deadline))):
                     pass
                 if chat:
                     # Reconcile a lost acknowledgement before admitting new model writes.
@@ -360,7 +380,7 @@ class Runtime:
                     # Keep a current grant receipt even when a conversational turn needs no model tool.
                     scope = urllib.request.Request(self.gateway + "/internal/tools/context.whoami", request.data,
                                                    headers={"Content-Type": "application/json"})
-                    with self.http.open(scope, timeout=10):
+                    with self.http.open(scope, timeout=min(10, remaining_turn_time(deadline))):
                         observed["tool"] = True
                 started.set()
 
@@ -369,23 +389,32 @@ class Runtime:
             try:
                 with open_instance(self.root / "agents", b["agent"], HERE / ROLE_TEMPLATE[b["role"]],
                                    role=b["role"], config_version=b["config_version"], persona=b.get("persona", ""),
+                                   timeout_seconds=remaining_turn_time(deadline),
                                    patches=(str(HERE / "group.patch.yml"),),
                                    tool_env={"OMNI_TOOL_URL": f"http://127.0.0.1:{bridge.server_port}",
                                              "OMNI_PROJECT_TOOLS": json.dumps(catalog, ensure_ascii=False),
                                              "OMNI_TOOL_NONCE": nonce}, **model_config()) as host:
-                    try:
-                        session = host.resume_session(b["session"])
-                    except JsonRpcError as exc:
-                        if exc.message != f'session "{b["session"]}" not found':
-                            raise
-                        session = host.start_session(b["session"])
-                    watchdog = threading.Timer(60, host.close)
+                    expired = threading.Event()
+                    def close_expired_host():
+                        expired.set()
+                        host.close()
+                    watchdog = threading.Timer(remaining_turn_time(deadline), close_expired_host)
                     watchdog.start()
                     try:
+                        try:
+                            session = host.resume_session(b["session"])
+                        except JsonRpcError as exc:
+                            if exc.message != f'session "{b["session"]}" not found':
+                                raise
+                            session = host.start_session(b["session"])
                         # Start the first block with application text so a user's leading slash
                         # stays model input rather than a native owner command.
                         prompt = "用户请求\n" + b["prompt"] if chat else FIXED_PROMPTS[b.get("kind", "")]
                         result = session.run(prompt, on_notification=events)
+                    except Exception:
+                        if expired.is_set():
+                            raise TimeoutError("native turn deadline reached") from None
+                        raise
                     finally:
                         watchdog.cancel()
                         watchdog.join()

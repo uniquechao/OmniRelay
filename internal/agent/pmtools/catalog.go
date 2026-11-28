@@ -104,6 +104,25 @@ func (t Tool) FieldNames() []string {
 	}
 	return fields
 }
+
+// GroupSource narrows an already enabled role capability to its group-facing contract.
+func (t Tool) GroupSource(hasPeriod bool) (Tool, bool) {
+	switch t.Name {
+	case "chat_search_messages":
+		t.Description = "读取当前群截至提问时的公开消息。按期间列出无需关键词；可用 q、date_from、date_to、page 筛选，has_more 为真时继续翻页。"
+		t.fields = "chat_id q date_from date_to page"
+	case "task_business_time":
+	case "task_board_get":
+		if hasPeriod {
+			return Tool{}, false
+		}
+		t.Description = "读取当前群可公开的未完成正式任务摘要。"
+		t.fields = ""
+	default:
+		return Tool{}, false
+	}
+	return t, true
+}
 func (t Tool) HasField(k string) bool {
 	for _, f := range strings.Fields(t.fields) {
 		if strings.TrimPrefix(f, "!") == k {

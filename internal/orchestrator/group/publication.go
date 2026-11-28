@@ -10,6 +10,28 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/access"
 )
 
+const workBindingConflict = "runtime_binding_conflict"
+
+func (s *Service) finishBindingConflict(ctx context.Context, w work) error {
+	// A retry with the identical immutable request will receive the same
+	// permanent conflict. No raw model output is used in this receipt.
+	if w.Address.Mode == GroupReply && w.Plan.GroupReply != nil {
+		w.Reason = workBindingConflict
+		answer := w.bindingConflictNotice()
+		_, err := s.DB.Exec(ctx, "UPDATE agent_group_work SET state='ready',reason=$3,group_answer=$4,response_text=$4,lease_until=NULL WHERE id=$1 AND generation=$2 AND state='running'", w.Work, w.Generation, w.Reason, answer)
+		return err
+	}
+	_, err := s.DB.Exec(ctx, "UPDATE agent_group_work SET state='failed',reason=$3,lease_until=NULL WHERE id=$1 AND generation=$2 AND state='running'", w.Work, w.Generation, workBindingConflict)
+	return err
+}
+
+func (w work) bindingConflictNotice() string {
+	if w.WriteRequested {
+		return w.signature() + "\n本次请求执行中断。请先在工作台核对已提交的操作，再决定是否重试。"
+	}
+	return w.signature() + "\n本次请求执行中断，未能生成答复。请重新发起。"
+}
+
 func (w work) openTaskReply() bool {
 	return w.Address.Mode == GroupReply && w.Plan.GroupReply != nil && w.Plan.GroupReply.Kind == "open_tasks"
 }
@@ -78,6 +100,9 @@ func (s *Service) refreshGroupDelivery(ctx context.Context, tx pgx.Tx, w *work) 
 }
 
 func (s *Service) groupReplyText(ctx context.Context, tx pgx.Tx, w work, answer string) (string, error) {
+	if w.Reason == workBindingConflict {
+		return w.bindingConflictNotice(), nil
+	}
 	g := w.Plan.GroupReply
 	if g == nil {
 		return w.publicReply(), nil
@@ -89,7 +114,7 @@ func (s *Service) groupReplyText(ctx context.Context, tx pgx.Tx, w work, answer 
 		}
 		return fmt.Sprintf("%s\n本次已提交 %d 项业务操作。", w.signature(), n), nil
 	}
-	if w.Role != "management-pm" && !g.PrivateSources && (w.Plan.Mode == "read" || w.Plan.Mode == "clarify" || w.Plan.Mode == "draft") {
+	if w.Role != "management-pm" && g.Scope != "personal" && !g.PrivateSources && (w.Plan.Mode == "read" || w.Plan.Mode == "clarify" || w.Plan.Mode == "draft") {
 		return answer, nil
 	}
 	return w.signature() + "\n这次答复涉及本群可见范围以外的资料。你可以在项目工作台的 Bot 对话中查看详情。", nil

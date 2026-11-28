@@ -27,7 +27,9 @@ func (s *Service) planWork(ctx context.Context, w work) error {
 	if s.PlanIntent == nil {
 		err = errors.New("semantic planner unavailable")
 	} else {
-		p, err = s.PlanIntent(ctx, w.PlanRequest)
+		planCtx, cancel := context.WithDeadline(ctx, w.planDeadline)
+		p, err = s.PlanIntent(planCtx, w.PlanRequest)
+		cancel()
 	}
 	if err == nil {
 		err = p.Validate(w.PlanRequest)

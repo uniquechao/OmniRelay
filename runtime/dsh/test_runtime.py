@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import uuid
@@ -30,6 +31,8 @@ class Model(BaseHTTPRequestHandler):
         finished = isinstance(last, list) and any(x.get("type") == "tool_result" for x in last)
         name = next((t["name"] for t in packet["tools"] if t["name"] != "context_whoami"), "context_whoami")
         if finished:
+            if self.server.final_delay:
+                time.sleep(self.server.final_delay)
             block = {"type": "text", "text": ""}
             delta = {"type": "text_delta", "text": "verified"}
         else:
@@ -80,6 +83,8 @@ class RuntimeTest(unittest.TestCase):
         self.root = Path(temp.name)
         model = ThreadingHTTPServer(("127.0.0.1", 0), Model)
         model.requests = []
+        self.model = model
+        model.final_delay = 0
         threading.Thread(target=model.serve_forever, daemon=True).start()
         self.addCleanup(model.server_close)
         self.addCleanup(model.shutdown)
@@ -144,6 +149,44 @@ class RuntimeTest(unittest.TestCase):
         self.gateway.open = wrong_catalog
         self.assertEqual(self.worker.execute(self.binding("query", "scope"))[0], 422)
         self.assertFalse(self.requests)
+
+    def test_slow_group_brief_uses_admitted_budget(self):
+        # Delay the model's final answer after its tool call. The actual SDK
+        # must keep the same turn alive for longer than the old 60s watchdog.
+        self.model.final_delay = 61
+        b = dict(self.binding("query", "group brief"), kind="project_group_chat",
+                 execute_before_ms=int((time.time() + 135) * 1000))
+        start = time.monotonic()
+        code, result = self.worker.execute(b)
+        self.assertGreaterEqual(time.monotonic() - start, 61)
+        self.assertEqual((code, result["turn"], result["answer"]), (200, 1, "verified"))
+        self.assertTrue(all("execute_before_ms" not in body for _, body in self.gateway.calls))
+        self.assertEqual(self.worker.execute(dict(b, generation=2, execute_before_ms=b["execute_before_ms"] + 1000)),
+                         (200, result))
+        self.assertEqual(len(self.requests), 2)
+
+    def test_expired_budget_can_resume_but_changed_input_cannot(self):
+        b = self.binding("project-pm", "same admitted input")
+        b["execute_before_ms"] = int((time.time() - 1) * 1000)
+        with self.assertRaises(TimeoutError):
+            self.worker.execute(b)
+        self.assertEqual(self.worker.status(b["work"]), (202, {}))
+        later = dict(b, generation=2, execute_before_ms=int((time.time() + 80) * 1000))
+        self.assertEqual(self.worker.execute(dict(later, prompt="different")), (409, {"error":"immutable_work_binding"}))
+        self.assertEqual(self.worker.execute(later)[0], 200)
+        self.assertEqual(self.worker.execute(b), (409, {}))
+        self.assertEqual(self.worker.execute(dict(later, epoch=2))[0], 200)
+        self.assertEqual(self.worker.execute(dict(later, prompt="different")), (409, {}))
+
+    def test_deadline_bounds_and_previous_gateway(self):
+        b = self.binding("query", "hello")
+        self.assertTrue(runtime.valid_binding(b,b["work"]))
+        self.assertAlmostEqual(runtime.turn_deadline(b) - time.monotonic(), 60, delta=1)
+        for wrong in (None, True, "60", 0, 2**53):
+            self.assertFalse(runtime.valid_binding(dict(b,execute_before_ms=wrong), b["work"]))
+        future = dict(b, execute_before_ms=int((time.time()+3600)*1000))
+        self.assertTrue(runtime.valid_binding(future,b["work"]))
+        self.assertAlmostEqual(runtime.turn_deadline(future)-time.monotonic(), 240, delta=1)
 
     def test_lost_reply_after_native_completion(self):
         binding = self.binding("project-pm", "Run once")

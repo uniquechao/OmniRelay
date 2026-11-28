@@ -48,6 +48,7 @@ type EvidencePeriod struct {
 // GroupResponse is classified from the authenticated group message alone.
 type GroupResponse struct {
 	// Set only by Gateway when a tool returns data outside the answering group.
+	Scope           string `json:"source_scope,omitempty"`
 	PrivateSources  bool   `json:"private_sources,omitempty"`
 	Kind            string `json:"kind"`
 	MentionEvidence string `json:"mention_evidence,omitempty"`
@@ -137,7 +138,7 @@ func (p Plan) Validate(r PlanRequest) error {
 		return errors.New("invalid semantic plan: missing group response")
 	}
 	if g := p.GroupReply; g != nil {
-		if !r.Group || g.PrivateSources || (g.Kind != "answer" && g.Kind != "open_tasks") || g.Kind == "open_tasks" && (p.Mode != "read" || p.Intent == "admin" || p.EvidencePeriod != nil) {
+		if !r.Group || g.PrivateSources || (g.Scope != "" && g.Scope != "group" && g.Scope != "personal") || (g.Kind != "answer" && g.Kind != "open_tasks") || g.Kind == "open_tasks" && (p.Mode != "read" || p.Intent == "admin" || p.EvidencePeriod != nil) {
 			return errors.New("invalid semantic plan: group response")
 		}
 		if g.MentionEvidence != "" && (g.Kind != "open_tasks" || strings.TrimSpace(g.MentionEvidence) == "" || len([]rune(g.MentionEvidence)) > 256 || !strings.Contains(r.Text, g.MentionEvidence)) {
@@ -277,4 +278,16 @@ func EvidenceContains(text, value string) bool {
 func Selector(k string) bool {
 	return strings.HasSuffix(k, "_id") || strings.HasSuffix(k, "_ids") || k == "file_ref"
 }
+
+// PromptJSON contains the frozen request contract. Audience decisions accumulated
+// during tool calls must not change the native session on a subsequent attempt.
+func (p Plan) PromptJSON() []byte {
+	if p.GroupReply != nil {
+		g := *p.GroupReply
+		g.PrivateSources = false
+		p.GroupReply = &g
+	}
+	return p.JSON()
+}
+
 func (p Plan) JSON() []byte { b, _ := json.Marshal(p); return b }

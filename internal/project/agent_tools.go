@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"strconv"
 	"strings"
@@ -35,8 +36,18 @@ func ToolStatus(err error) int {
 
 // RunTool is called inside the Gateway's authorized work transaction. No actor or project
 // selector is accepted in the model arguments.
+// GroupMessageRead is a Gateway-owned receipt type. The intake cutoff is bound
+// by the Gateway and is not part of the model-facing tool schema.
+const GroupMessageRead = "group_chat_messages"
+
 func (s *Service) RunTool(ctx context.Context, tx pgx.Tx, actor identity.Principal, projectID, name string, a pmtools.Args) (any, error) {
-	t, ok := pmtools.Lookup(name)
+	catalogName, input := name, a
+	if name == GroupMessageRead {
+		catalogName = "chat_search_messages"
+		input = maps.Clone(a)
+		delete(input, "received_at")
+	}
+	t, ok := pmtools.Lookup(catalogName)
 	if !ok {
 		return nil, errInput
 	}
@@ -47,7 +58,7 @@ func (s *Service) RunTool(ctx context.Context, tx pgx.Tx, actor identity.Princip
 	if !allowed {
 		return nil, errDenied
 	}
-	if err = t.Validate(a); err != nil {
+	if err = t.Validate(input); err != nil {
 		return nil, err
 	}
 	bound := *s
@@ -273,10 +284,10 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			return chatListCandidate{Assignment: link, ID: id}, nil
 		}
 		return s.visibleChats(ctx, actor, k.project)
-	case "chat_search_messages":
+	case "chat_search_messages", GroupMessageRead:
 		from, to := a.String("date_from"), a.String("date_to")
 		term := strings.TrimSpace(a.String("q"))
-		if !validReportRange(from, to) || len([]rune(term)) > 200 || (term == "" && (from == "" || to == "")) {
+		if !validReportRange(from, to) || len([]rune(term)) > 200 || (name != GroupMessageRead && term == "" && (from == "" || to == "")) {
 			return nil, errInput
 		}
 		reader, ok := s.chat.(interface {
@@ -289,9 +300,15 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		if err != nil {
 			return nil, err
 		}
-		return reader.SearchProjectMessages(ctx, tx, actor, k.project, a.String("chat_id"), chat.ProjectMessageSearch{
-			Query: term, DateFrom: from, DateTo: to, Location: loc, Page: page,
-		})
+		filter := chat.ProjectMessageSearch{Query: term, DateFrom: from, DateTo: to, Location: loc, Page: page}
+		if name == GroupMessageRead {
+			var cutoff time.Time
+			if json.Unmarshal(a["received_at"], &cutoff) != nil || cutoff.IsZero() {
+				return nil, errInput
+			}
+			filter.GroupCutoff = &cutoff
+		}
+		return reader.SearchProjectMessages(ctx, tx, actor, k.project, a.String("chat_id"), filter)
 	case "chat_bind", "chat_unbind", "chat_set_primary":
 		id := a.String("chat_id")
 		link, err := assignment(ctx, tx, actor, id)

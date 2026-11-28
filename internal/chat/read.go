@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -367,7 +368,30 @@ type ProjectMessageSearch struct {
 	Query, DateFrom, DateTo string
 	Location                *time.Location
 	Page                    int64
+	GroupCutoff             *time.Time
 }
+
+type groupMessageEvidence struct {
+	ID, Sender, SenderKind, TextDigest string
+	Sent                               time.Time
+}
+
+// ProjectMessagePage exposes display snippets to the Agent. Its receipt retains the
+// real sender and full indexed text digest without freezing mutable display names.
+type ProjectMessagePage struct {
+	display map[string]any
+	proof   struct {
+		Items               []groupMessageEvidence
+		More, PublicToGroup bool
+		Timezone            string
+	}
+}
+
+func (p ProjectMessagePage) MarshalJSON() ([]byte, error) { return json.Marshal(p.display) }
+func (p ProjectMessagePage) VisibleInGroup(id string) bool {
+	return id != "" && p.display["chat_id"] == id && p.proof.PublicToGroup
+}
+func (p ProjectMessagePage) Receipt() any { return p.proof }
 
 // SearchProjectMessages reports matches in the visible local index. It does
 // not assert that the index covers all upstream messages for the interval.
@@ -385,45 +409,67 @@ func (s *Service) SearchProjectMessages(ctx context.Context, tx pgx.Tx, p identi
 	}
 	const size = 25
 	rows, err := tx.Query(ctx, `SELECT m.message_id,m.sender_id,m.sender_name,m.sender_kind,m.sent_at,m.updated_at,
- substring(m.search_text FROM greatest(1,strpos(lower(m.search_text),lower($5))-120) FOR 500),length(m.search_text)>500
+ substring(m.search_text FROM greatest(1,strpos(lower(m.search_text),lower($5))-120) FOR 500),length(m.search_text)>500,
+ encode(sha256(convert_to(m.search_text,'UTF8')),'hex'),aud.public
  FROM feishu_chat_messages m
  JOIN project_chat_links l ON (l.tenant_key,l.app_id,l.chat_id)=(m.tenant_key,m.app_id,m.chat_id)
+ CROSS JOIN LATERAL (SELECT (m.thread_id='' OR m.visible_in_chat) AND NOT EXISTS (SELECT FROM feishu_candidate_event_owners e WHERE
+   (e.tenant_key,e.app_id,e.source_id)=(m.tenant_key,m.app_id,m.message_id) AND e.run_id IS NOT NULL) AS public) aud
  WHERE `+visibleMessageRows+` AND m.chat_id=$3 AND l.project_id=$4 AND NOT m.deleted AND m.search_text<>''
  AND strpos(lower(m.search_text),lower($5))>0
  AND (nullif($6,'') IS NULL OR m.sent_at >= (nullif($6,'')::date::timestamp AT TIME ZONE $8))
  AND (nullif($7,'') IS NULL OR m.sent_at < ((nullif($7,'')::date + 1)::timestamp AT TIME ZONE $8))
+ AND ($11::timestamptz IS NULL OR (m.sent_at<=$11 AND aud.public))
  ORDER BY m.sent_at DESC,m.message_id DESC LIMIT $9 OFFSET $10`, s.tenant, s.app, id, project, filter.Query,
-		filter.DateFrom, filter.DateTo, filter.Location.String(), size+1, (filter.Page-1)*size)
+		filter.DateFrom, filter.DateTo, filter.Location.String(), size+1, (filter.Page-1)*size, filter.GroupCutoff)
 	if err != nil {
 		return nil, err
 	}
 	type snippet struct {
-		ID         string    `json:"id"`
-		SenderID   string    `json:"sender_id,omitempty"`
-		SenderName string    `json:"sender_name,omitempty"`
-		SenderKind string    `json:"sender_kind,omitempty"`
-		Sent       time.Time `json:"sent_at"`
-		Updated    time.Time `json:"updated_at"`
-		Text       string    `json:"text"`
-		Truncated  bool      `json:"truncated"`
+		ID            string    `json:"id"`
+		SenderID      string    `json:"sender_id,omitempty"`
+		SenderName    string    `json:"sender_name,omitempty"`
+		SenderKind    string    `json:"sender_kind,omitempty"`
+		Sent          time.Time `json:"sent_at"`
+		Updated       time.Time `json:"updated_at"`
+		Text          string    `json:"text"`
+		Truncated     bool      `json:"truncated"`
+		TextDigest    string    `json:"-"`
+		PublicToGroup bool      `json:"-"`
 	}
 	items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[snippet])
 	if err != nil {
 		return nil, err
 	}
 	more := len(items) > size
+	publicToGroup := true
+	for _, item := range items {
+		publicToGroup = publicToGroup && item.PublicToGroup
+	}
 	if more {
 		items = items[:size]
 	}
+	var evidence []groupMessageEvidence
 	for i := range items {
+		sender := items[i].SenderID
+		if sender == "" {
+			sender = "display:" + items[i].SenderName
+		}
+		evidence = append(evidence, groupMessageEvidence{items[i].ID, sender, items[i].SenderKind, items[i].TextDigest, items[i].Sent.UTC()})
+		if filter.GroupCutoff != nil {
+			items[i].SenderID = ""
+		}
 		items[i].Sent = items[i].Sent.In(filter.Location)
 		items[i].Updated = items[i].Updated.In(filter.Location)
 	}
-	return map[string]any{
+	display := map[string]any{
 		"scope": "indexed_visible_text", "chat_id": id, "chat_name": group.Name, "q": filter.Query,
 		"business_timezone": filter.Location.String(), "date_from": filter.DateFrom, "date_to": filter.DateTo,
 		"page": filter.Page, "has_more": more, "items": items,
-	}, nil
+	}
+	page := ProjectMessagePage{display: display}
+	page.proof.Items, page.proof.More, page.proof.PublicToGroup, page.proof.Timezone = evidence, more, publicToGroup, filter.Location.String()
+	return page, nil
 }
 
 func chatScopeID(r *http.Request) string {

@@ -17,19 +17,27 @@ import (
 )
 
 var ErrConfiguration = errors.New("runtime rejected agent configuration")
+var ErrWorkBindingConflict = errors.New("runtime work binding differs from its journal")
+
+// A native turn can use four minutes. Leave time to close its host, return
+// the HTTP result and commit the Gateway receipt while the claim is live.
+const NativeTurnLimit = 4 * time.Minute
+const ReceiptReserve = 15 * time.Second
+const ExecutionLease = NativeTurnLimit + ReceiptReserve
 
 type Binding struct {
-	Role          string `json:"role"`
-	ConfigVersion int64  `json:"config_version"`
-	Persona       string `json:"persona,omitempty"`
-	Prompt        string `json:"prompt,omitempty"`
-	Kind          string `json:"kind,omitempty"`
-	Work          string `json:"work"`
-	Agent         string `json:"agent"`
-	Owner         string `json:"owner"`
-	Epoch         int64  `json:"epoch"`
-	Generation    int64  `json:"generation"`
-	Session       string `json:"session"`
+	ExecuteBeforeMS int64  `json:"execute_before_ms,omitempty"`
+	Role            string `json:"role"`
+	ConfigVersion   int64  `json:"config_version"`
+	Persona         string `json:"persona,omitempty"`
+	Prompt          string `json:"prompt,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	Work            string `json:"work"`
+	Agent           string `json:"agent"`
+	Owner           string `json:"owner"`
+	Epoch           int64  `json:"epoch"`
+	Generation      int64  `json:"generation"`
+	Session         string `json:"session"`
 }
 type FailedWrite struct {
 	Slot   int    `json:"slot"`
@@ -73,11 +81,21 @@ func NewClient(endpoint string, certs *tls.Config) (*Client, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("invalid private Runtime URL")
 	}
-	return &Client{base: "https://" + u.Host, http: &http.Client{Transport: &http.Transport{TLSClientConfig: certs}, Timeout: 85 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{base: "https://" + u.Host, http: &http.Client{Transport: &http.Transport{TLSClientConfig: certs}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 // Query the durable execution before submitting or resuming it on the same owner.
 func (c *Client) Execute(ctx context.Context, b Binding) (Result, error) {
+	if b.ExecuteBeforeMS <= 0 {
+		return Result{}, errors.New("missing native execution deadline")
+	}
+	stop := time.UnixMilli(b.ExecuteBeforeMS)
+	if latest := time.Now().Add(NativeTurnLimit); stop.After(latest) {
+		stop = latest
+		b.ExecuteBeforeMS = stop.UnixMilli()
+	}
+	ctx, cancel := context.WithDeadline(ctx, stop.Add(10*time.Second))
+	defer cancel()
 	endpoint := c.base + "/works/" + url.PathEscape(b.Work)
 	query, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
@@ -94,6 +112,9 @@ func (c *Client) Execute(ctx context.Context, b Binding) (Result, error) {
 	if resp.StatusCode != 404 && resp.StatusCode != 202 {
 		return Result{}, errors.New("runtime status unavailable")
 	}
+	if !time.Now().Before(stop) {
+		return Result{}, context.DeadlineExceeded
+	}
 	payload, _ := json.Marshal(b)
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
 	if err != nil {
@@ -103,6 +124,16 @@ func (c *Client) Execute(ctx context.Context, b Binding) (Result, error) {
 	resp, err = c.http.Do(req)
 	if err != nil {
 		return Result{}, err
+	}
+	if resp.StatusCode == http.StatusConflict {
+		defer resp.Body.Close()
+		var conflict struct {
+			Error string `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&conflict) == nil && conflict.Error == "immutable_work_binding" {
+			return Result{}, ErrWorkBindingConflict
+		}
+		return Result{}, errors.New("runtime owner or generation conflict")
 	}
 	return decode(resp)
 }
@@ -123,6 +154,8 @@ func decode(resp *http.Response) (Result, error) {
 }
 
 func (c *Client) Plan(ctx context.Context, input routing.PlanRequest) (routing.Plan, error) {
+	ctx, cancel := context.WithTimeout(ctx, 85*time.Second)
+	defer cancel()
 	var out routing.Plan
 	b, _ := json.Marshal(map[string]any{"request": input, "catalog": routing.PlanningCatalog(), "server_fields": routing.ServerFields()})
 	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/intent", bytes.NewReader(b))

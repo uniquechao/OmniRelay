@@ -44,7 +44,7 @@ def legacy_personas(root):
 
 
 @contextmanager
-def open_instance(root: Path, agent_id: str, template: Path, *, role, config_version, persona,
+def open_instance(root: Path, agent_id: str, template: Path, *, role, config_version, persona, timeout_seconds,
                   base_url: str, api_key: str, model: str, patches, tool_env):
     """Load a registered Agent on its owner. The caller supplies trusted paths."""
     if not re.fullmatch(r"[0-9a-f]{64}", agent_id):
@@ -78,7 +78,7 @@ def open_instance(root: Path, agent_id: str, template: Path, *, role, config_ver
             cwd=str(directory / "workspace"), dsh_home=str(directory / "home"),
             patches=patches, env={**(tool_env or {}), "DSH_SYSTEM_PROMPT": prompt},
             base_url=base_url, api_key=api_key, model=model,
-            initialize_timeout_seconds=15, request_timeout_seconds=60,
+            initialize_timeout_seconds=min(15, timeout_seconds), request_timeout_seconds=timeout_seconds,
         ) as harness:
             with tempfile.NamedTemporaryFile("w", dir=directory, encoding="utf-8", delete=False) as f:
                 json.dump(applied, f)
