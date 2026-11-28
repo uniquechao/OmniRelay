@@ -69,6 +69,10 @@ func failureLines(ctx context.Context, tx pgx.Tx, id string, result dsh.Result, 
 	for _, f := range failed {
 		confirmed = append(confirmed, dsh.FailedWrite{Slot: f.Slot, Tool: f.Tool, Status: f.Status})
 		reason := map[int]string{400: "参数不符合要求", 403: "动作、权限或目标不匹配", 409: "对象版本或回执冲突"}[f.Status]
+		if f.Tool == "briefing_save" {
+			lines = append(lines, fmt.Sprintf("简报未保存（%d，%s）。", f.Status, reason))
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("操作 %d · %s %s · 未提交（%d，%s）", f.Slot, f.Tool, f.Target, f.Status, reason))
 	}
 	if result.Kind != "" && !reconcile && !slices.Equal(confirmed, result.FailedWrites) {

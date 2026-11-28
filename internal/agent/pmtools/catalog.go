@@ -24,12 +24,12 @@ var catalog = []Tool{
 	{"member_candidates", "按姓名或账号搜索可添加的启用账号", "project.settings", false, false, "q page"},
 	{"member_remove", "按会籍版本移除项目成员", "project.settings", true, false, "!account_id !generation"},
 	{"chat_list", "列出本人可见的绑定群和主群版本", "project.read", false, true, "candidate_chat_id"},
-	{"chat_search_messages", "在本项目已绑定且本人可见的群搜索消息", "project.read", false, true, "!chat_id !q"},
+	{"chat_search_messages", "检索本人可见的已绑定项目群。传关键词 q 或完整 date_from、date_to（YYYY-MM-DD，含首尾业务日），两者可组合。按项目时区过滤已索引消息，返回群、消息 ID、时间、发言人和命中片段。has_more 为真时继续翻页", "project.read", false, true, "!chat_id q date_from date_to business_timezone page"},
 	{"chat_bind", "绑定已获来源授权且尚未归属其他项目的群", "project.settings", true, false, "!chat_id !expected_version"},
 	{"chat_unbind", "按绑定版本解绑本项目群", "project.settings", true, false, "!chat_id !expected_version"},
 	{"chat_set_primary", "按绑定版本和主群版本指定项目主群", "project.settings", true, false, "!chat_id !expected_version !primary_version"},
-	{"file_search", "搜索本人有来源读权的项目文件，返回引用和元数据", "project.read", false, true, "q page"},
-	{"file_get", "用 file_ref 读取可见文件引用、已同步的正文片段和修订，核对引用依据", "project.read", false, true, "!file_ref page"},
+	{"file_search", "按关键词、category=minutes 或业务日期搜索可读项目资料。本地纪要按来源登记时间，飞书文件按分享时间。返回 file_ref 和元数据", "project.read", false, true, "q page category date_from date_to business_timezone"},
+	{"file_get", "用 file_ref 读取可见文件引用、已同步的正文片段和修订，核对引用依据", "project.read", false, true, "!file_ref page date_from date_to business_timezone"},
 	{"meeting_mark", "将 file_search 返回的飞书文档或文件标记为当前项目的会议纪要，重复标记不会创建副本", "project.assign", true, false, "!file_ref"},
 	{"task_search", "按关键词、状态、负责人搜索当前项目的任务", "project.read", false, false, "q status owner_member_id page"},
 	{"task_get", "取得项目任务及当前版本", "project.read", false, false, "!task_id"},
@@ -63,7 +63,8 @@ var catalog = []Tool{
 	{"task_source_tasks", "按可读来源列出关联任务，消息来源须提供 chat_id", "project.read", false, true, "!source_kind !source_id chat_id"},
 	{"task_business_time", "查询看板业务时区及当前业务日期", "project.read", false, false, ""},
 	{"task_board_timezone", "按看板版本设置业务时区", "project.settings", true, false, "!expected_board_version !business_timezone"},
-	{"briefing_get", "按 YYYY-MM-DD 读取项目共享简报正文和版本，version 为 0 表示当天尚未撰写", "project.read", false, false, "!business_date"},
+	{"briefing_list", "发现已撰写并保存的项目共享简报，按业务日期倒序列出每天的当前版本，可按日期区间、关键词和页码筛选；使用 briefing_get 读正文。期间查询附全项目近期成稿目录，跨期目录只含日期、标题、版本。发布记录另用 daily_report_query", "project.read", false, false, "date_from date_to q page view"},
+	{"briefing_get", "按 YYYY-MM-DD 读取项目共享简报正文和版本。version 为 0 表示当天尚未撰写；期间外归档目标只返回版本，用于核对保存条件", "project.read", false, false, "!business_date view"},
 	{"briefing_save", "按 YYYY-MM-DD 保存项目全体成员可见的简报标题和正文。先用 briefing_get 读取版本，首次创建传 expected_version=0，版本冲突时重新读取", "project.settings", true, false, "!business_date !title !body !expected_version"},
 	{"daily_report_query", "按日期范围查授权日报，source 可选 reports 或 published。published 只查已发布且本人仍能查看的简报", "project.read", false, true, "source date_from date_to q page"},
 }
@@ -95,6 +96,30 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+func (t Tool) FieldNames() []string {
+	fields := strings.Fields(t.fields)
+	for i, f := range fields {
+		fields[i] = strings.TrimPrefix(f, "!")
+	}
+	return fields
+}
+func (t Tool) HasField(k string) bool {
+	for _, f := range strings.Fields(t.fields) {
+		if strings.TrimPrefix(f, "!") == k {
+			return true
+		}
+	}
+	return false
+}
+func (t Tool) RequiredFields() []string {
+	var out []string
+	for _, f := range strings.Fields(t.fields) {
+		if strings.HasPrefix(f, "!") {
+			out = append(out, f[1:])
+		}
+	}
+	return out
 }
 func (t Tool) Validate(a Args) error {
 	if a == nil {

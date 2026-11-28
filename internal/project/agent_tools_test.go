@@ -123,6 +123,61 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	check("chat_list", "reader", "{}", "oc")
 	check("chat_search_messages", "reader", `{"chat_id":"oc","q":"验收"}`, "验收记录")
 	call(t, "member", "chat_search_messages", `{"chat_id":"oc","q":"验收"}`, 403)
+	t.Run("bounded group evidence", func(t *testing.T) {
+		sql(`INSERT INTO feishu_chat_messages(tenant_key,app_id,chat_id,message_id,sent_at,updated_at,sender_name,search_text)
+			SELECT 'tenant','app', 'oc',id,sent,sent,'林工',txt FROM (VALUES
+			('before',timestamptz '2026-03-01 15:59:59Z','周测之前'),
+			('start',timestamptz '2026-03-01 16:00:00Z',repeat('前',600)||'周测开始'),
+			('end',timestamptz '2026-03-08 15:59:59Z','周测结束'),
+			('other-term',timestamptz '2026-03-04 00:00:00Z','文档复核'),
+			('after',timestamptz '2026-03-08 16:00:00Z','周测之后')) x(id,sent,txt);
+			INSERT INTO feishu_chat_sync(tenant_key,app_id,chat_id,thread_id,source_blocked) VALUES('tenant','app','oc','hidden',true);
+			INSERT INTO feishu_chat_messages(tenant_key,app_id,chat_id,message_id,sent_at,updated_at,thread_id,search_text) VALUES
+			('tenant','app','oc','hidden','2026-03-06','2026-03-06','hidden','周测隐藏'),
+			('tenant','app','else','else-msg','2026-03-06','2026-03-06','','周测其他项目');
+			INSERT INTO feishu_chat_messages(tenant_key,app_id,chat_id,message_id,sent_at,updated_at,deleted) VALUES
+			('tenant','app','oc','recalled','2026-03-06','2026-03-06',true)`)
+		const dates = `"date_from":"2026-03-02","date_to":"2026-03-08"`
+		search := func(extra string) string {
+			return call(t, "reader", "chat_search_messages", `{"chat_id":"oc",`+dates+extra+`}`, 200)
+		}
+		filtered := search(`,"q":"周测"`)
+		for _, field := range []string{`"chat_id":"oc"`, `"q":"周测"`, `"business_timezone":"Asia/Shanghai"`, `"date_from":"2026-03-02"`, `"date_to":"2026-03-08"`, `"sender_name":"林工"`, `"sent_at":"2026-03-02T00:00:00+08:00"`, `"updated_at":"2026-03-08T23:59:59+08:00"`, "周测开始", "周测结束", `"truncated":true`, `"has_more":false`} {
+			if !strings.Contains(filtered, field) {
+				t.Fatalf("missing %q in %s", field, filtered)
+			}
+		}
+		for _, blocked := range []string{"before", "after", "other-term", "hidden", "recalled", "else-msg"} {
+			if strings.Contains(filtered, `"id":"`+blocked+`"`) {
+				t.Fatal(filtered)
+			}
+		}
+		if got := search(""); !strings.Contains(got, "文档复核") || strings.Contains(got, "recalled") {
+			t.Fatal(got)
+		}
+		call(t, "reader", "chat_search_messages", `{"chat_id":"oc"}`, 400)
+		call(t, "reader", "chat_search_messages", `{"chat_id":"oc","date_from":"2026-03-02"}`, 400)
+		call(t, "reader", "chat_search_messages", `{"chat_id":"oc","date_from":"2026-03-09","date_to":"2026-03-08","q":"x"}`, 400)
+		call(t, "reader", "chat_search_messages", `{"chat_id":"oc","q":"x","date_to":"2026-02-30"}`, 400)
+		call(t, "reader", "chat_search_messages", `{"chat_id":"else","q":"周测"}`, 403)
+		sql(`INSERT INTO feishu_chat_messages(tenant_key,app_id,chat_id,message_id,sent_at,updated_at,search_text)
+			SELECT 'tenant','app','oc','page-'||n,'2026-03-03','2026-03-03','翻页' FROM generate_series(1,26) n`)
+		if first, next := search(`,"q":"翻页"`), search(`,"q":"翻页","page":2`); strings.Count(first, `"sent_at"`) != 25 || !strings.Contains(first, `"has_more":true`) || strings.Count(next, `"sent_at"`) != 1 || !strings.Contains(next, `"has_more":false`) {
+			t.Fatal(first, next)
+		}
+		// In New York the fall-back day extends across 25 hours.
+		sql(`INSERT INTO project_task_boards(tenant_key,app_id,project_id,business_timezone) VALUES('tenant','app','north','America/New_York')
+			ON CONFLICT (tenant_key,app_id,project_id) DO UPDATE SET business_timezone=EXCLUDED.business_timezone;
+			INSERT INTO feishu_chat_messages(tenant_key,app_id,chat_id,message_id,sent_at,updated_at,search_text) VALUES
+			('tenant','app','oc','dst-first','2025-11-02 04:00Z','2025-11-02 04:00Z','夏令验收'),
+			('tenant','app','oc','dst-last','2025-11-03 04:59:59Z','2025-11-03 04:59:59Z','夏令验收'),
+			('tenant','app','oc','dst-next','2025-11-03 05:00Z','2025-11-03 05:00Z','夏令验收')`)
+		got := call(t, "reader", "chat_search_messages", `{"chat_id":"oc","date_from":"2025-11-02","date_to":"2025-11-02","q":"夏令"}`, 200)
+		if !strings.Contains(got, "America/New_York") || !strings.Contains(got, "2025-11-02T00:00:00-04:00") || !strings.Contains(got, "2025-11-02T23:59:59-05:00") || strings.Contains(got, "dst-next") {
+			t.Fatal(got)
+		}
+		sql(`UPDATE project_task_boards SET business_timezone='Asia/Shanghai' WHERE project_id='north'`)
+	})
 	if got := call(t, "member", "chat_list", "{}", 200); strings.Contains(got, `"oc"`) {
 		t.Fatal(got)
 	}
@@ -132,7 +187,7 @@ func TestProjectPMToolMatrix(t *testing.T) {
  VALUES('tenant','app','north','2026-11-01','published','manager','oc',1,'local:test',2);
  INSERT INTO feishu_send_operations(tenant_key,app_id,operation_key,account_id,chat_id,generation,fingerprint,business_receipt) VALUES('tenant','app','briefing:published','manager','oc',1,'x','{}');
  INSERT INTO feishu_send_parts(tenant_key,app_id,operation_key,position,kind,state,attempted,message_id) VALUES('tenant','app','briefing:published',0,'text','success',true,'msg')`)
-	if got := call(t, "reader", "daily_report_query", `{"source":"published"}`, 200); !strings.Contains(got, "visible_submissions") {
+	if got := call(t, "reader", "daily_report_query", `{"source":"published"}`, 200); !strings.Contains(got, "visible_submissions") || !strings.Contains(got, `"message_id":"msg"`) || !strings.Contains(got, `"run_id":"published"`) {
 		t.Fatal(got)
 	}
 	if got := call(t, "member", "daily_report_query", `{"source":"published"}`, 200); strings.Contains(got, "visible_submissions") {
@@ -192,6 +247,25 @@ func TestProjectPMToolMatrix(t *testing.T) {
 		t.Fatal(got)
 	}
 	call(t, "reader", "briefing_get", `{"business_date":"2026-02-30"}`, 400)
+	call(t, "manager", "briefing_save", `{"business_date":"2026-11-22","title":"上一期","body":"第一周总结","expected_version":0}`, 200)
+	sql(`INSERT INTO project_daily_briefs(tenant_key,app_id,project_id,business_date,title,body,updated_by,version)
+		VALUES('tenant','app','south','2026-11-23','其他项目','不可见','manager',1)`)
+	list := check("briefing_list", "member", `{"date_from":"2026-11-01","date_to":"2026-11-23"}`, `"source":"authored"`)
+	if !strings.Contains(list, `"total":2`) || !strings.Contains(list, `"version":2`) || strings.Index(list, "修订版") < 0 || strings.Index(list, "上一期") <= strings.Index(list, "修订版") || strings.Contains(list, "其他项目") || strings.Contains(list, "published") || strings.Contains(list, "第一版") {
+		t.Fatal(list)
+	}
+	for input, want := range map[string]string{
+		`{"date_from":"2026-11-22","date_to":"2026-11-22"}`: "上一期",
+		`{"q":"跨成员可读"}`:                                     `"total":1`,
+		`{"date_from":"2026-11-01","date_to":"2026-11-01"}`: `"total":0`,
+		`{"page":2}`: `"items":[]`,
+	} {
+		if got := call(t, "reader", "briefing_list", input, 200); !strings.Contains(got, want) {
+			t.Fatal(input, got)
+		}
+	}
+	call(t, "reader", "briefing_list", `{"date_to":"2026-02-30"}`, 400)
+	call(t, "reader", "briefing_list", `{"date_from":"2026-11-23","date_to":"2026-11-22"}`, 400)
 	if got := call(t, "manager", "file_search", "{}", 200); strings.Contains(got, "私有") {
 		t.Fatal(got)
 	}
@@ -292,6 +366,27 @@ func TestProjectPMToolMatrix(t *testing.T) {
 	sql("INSERT INTO project_source_readers VALUES('tenant','app','north','document','doc','manager')")
 	check("task_actions", "reader", encode(map[string]any{"task_id": id}), "delete")
 	check("task_business_time", "reader", "{}", "business_date")
+	t.Run("business date evidence survives a later clock read", func(t *testing.T) {
+		actor := identity.Principal{TenantKey: "tenant", AppID: "app", AccountID: "reader", OpenID: "ou_reader"}
+		if err := roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
+			args := pmtools.Args{}
+			value, err := svc.RunTool(ctx, tx, actor, "north", "task_business_time", args)
+			if err != nil {
+				return err
+			}
+			reads, err := ToolReadRecords("task_business_time", args, value)
+			if err != nil {
+				return err
+			}
+			proof, err := svc.RecheckToolRead(ctx, tx, actor, "north", reads[0].Name, args)
+			if err == nil && (encode(proof) != encode(reads[0].Value) || !strings.Contains(encode(proof), "Asia/Shanghai")) {
+				t.Fatalf("different business dates: %v / %v", proof, reads[0].Value)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	check("task_board_timezone", "manager", encode(map[string]any{"expected_board_version": boardVersion(), "business_timezone": "UTC"}), "UTC")
 	check("task_milestone_create", "manager", encode(map[string]any{"title": "工具节点", "task_id": id}), "id")
 	check("task_milestone_list", "reader", "{}", "工具节点")

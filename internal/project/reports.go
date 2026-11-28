@@ -27,6 +27,10 @@ func validReportDate(value string) bool {
 	return err == nil && day.Year() > 0 && day.Format(time.DateOnly) == value
 }
 
+func validReportRange(from, to string) bool {
+	return (from == "" || validReportDate(from)) && (to == "" || validReportDate(to)) && (from == "" || to == "" || from <= to)
+}
+
 // Build one authorized report relation for the list and the briefing snapshot.
 const authorizedReports = ` FROM project_member_reports r
 	JOIN project_members m USING (tenant_key,app_id,project_id,account_id)
@@ -40,7 +44,7 @@ const authorizedReports = ` FROM project_member_reports r
 const reportRevision = `md5(coalesce(string_agg(jsonb_build_array(r.account_id,r.work_date,r.version)::text,',' ORDER BY r.work_date,r.account_id),''))`
 
 func (s *Service) reportArgs(ctx context.Context, actor identity.Principal, id, from, to, search string) ([]any, bool, error) {
-	if (from != "" && !validReportDate(from)) || (to != "" && !validReportDate(to)) || (from != "" && to != "" && from > to) {
+	if !validReportRange(from, to) {
 		return nil, false, errInput
 	}
 	manage, err := s.allowed(ctx, actor, "project.settings", id)

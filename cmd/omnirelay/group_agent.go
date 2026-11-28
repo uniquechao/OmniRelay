@@ -38,7 +38,7 @@ func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, s
 	}
 	u, _ := url.Parse(endpoint)
 	connections.RuntimeReadiness = client.Readiness
-	svc := &group.Service{DB: pool, Roles: roles, Projects: projects, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), Execute: client.Execute, Channels: map[string]group.Channel{}}
+	svc := &group.Service{DB: pool, Roles: roles, Projects: projects, Tenant: cfg.tenantKey, App: cfg.appID, Owner: u.Hostname(), PlanIntent: client.Plan, Execute: client.Execute, Channels: map[string]group.Channel{}}
 	svc.RegisterWorkbench(mux, identities.AuthenticateWorkbench)
 	svc.ReadThread = chats.AgentThread
 	if os.Getenv("OMNIRELAY_AGENT_FEISHU_ENABLED") != "0" && cfg.botSendEnabled && cfg.appSecret != "" {

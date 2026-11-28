@@ -132,7 +132,7 @@ func (s *Service) sourcePanel(ctx context.Context, actor identity.Principal, id,
 		return panelView{}, err
 	}
 	items = append(items, local...)
-	if panel == "meetings" {
+	if panel == "meetings" || panel == "agent_files" {
 		marks, err := scope(actor, id).meetingFiles(ctx, s.reader())
 		if err != nil {
 			return panelView{}, err

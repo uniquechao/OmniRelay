@@ -1,6 +1,7 @@
 package project
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/identity"
@@ -149,15 +150,19 @@ func (s *Service) boardTagCommand(w http.ResponseWriter, r *http.Request, a iden
 
 func (s *Service) businessTime(_ http.ResponseWriter, r *http.Request, a identity.Principal) (any, error) {
 	k := scope(a, r.PathValue("projectID"))
-	var zone string
-	err := s.pool.QueryRow(r.Context(), "SELECT coalesce((SELECT business_timezone FROM project_task_boards WHERE "+projectWhere+"),'Asia/Shanghai')", k.args()...).Scan(&zone)
-	if err != nil {
-		return nil, err
-	}
-	loc, err := time.LoadLocation(zone)
+	loc, err := k.businessLocation(r.Context(), s.pool)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().In(loc)
-	return map[string]any{"project_id": k.project, "timezone": zone, "business_today": now.Format(time.DateOnly), "business_timezone": zone, "business_date": now.Format(time.DateOnly), "now": now}, nil
+	return map[string]any{"project_id": k.project, "timezone": loc.String(), "business_today": now.Format(time.DateOnly), "business_timezone": loc.String(), "business_date": now.Format(time.DateOnly), "now": now}, nil
+}
+
+func (k taskScope) businessLocation(ctx context.Context, db taskReader) (*time.Location, error) {
+	var zone string
+	err := db.QueryRow(ctx, "SELECT coalesce((SELECT business_timezone FROM project_task_boards WHERE "+projectWhere+"),'Asia/Shanghai')", k.args()...).Scan(&zone)
+	if err != nil {
+		return nil, err
+	}
+	return time.LoadLocation(zone)
 }

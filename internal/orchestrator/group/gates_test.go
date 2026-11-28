@@ -64,7 +64,7 @@ func newGate(t *testing.T) *gate {
 	}
 	roles := access.New(db, "tenant", "app")
 	roles.ProjectAccess = access.LocalProjects{Pool: db}
-	g := &gate{Service: &Service{DB: db, Roles: roles, Projects: project.New(db, roles, nil, nil, nil, false), Tenant: "tenant", App: "app", Owner: "localhost"}, t: t, ctx: ctx, version: 1}
+	g := &gate{Service: &Service{DB: db, Roles: roles, PlanIntent: fixturePlan, Projects: project.New(db, roles, nil, nil, nil, false), Tenant: "tenant", App: "app", Owner: "localhost"}, t: t, ctx: ctx, version: 1}
 	g.Channels = map[string]Channel{"internal": {Resolve: func(_ context.Context, _ pgx.Tx, e Envelope) (Assignment, error) {
 		if e.Mode == PrivateReply {
 			if e.Chat != "dm-"+e.Account {
@@ -209,6 +209,7 @@ func openImageGate(t *testing.T) (*gate, *dsh.Client, *tls.Config, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.PlanIntent = client.Plan
 	g.Execute = client.Execute
 	return g, client, certs, dir
 }

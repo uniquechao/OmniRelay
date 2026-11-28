@@ -274,13 +274,24 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 		}
 		return s.visibleChats(ctx, actor, k.project)
 	case "chat_search_messages":
+		from, to := a.String("date_from"), a.String("date_to")
+		term := strings.TrimSpace(a.String("q"))
+		if !validReportRange(from, to) || len([]rune(term)) > 200 || (term == "" && (from == "" || to == "")) {
+			return nil, errInput
+		}
 		reader, ok := s.chat.(interface {
-			SearchProjectMessages(context.Context, pgx.Tx, identity.Principal, string, string, string) (any, error)
+			SearchProjectMessages(context.Context, pgx.Tx, identity.Principal, string, string, chat.ProjectMessageSearch) (any, error)
 		})
 		if !ok {
 			return nil, errUnavailable
 		}
-		return reader.SearchProjectMessages(ctx, tx, actor, k.project, a.String("chat_id"), a.String("q"))
+		loc, err := k.toolReadLocation(ctx, tx, a)
+		if err != nil {
+			return nil, err
+		}
+		return reader.SearchProjectMessages(ctx, tx, actor, k.project, a.String("chat_id"), chat.ProjectMessageSearch{
+			Query: term, DateFrom: from, DateTo: to, Location: loc, Page: page,
+		})
 	case "chat_bind", "chat_unbind", "chat_set_primary":
 		id := a.String("chat_id")
 		link, err := assignment(ctx, tx, actor, id)
@@ -301,6 +312,12 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 	case "meeting_mark":
 		return s.markMeetingFile(ctx, k, actor, a.String("file_ref"))
 	case "file_search", "file_get":
+		if err := k.fileReadRange(ctx, tx, q, a); err != nil {
+			return nil, err
+		}
+		if category := a.String("category"); category != "" {
+			q.Set("category", category)
+		}
 		if name == "file_get" {
 			q.Del("page")
 			q.Set("file_ref", a.String("file_ref"))
@@ -344,8 +361,28 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 			return map[string]any{"file": item, "excerpt": excerpt, "revision": revision, "page": page, "pages": pages, "state": state}, err
 		}
 		return view, nil
+	case "briefing_list":
+		switch a.String("view") {
+		case "", "period_with_directory":
+		default:
+			return nil, errInput
+		}
+		return k.authoredBriefs(ctx, tx, a.String("date_from"), a.String("date_to"), a.String("q"), page, a.String("view") == "period_with_directory")
 	case "briefing_get":
-		return k.dailyBrief(ctx, tx, a.String("business_date"))
+		day := a.String("business_date")
+		switch a.String("view") {
+		case "":
+			return k.dailyBrief(ctx, tx, day)
+		case "version":
+			if !validReportDate(day) {
+				return nil, errInput
+			}
+			var stored int64
+			err := tx.QueryRow(ctx, "SELECT coalesce(max(version),0) FROM project_daily_briefs WHERE "+projectWhere+" AND business_date=$4::text::date", k.args(day)...).Scan(&stored)
+			return map[string]any{"business_date": day, "version": stored, "view": "version"}, err
+		default:
+			return nil, errInput
+		}
 	case "briefing_save":
 		return k.saveDailyBrief(ctx, tx, actor, a.String("business_date"), a.String("title"), a.String("body"), version)
 	case "daily_report_query":
@@ -430,7 +467,7 @@ func (s *Service) executeTool(ctx context.Context, k taskScope, actor identity.P
 // private note, or a receipt whose source has been withdrawn is never sufficient.
 func (s *Service) publishedToolReports(ctx context.Context, k taskScope, actor identity.Principal, q url.Values) (any, error) {
 	from, to := q.Get("date_from"), q.Get("date_to")
-	if from != "" && !validReportDate(from) || to != "" && !validReportDate(to) || from != "" && to != "" && from > to {
+	if !validReportRange(from, to) {
 		return nil, errInput
 	}
 	empty := map[string]any{"items": []any{}}
@@ -450,7 +487,8 @@ func (s *Service) publishedToolReports(ctx context.Context, k taskScope, actor i
 		return nil, err
 	}
 	page, _ := strconv.Atoi(q.Get("page"))
-	rows, err := s.mutation.Query(ctx, `SELECT jsonb_build_object('source','published','business_date',r.business_date,'visible_submissions',r.visible_submissions,'chat_id',r.target_chat_id)
+	rows, err := s.mutation.Query(ctx, `SELECT jsonb_build_object('source','published','business_date',r.business_date,'visible_submissions',r.visible_submissions,
+ 'run_id',r.id,'chat_id',r.target_chat_id,'message_id',m.message_id,'sent_at',m.sent_at)
  FROM project_briefing_runs r JOIN feishu_send_operations o ON (o.tenant_key,o.app_id,o.account_id,o.chat_id,o.operation_key)=(r.tenant_key,r.app_id,r.account_id,r.target_chat_id,'briefing:'||r.id)
  JOIN feishu_send_parts p ON (p.tenant_key,p.app_id,p.operation_key)=(o.tenant_key,o.app_id,o.operation_key)
  JOIN feishu_chat_messages m ON (m.tenant_key,m.app_id,m.chat_id,m.message_id)=(o.tenant_key,o.app_id,o.chat_id,p.message_id)
@@ -473,4 +511,38 @@ func fileRef(item sourceSummary) string {
 		return fmt.Sprintf("drive:%d", item.FileID)
 	}
 	return item.Kind + ":" + strings.TrimSpace(item.RefID)
+}
+
+func (k taskScope) toolReadLocation(ctx context.Context, tx pgx.Tx, a pmtools.Args) (*time.Location, error) {
+	if zone := a.String("business_timezone"); zone != "" {
+		loc, err := time.LoadLocation(zone)
+		if zone == "Local" || err != nil {
+			return nil, errInput
+		}
+		return loc, nil
+	}
+	return k.businessLocation(ctx, tx)
+}
+
+func (k taskScope) fileReadRange(ctx context.Context, tx pgx.Tx, q url.Values, a pmtools.Args) error {
+	from, to := a.String("date_from"), a.String("date_to")
+	if from == "" && to == "" {
+		return nil
+	}
+	if !validReportRange(from, to) {
+		return errInput
+	}
+	loc, err := k.toolReadLocation(ctx, tx, a)
+	if err != nil {
+		return err
+	}
+	if from != "" {
+		start, _ := time.ParseInLocation(time.DateOnly, from, loc)
+		q.Set("created_from", start.Format(time.RFC3339))
+	}
+	if to != "" {
+		end, _ := time.ParseInLocation(time.DateOnly, to, loc)
+		q.Set("created_before", end.AddDate(0, 0, 1).Format(time.RFC3339))
+	}
+	return nil
 }

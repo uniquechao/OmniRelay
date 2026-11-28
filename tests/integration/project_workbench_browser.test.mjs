@@ -197,6 +197,8 @@ test('真实数据库运行记录展示逐槽位失败', {skip:!moduleName||!pro
   await page.getByLabel('工作编号').fill(process.env.OMNIRELAY_RUNS_WORK);
   await page.getByRole('button',{name:'查询',exact:true}).click();
   await page.getByText('部分成功 · 1 条未提交',{exact:true}).waitFor();
+  const brief=page.getByRole('link',{name:'查看 2026-11-28 简报'});
+  assert.equal(await brief.getAttribute('href'),'/#/projects/north/reports/brief/2026-11-28');
   const failures=page.getByRole('list',{name:'未提交的操作'});
   assert.deepEqual(await failures.getByRole('listitem').allTextContents(),['槽位 2 · task_update · 403 无权限']);
   assert.doesNotMatch(await page.locator('main').innerText(),/private-|sensitive-hash/);
@@ -214,7 +216,7 @@ test('工作台全局 Agent 管理和本人运行记录', {skip:!moduleName}, as
     return route.fulfill({json:{can_edit:true,available_tools:[],config:{role,name:role==='query'?'资料助手':'协调助手',enabled:true,tools:[],persona:'',version:2,applied_version:1,failed_version:2}}});
   });
   await page.route(origin+'/api/v1/agent-runs*',route=>route.fulfill({json:{items:[{
-    id:'work-search',project:'p-21',state:'unknown',mode:'group_reply',writes:1,delivery_id:'local-receipt',platform_id:'',
+    id:'work-search',project:'p-21',state:'unknown',mode:'group_reply',writes:1,write_requested:true,briefs:[],delivery_id:'local-receipt',platform_id:'',
     intent:'project',parent_work:'parent-work',channel:'feishu',source_id:'original-feishu',turn:1,reason:'receipt_unknown',task_codes:['LDX-T002'],
     write_failures:[{slot:2,tool:'task_update',status:409}]
   }]}}));

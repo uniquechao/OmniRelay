@@ -33,6 +33,13 @@ func fileReferenceValue(result map[string]any) map[string]any {
 	return map[string]any{"file": item, "excerpt": result["excerpt"]}
 }
 
+// Relative reporting periods depend on the business date and timezone. The
+// current instant advances between a tool call and its delivery check.
+func businessDateProof(value any) any {
+	clock := value.(map[string]any)
+	return []any{clock["business_date"], clock["business_timezone"]}
+}
+
 func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, error) {
 	var out []ToolRead
 	add := func(tool, id string, proof any) {
@@ -40,6 +47,8 @@ func ToolReadRecords(name string, args pmtools.Args, value any) ([]ToolRead, err
 		out = append(out, ToolRead{tool, pmtools.Args{"id": key}, proof})
 	}
 	switch name {
+	case "task_business_time":
+		return []ToolRead{{name, args, businessDateProof(value)}}, nil
 	case "file_get":
 		result := value.(map[string]any)
 		if result["state"] != "ready" {
@@ -77,7 +86,11 @@ func (s *Service) RecheckToolRead(ctx context.Context, tx pgx.Tx, actor identity
 		return fileReferenceValue(result.(map[string]any)), nil
 	}
 	if name != candidateRead && name != feedbackRead {
-		return s.RunTool(ctx, tx, actor, projectID, name, args)
+		value, err := s.RunTool(ctx, tx, actor, projectID, name, args)
+		if err == nil && name == "task_business_time" {
+			return businessDateProof(value), nil
+		}
+		return value, err
 	}
 	allowed, err := s.roles.CheckInOrganizationMutation(ctx, tx, actor, "project.read", projectID)
 	if err != nil {

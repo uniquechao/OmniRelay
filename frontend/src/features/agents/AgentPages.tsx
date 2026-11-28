@@ -4,6 +4,7 @@ import { errorStatus } from '../../api/session-client'
 import { z } from '../../api/validation'
 import { Button } from '../../ui/components/Elements'
 import type { ProjectRequest } from '../projects/project-contracts'
+import { briefReceipts, BriefReceiptLinks } from '../projects/BriefReceiptLinks'
 import './agents.css'
 
 const configSchema = z.object({
@@ -318,6 +319,8 @@ const runsSchema = z.object({
       state: z.string(),
       mode: z.string(),
       writes: z.number().int(),
+      write_requested: z.boolean(),
+      briefs: briefReceipts,
       delivery_id: z.string(),
       platform_id: z.string(),
       intent: z.enum(['project', 'admin', 'knowledge']),
@@ -343,7 +346,7 @@ const stateNames: Record<string, string> = {
   running: '执行中',
   ready: '待交付',
   sending: '投递中',
-  sent: '已交付',
+  sent: '回复已送达',
   unknown: '回执未知',
   suppressed: '已抑制',
   expired: '已过期',
@@ -421,7 +424,9 @@ export function AgentRuns() {
                   <dd>{item.turn || '尚未绑定'}</dd>
                   <dt>已提交的业务写入</dt>
                   <dd>
-                    {item.writes} 条 {item.task_codes.join('、')}
+                    {item.writes === 0 && item.write_requested ? '尚无业务写入回执' : item.writes + ' 条'}
+                    {' ' + item.task_codes.join('、')}
+                    <BriefReceiptLinks project={item.project} receipts={item.briefs} />
                   </dd>
                   {item.write_failures.length > 0 && (
                     <>

@@ -14,7 +14,7 @@ task_tag_create task_tag_update task_tag_delete task_activity_list task_evidence
 task_feedback_submit task_feedback_review task_candidate_sources task_candidate_chat_sources
 task_candidate_submit task_candidate_list task_candidate_review task_actions task_milestone_list
 task_milestone_create task_evidence_link task_source_tasks task_business_time task_board_timezone
-briefing_get briefing_save daily_report_query
+briefing_list briefing_get briefing_save daily_report_query
 """.split())
 
 class Model(BaseHTTPRequestHandler):
@@ -23,6 +23,49 @@ class Model(BaseHTTPRequestHandler):
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        output = req.get("tool_choice", {}).get("name") if isinstance(req.get("tool_choice"), dict) else None
+        if output in {"classify_request", "report_plan"}:
+            declared = req.get("tools", [])
+            if (len(declared) != 1 or declared[0]["name"] != output or len(req["messages"]) != 1
+                    or req.get("thinking") != {"type":"disabled"} or req.get("temperature") != 0):
+                return self.send_error(400, "non-isolated or unstructured planner")
+            original = req["messages"][0]["content"]
+            if output == "classify_request":
+                write_fixtures = ("ROLE_DENIED_GATE", "ROLE_DELEGATE_GATE", "ROLE_RECEIPT_GATE", "PM_GATE_CREATE", "ROLE_PARTIAL_GATE")
+                route = "admin" if any(mark in original for mark in ("ROLE_LIST_GATE","ROLE_PROGRESS_GATE","ROLE_DELEGATE_GATE","ROLE_DENIED_GATE")) else "project"
+                value = {"dialogue_act":"other","kind":"apply_business_change_now" if any(v in original for v in write_fixtures) else "inspect_existing_or_answer",
+                         "intent":route, "evidence_period":None}
+            else:
+                source = json.loads(original)
+                if set(source) - {"text","intent","private","displayed_proposal","project_selected"}:
+                    return self.send_error(400,"unexpected planner context")
+                text, intent = source["text"], source.get("intent","project")
+                value = {"mode":"read","actions":[]}
+                def action(tool, **fields):
+                    value["mode"]="execute"
+                    value["actions"].append({"tool":tool,"evidence":text,"fields":fields})
+                if "ROLE_DENIED_GATE" in text:
+                    action("delegate_project",project_id="locked")
+                elif "ROLE_DELEGATE_GATE" in text:
+                    if intent=="admin":
+                        action("delegate_project",project_id="北辰项目")
+                        value["actions"][0]["child_actions"]=[{"tool":"task_create","evidence":"创建任务 集成角色任务","fields":{"title":"集成角色任务"}}]
+                    else:
+                        action("task_create",title="集成角色任务")
+                elif "ROLE_RECEIPT_GATE" in text:
+                    action("task_create",title="ROLE_RECEIPT_GATE")
+                elif "PM_GATE_CREATE" in text:
+                    action("task_create",title="组内创建的验收任务")
+                elif "ROLE_PARTIAL_GATE" in text:
+                    action("task_create",title="已办事项")
+                    action("task_create",title="待澄清事项",owner_member_id="ROLE_MISSING_MEMBER")
+            body=json.dumps({"stop_reason":"tool_use","content":[{"type":"tool_use","id":"planned","name":output,"input":value}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         tools = {tool["name"] for tool in req.get("tools", [])}
         smoke = not tools and "Reply with exactly DSH_OK." in str(req["messages"][-1])
         if smoke:
@@ -44,7 +87,7 @@ class Model(BaseHTTPRequestHandler):
             content = message["content"]
             if isinstance(content, list) and any(x.get("type") == "tool_result" for x in content):
                 continue
-            question = str(content)
+            question = str(content).rsplit("当前用户提问：",1)[-1]
             break
         source_test = "ROLE_QA_GATE" in question
         list_test = "ROLE_LIST_GATE" in question

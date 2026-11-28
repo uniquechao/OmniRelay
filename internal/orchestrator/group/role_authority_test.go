@@ -5,39 +5,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/routing"
-	"net/http"
-	"strings"
-	"testing"
-	"time"
 )
 
-func TestRequestedActions(t *testing.T) {
-	for _, tc := range []struct{ request, allow, deny string }{
-		{"把接口联调建成任务，交给小李", "task_create", "task_delete"},
-		{"把「删除任务，移除成员」建成任务", "task_create", "member_remove"},
-		{"创建任务 联调", "task_create", "member_remove"},
-		{"查询我创建的任务", "", "task_create"},
-		{"查询已删除任务", "", "task_delete"},
-		{"怎么删除任务？", "", "task_delete"},
-		{"取消任务北辰", "task_transition", "task_delete"},
-		{"请列出我创建的任务", "", "task_create"},
-		{"设置项目主群", "chat_set_primary", "chat_bind"},
-		{"委派给北辰项目，创建任务 集成角色任务", "delegate_project", "task_delete"},
-	} {
-		if tc.allow != "" && len(routing.AuthorizedClauses(tc.request, tc.allow)) == 0 {
-			t.Errorf("missing %s for %s", tc.allow, tc.request)
-		}
-		if len(routing.AuthorizedClauses(tc.request, tc.deny)) > 0 {
-			t.Errorf("granted %s for %s", tc.deny, tc.request)
-		}
+func TestWorkScopesRejectFabricatedPlannerEvidence(t *testing.T) {
+	r := routing.PlanRequest{Text: "请据此整理纪要，先给我看草稿"}
+	p := routing.Plan{Intent: "project", Mode: "execute", Actions: []routing.PlannedAction{{Tool: "task_delete", Evidence: "删除任务", Fields: map[string]string{"task_id": "outside"}, Generate: []string{"change_reason"}}}}
+	if p.Validate(r) == nil {
+		t.Fatal("fabricated user evidence accepted")
+	}
+	p.Actions[0].Evidence = r.Text
+	if p.Validate(r) == nil {
+		t.Fatal("ungrounded task accepted")
+	}
+	p.Mode = "read"
+	if p.Validate(r) == nil {
+		t.Fatal("read-mode action accepted")
 	}
 }
-
 func TestWorkBoundToolsRejectWrongVerbAndTarget(t *testing.T) {
 	g := newGate(t)
 	g.projectMention("test-scope", "创建任务 校验交付")
@@ -110,6 +104,11 @@ func TestPrivateProjectContinuation(t *testing.T) {
 			t.Fatalf("accepted invalid selector: %v", err)
 		}
 	}
+	e.Thread = "another-private-topic"
+	if err = choose("alice", "south"); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("project selection crossed private topics: %v", err)
+	}
+	e.Thread = ""
 	if err = choose("alice", "south"); err != nil {
 		t.Fatal(err)
 	}

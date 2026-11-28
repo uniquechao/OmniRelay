@@ -360,7 +360,7 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 func TestProjectToolCRUDRecoveryGate(t *testing.T) {
 	g := newGate(t)
 	g.sql("UPDATE project_members SET role='manager' WHERE account_id='alice'")
-	g.projectMention("crud-recovery", "更新成员 bob 职责，创建任务重复任务样本，批量修改任务重复任务样本，取消任务重复任务样本，删除重复任务样本，提交候选并忽略候选")
+	g.projectMention("crud-recovery", "把 bob 的角色名称改为验收负责人，职责为质量验收；创建重复任务样本，截止 2026-12-01，验收条件为接口验收；批量把重复任务样本的优先级改为 P1；取消后删除这项任务；提交候选并忽略本次唯一的候选")
 	work, err := g.claim(g.ctx)
 	if err != nil {
 		t.Fatal(err)

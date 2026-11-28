@@ -48,7 +48,7 @@ func TestWorkbenchChatGate(t *testing.T) {
 	call("POST", "north", "bot-key-2", `{"text":"继续"}`, 202)
 	g.step()
 	var sessions int
-	if err := g.DB.QueryRow(g.ctx, "SELECT count(DISTINCT session_id) FROM agent_group_work WHERE mode='project_chat' AND state='sent'").Scan(&sessions); err != nil || sessions != 1 {
+	if err := g.DB.QueryRow(g.ctx, "SELECT count(DISTINCT session_id) FROM agent_group_work WHERE mode='project_chat' AND state='sent'").Scan(&sessions); err != nil || sessions != 2 {
 		t.Fatal("follow-up session", err)
 	}
 	actor.AccountID, actor.OpenID = "bob", "login-b"

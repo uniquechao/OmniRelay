@@ -21,6 +21,7 @@ from pathlib import Path
 from deepseek_harness.api import final_response
 from deepseek_harness.errors import JsonRpcError
 from instance import ConfigurationConflict, open_instance
+from intent import semantic_plan
 
 HERE = Path(__file__).resolve().parent
 WORK = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
@@ -439,6 +440,14 @@ class API(Handler):
         self.handle_work(False)
 
     def do_POST(self):
+        if self.path == "/intent":
+            if ("DNS", self.server.gateway_name) not in self.connection.getpeercert().get("subjectAltName", ()):
+                return self.reply(403)
+            try:
+                data = self.payload(128 << 10)
+                return self.reply(200, semantic_plan(model_config(), data, NoRedirect()))
+            except (ValueError, KeyError, TypeError, OSError, ModelUnavailable):
+                return self.reply(503)
         self.handle_work(True)
 
 

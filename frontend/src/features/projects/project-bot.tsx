@@ -7,6 +7,7 @@ import heroStyle from '@deepseek-ai/dsh-client-ui-conversation/src/client/skelet
 import { errorStatus } from '../../api/session-client.ts'
 import { client } from '../../api/session'
 import { type ProjectRequest } from './project-contracts'
+import { briefReceipts, BriefReceiptLinks } from './BriefReceiptLinks'
 import { AgentConfig } from '../agents/AgentPages'
 import './project-bot.css'
 
@@ -37,6 +38,7 @@ const messagesSchema = z.object({
       question: z.string(),
       answer: z.string().nullish(),
       state: z.string(),
+      briefs: briefReceipts.optional(),
       primary_saved: z.boolean().optional(),
       agent_name: z.string().optional(),
     }),
@@ -304,6 +306,7 @@ function ProjectConversation({
                               : (replyStatus[message.state] ?? '这条消息未能完成。')}
                           </p>
                         )}
+                        {message.briefs && <BriefReceiptLinks project={project} receipts={message.briefs} />}
                       </article>
                     )}
                   </li>

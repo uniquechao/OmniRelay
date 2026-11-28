@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
+	"github.com/uniquechao/OmniRelay/internal/agentadmin"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
 
@@ -24,12 +25,13 @@ func validQuestion(s string) bool {
 }
 
 type chatMessage struct {
-	ID           string `json:"id"`
-	Question     string `json:"question"`
-	Answer       string `json:"answer,omitempty"`
-	State        string `json:"state"`
-	PrimarySaved bool   `json:"primary_saved,omitempty"`
-	AgentName    string `json:"agent_name"`
+	Briefs       []agentadmin.BriefReceipt `json:"briefs,omitempty"`
+	ID           string                    `json:"id"`
+	Question     string                    `json:"question"`
+	Answer       string                    `json:"answer,omitempty"`
+	State        string                    `json:"state"`
+	PrimarySaved bool                      `json:"primary_saved,omitempty"`
+	AgentName    string                    `json:"agent_name"`
 }
 
 func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.ResponseWriter, *http.Request, identity.SessionPolicy) (identity.Principal, bool)) {
@@ -118,7 +120,7 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 			rows, err := tx.Query(ctx, `SELECT w.id,coalesce(w.question,w.group_question),CASE WHEN w.group_answer IS NOT NULL AND w.state IN ('ready','sending','sent','unknown','failed') THEN w.group_answer WHEN w.state='sent' THEN w.response_text ELSE '' END,
 				CASE WHEN w.deadline<=now() AND w.state IN ('route','running') THEN 'expired'
 				     WHEN w.state='suppressed' AND w.reason='tool_source_changed' THEN 'stale' ELSE w.state END,
-				coalesce(w.config_snapshot->>'name',CASE w.intent WHEN 'knowledge' THEN '知识问答 Agent' WHEN 'admin' THEN '全局管理 Agent' ELSE '项目 PM' END)
+				coalesce(w.config_snapshot->>'name',CASE w.intent WHEN 'knowledge' THEN '知识问答 Agent' WHEN 'admin' THEN '全局管理 Agent' ELSE '项目 PM' END),`+agentadmin.BriefReceiptsSQL+`
 				FROM agent_group_work w JOIN accounts a ON (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id)
 				JOIN project_members m ON (m.tenant_key,m.app_id,m.account_id,m.project_id)=(w.tenant_key,w.app_id,w.account_id,w.project_id)
 				WHERE m.generation=w.membership_generation AND m.role!='revoked' AND w.tenant_key=$1 AND w.app_id=$2 AND w.account_id=$3 AND w.project_id=$4 AND ((w.mode='project_chat' AND w.thread_id=$6) OR ($6='' AND w.group_question IS NOT NULL))
@@ -129,7 +131,7 @@ func (s *Service) RegisterWorkbench(mux *http.ServeMux, authenticate func(http.R
 			defer rows.Close()
 			for rows.Next() {
 				var m chatMessage
-				if err := rows.Scan(&m.ID, &m.Question, &m.Answer, &m.State, &m.AgentName); err != nil {
+				if err := rows.Scan(&m.ID, &m.Question, &m.Answer, &m.State, &m.AgentName, &m.Briefs); err != nil {
 					return err
 				}
 				items = append(items, m)

@@ -363,38 +363,67 @@ func (s *Service) getMessages(w http.ResponseWriter, r *http.Request, p identity
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": next})
 }
 
-// SearchProjectMessages returns only searchable snippets from a source-visible bound group.
-func (s *Service) SearchProjectMessages(ctx context.Context, tx pgx.Tx, p identity.Principal, project, id, q string) (any, error) {
-	if strings.TrimSpace(q) == "" || len([]rune(q)) > 200 {
-		return nil, ErrAccessLost
-	}
-	if _, err := s.ProjectGroupForMutation(ctx, tx, p, id); err != nil {
-		return nil, err
-	}
-	rows, err := tx.Query(ctx, `SELECT m.message_id,m.sent_at,left(m.search_text,500) FROM feishu_chat_messages m
- JOIN project_chat_links l ON (l.tenant_key,l.app_id,l.chat_id)=(m.tenant_key,m.app_id,m.chat_id)
- WHERE `+visibleMessageRows+` AND m.chat_id=$3 AND l.project_id=$4 AND NOT m.deleted AND strpos(lower(m.search_text),lower($5))>0
- ORDER BY m.sent_at DESC,m.message_id LIMIT 25`, s.tenant, s.app, id, project, q)
-	if err != nil {
-		return nil, err
-	}
-	type snippet struct {
-		ID   string    `json:"id"`
-		Sent time.Time `json:"sent_at"`
-		Text string    `json:"text"`
-	}
-	items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[snippet])
-	if err != nil {
-		return nil, err
-	}
+type ProjectMessageSearch struct {
+	Query, DateFrom, DateTo string
+	Location                *time.Location
+	Page                    int64
+}
+
+// SearchProjectMessages reports matches in the visible local index. It does
+// not assert that the index covers all upstream messages for the interval.
+func (s *Service) SearchProjectMessages(ctx context.Context, tx pgx.Tx, p identity.Principal, project, id string, filter ProjectMessageSearch) (any, error) {
 	var bound bool
-	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_chat_links WHERE (tenant_key,app_id,chat_id,project_id)=($1,$2,$3,$4))", s.tenant, s.app, id, project).Scan(&bound); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM project_chat_links WHERE (tenant_key,app_id,chat_id,project_id)=($1,$2,$3,$4))", s.tenant, s.app, id, project).Scan(&bound); err != nil {
 		return nil, err
 	}
 	if !bound {
 		return nil, ErrAccessLost
 	}
-	return map[string]any{"items": items}, nil
+	group, err := s.ProjectGroupForMutation(ctx, tx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	const size = 25
+	rows, err := tx.Query(ctx, `SELECT m.message_id,m.sender_id,m.sender_name,m.sender_kind,m.sent_at,m.updated_at,
+ substring(m.search_text FROM greatest(1,strpos(lower(m.search_text),lower($5))-120) FOR 500),length(m.search_text)>500
+ FROM feishu_chat_messages m
+ JOIN project_chat_links l ON (l.tenant_key,l.app_id,l.chat_id)=(m.tenant_key,m.app_id,m.chat_id)
+ WHERE `+visibleMessageRows+` AND m.chat_id=$3 AND l.project_id=$4 AND NOT m.deleted AND m.search_text<>''
+ AND strpos(lower(m.search_text),lower($5))>0
+ AND (nullif($6,'') IS NULL OR m.sent_at >= (nullif($6,'')::date::timestamp AT TIME ZONE $8))
+ AND (nullif($7,'') IS NULL OR m.sent_at < ((nullif($7,'')::date + 1)::timestamp AT TIME ZONE $8))
+ ORDER BY m.sent_at DESC,m.message_id DESC LIMIT $9 OFFSET $10`, s.tenant, s.app, id, project, filter.Query,
+		filter.DateFrom, filter.DateTo, filter.Location.String(), size+1, (filter.Page-1)*size)
+	if err != nil {
+		return nil, err
+	}
+	type snippet struct {
+		ID         string    `json:"id"`
+		SenderID   string    `json:"sender_id,omitempty"`
+		SenderName string    `json:"sender_name,omitempty"`
+		SenderKind string    `json:"sender_kind,omitempty"`
+		Sent       time.Time `json:"sent_at"`
+		Updated    time.Time `json:"updated_at"`
+		Text       string    `json:"text"`
+		Truncated  bool      `json:"truncated"`
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[snippet])
+	if err != nil {
+		return nil, err
+	}
+	more := len(items) > size
+	if more {
+		items = items[:size]
+	}
+	for i := range items {
+		items[i].Sent = items[i].Sent.In(filter.Location)
+		items[i].Updated = items[i].Updated.In(filter.Location)
+	}
+	return map[string]any{
+		"scope": "indexed_visible_text", "chat_id": id, "chat_name": group.Name, "q": filter.Query,
+		"business_timezone": filter.Location.String(), "date_from": filter.DateFrom, "date_to": filter.DateTo,
+		"page": filter.Page, "has_more": more, "items": items,
+	}, nil
 }
 
 func chatScopeID(r *http.Request) string {

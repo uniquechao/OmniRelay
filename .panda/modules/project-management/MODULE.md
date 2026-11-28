@@ -27,15 +27,18 @@ OmniRelay 使用本地 PostgreSQL 管理项目档案、阶段和计划日期。�
 
 项目 PM 业务工具的名称、参数与动作由 `internal/agent/pmtools` 定义。Go 在绑定工作的事务内按真实账号执行，写入和回执原子提交。群内业务请求的正文仅进入发起人的项目工作台，原话题接收署名提示。来源受限的结果在发布和历史展示前复核。逐工具验收见 [项目 PM 业务工具与权限设计](../../../design/engineering/project-pm-tool-capabilities.md)。
 
+已认证的当轮请求由模型判定读取、起草、修订、确认或执行意图。Gateway 将操作限制在具体对象和当前权限内。个人会话中可确认的草稿保存用户看到的内容及目标版本；确认消费、业务写入与回执在同一事务中完成。工作台从提交回执生成简报详情链接，运行记录分别展示业务提交和回复投递。
+
 私聊身份查询使用发件人的已启用账号和全局查询助手，会话与项目群隔离。主动项目提醒由具备 `project.settings` 权限的项目成员登记。Go 固化项目、群或个人地址和相应的授权版本，Harness 持有原生定时器。每次触发按登记目标分别去重，取数和发送各自重新验证授权。群提醒的工具取数限于项目，个人提醒使用收件人本人的字段。
 
 ## 接口与测试
 
 - 项目 Bot 按需加载项目对话组件，使用 DSH 的公开消息和 Markdown 组件、品牌图形与样式。工作台从已授权的站内接口校验消息，自主管理草稿、发送、重试及撤权后清理。升级 DSH 时联验输入、主题与消息协议。
 - 项目概览与 Bot 共用工作台的 1753px 最大宽度和居中规则。项目标题与标签使用同一左边线，空对话从内容区左上方排起，有历史时输入框停靠底部。
-- 工作台项目 Bot 通过 `GET/POST /api/v1/projects/{projectID}/bot/messages` 读写本人的项目对话。Gateway 从登录会话和有效会籍确定身份与项目，DSH 按成员及授权代次续接会话。模型返回后，Gateway 再次核验工具回执与当前权限并生成项目署名。飞书接入管理位于 Bot 页的「飞书接入」入口。
+- 工作台项目 Bot 通过 `GET/POST /api/v1/projects/{projectID}/bot/messages` 读写本人的项目对话。Gateway 从登录会话和有效会籍确定身份与项目，Gateway 在当前账号、项目、会话、角色和授权范围内为每条个人请求提供近期已展示且来源仍可读的上下文。DSH 按工作项运行独立原生会话，重试复用同一工作项。模型返回后，Gateway 再次核验工具回执与当前权限并生成项目署名。飞书接入管理位于 Bot 页的「飞书接入」入口。
 - `GET /api/v1/projects` 返回 `can_create`。`GET /api/v1/projects/{projectID}/overview` 返回 `can_manage_profile` 与档案版本。`POST /api/v1/projects` 支持以 `Idempotency-Key` 重试创建。档案修改和归档分别使用 `PUT /api/v1/projects/{projectID}/profile` 与 `POST /api/v1/projects/{projectID}/archive`。
 - `GET /api/v1/projects/{projectID}/files` 提供项目文件列表，`GET /api/v1/projects/{projectID}/files/documents/{sourceID}` 读取本地文档正文。
+- 当用户明确要求把刚才的只读分析整理入库，Gateway 绑定当前提问受理时已展示的上一轮答复，重新检查当时的项目、角色、来源版本与权限。历史答复仅供整理内容，本轮原话决定可执行的工具及目标。普通“确认写入”沿用已展示草稿的逐项确认。
 - `internal/project/profile_test.go` 覆盖 PostgreSQL 项目生命周期，`tests/integration/project_workbench_browser.test.mjs` 覆盖工作台操作和冲突恢复。
 
 <!-- panda:module-meta:start -->
@@ -66,6 +69,8 @@ last_used_ts: 1795349556499
 
 项目简报按租户、应用、项目和业务日期唯一。PM 插件按版本写入成员可见的标题和正文。概览和简报列表按业务日期倒序，历史生成记录按其原始授权展示，群投递使用单独回执。会议纪要的手动标记按项目和来源引用保存，展示时重新检查当前成员的来源阅读权。
 
+PM 的 `briefing_list` 按业务日期列出已撰写简报的当前版本，`briefing_get` 读取正文。已发布日报统计通过 `daily_report_query` 的 published 来源查投递消息。群历史检索使用与看板一致的项目时区，按含首尾业务日的日期范围分页；结果只覆盖本人可读的索引文本。
+
 - 工作台 `#/projects/{id}/tasks` 挂载独立 React 看板，按当前登录会话和会籍读取任务。列表视图使用 `tasks?task_layout=list`，筛选参数和布局按项目保存。看板、独立任务链接 `tasks/{taskID}` 和 `tasks/new` 均挂载 ProjectTaskInspector，共用里程碑、附件、并发编辑及删除操作。
 - 项目简称在全库唯一且在项目改名后保留。用户可见任务编号由三位项目简称、`-T` 和至少三位项目内序号组成，API 的 task_code 用于展示和搜索，详情及关联仍使用原任务主键。
 - 业务阶段与展示列分开，修改设置按版本校验，在同一事务中迁移整列任务。看板的列计数反映筛选后的全量，续页游标绑定筛选条件、项目、列和版本。
@@ -86,3 +91,5 @@ last_used_ts: 1795349556499
 项目 Bot 的 SDK 和系统管理员原生 DSH Web 共享 Runtime Pod 内的 Agent 会话存储及模型 Secret。工作台校验浏览器登录与 `dsh.debug`；进入后使用 DSH owner 权限。SDK 和 Web 通过原生会话锁串行写入。管理员可在会话中执行 `/handoff` 交还空闲写入权。
 
 预览环境由 `preview-project-bot` 调用 `preview-dsh-runtime`，Runtime 归属使用内部 Service 主机名。正式 `dshbot` 控制台运行在 `omnirelay-dsh-prod` 的 `console` 容器。工作负载与数据卷映射见[部署说明](../../../deploy/k8s/README.md#预览-bot-与-dsh-runtime)。
+
+个人 Bot 对话的历史依据由 Gateway 保存。每个工作使用独立原生会话，只向相同账号、渠道、话题、项目、角色和授权代次投影已复核的最近问答；派发、工具写入和展示再次检查来源。已展示草案按工作和条目确认，正式业务写入与用户回执同事务结算。

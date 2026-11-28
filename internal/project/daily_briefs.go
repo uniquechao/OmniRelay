@@ -21,6 +21,46 @@ type dailyBrief struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
+// A project-authored brief has one current version per date. Delivery runs have
+// different authorship and visibility and are queried separately.
+func (k taskScope) authoredBriefs(ctx context.Context, db taskReader, from, to, query string, page int64, directory bool) (any, error) {
+	if !validReportRange(from, to) {
+		return nil, errInput
+	}
+	var total int
+	var items []struct {
+		Date    string    `json:"business_date"`
+		Title   string    `json:"title"`
+		Excerpt string    `json:"excerpt"`
+		Version int64     `json:"version"`
+		Updated time.Time `json:"updated_at"`
+	}
+	err := db.QueryRow(ctx, `WITH matched AS (
+		SELECT business_date,title,left(body,180) AS excerpt,version,updated_at FROM project_daily_briefs WHERE `+projectWhere+`
+		AND (nullif($4,'') IS NULL OR business_date>=nullif($4,'')::date)
+		AND (nullif($5,'') IS NULL OR business_date<=nullif($5,'')::date)
+		AND strpos(lower(title||' '||body),lower($6))>0
+	), page AS (SELECT * FROM matched ORDER BY business_date DESC LIMIT 25 OFFSET $7)
+	SELECT (SELECT count(*) FROM matched),coalesce(jsonb_agg(page ORDER BY business_date DESC),'[]'::jsonb) FROM page`,
+		k.args(from, to, strings.TrimSpace(query), (page-1)*25)...).Scan(&total, &items)
+	out := map[string]any{"source": "authored", "items": items, "page": page, "total": total}
+	if err != nil || !directory {
+		return out, err
+	}
+	var count int
+	var recent []struct {
+		Date    string `json:"business_date"`
+		Title   string `json:"title"`
+		Version int64  `json:"version"`
+	}
+	err = db.QueryRow(ctx, `WITH recent AS (
+	   SELECT business_date,title,version FROM project_daily_briefs WHERE `+projectWhere+` ORDER BY business_date DESC LIMIT 5)
+	   SELECT (SELECT count(*) FROM project_daily_briefs WHERE `+projectWhere+`),
+	     coalesce(jsonb_agg(recent ORDER BY business_date DESC),'[]'::jsonb) FROM recent`, k.args()...).Scan(&count, &recent)
+	out["project_directory"] = map[string]any{"scope": "catalog_metadata_only", "total": count, "recent": recent}
+	return out, err
+}
+
 func (k taskScope) dailyBrief(ctx context.Context, db taskReader, date string) (dailyBrief, error) {
 	b := dailyBrief{ID: date, Date: date}
 	if !validReportDate(date) {

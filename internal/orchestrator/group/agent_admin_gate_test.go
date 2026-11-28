@@ -82,19 +82,32 @@ func TestAgentWorkbenchConfigurationAndSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.sql(`INSERT INTO agent_project_tool_calls(work_id,slot,tool,fingerprint,receipt)
-		VALUES($1,1,'task_create','sensitive-hash','{"title":"private-receipt-text"}')`, partialID)
+		VALUES($1,1,'task_create','sensitive-hash','{"title":"private-receipt-text"}'),
+          ($1,3,'briefing_save','brief-hash','{"business_date":"2026-11-28","version":2}')`, partialID)
 	g.sql(`INSERT INTO agent_project_tool_failures(work_id,slot,tool,fingerprint,status,target_hint)
 		VALUES($1,1,'task_create','sensitive-hash',409,'private-title'),
 			  ($1,2,'task_update','sensitive-hash',403,'private-title')`, partialID)
 	result := call("GET", "/api/v1/agent-runs?work_id="+partialID, "", "", 200)
 	var rec struct {
 		Items []struct {
-			Writes   int              `json:"writes"`
-			Failures []map[string]any `json:"write_failures"`
+			Writes   int                       `json:"writes"`
+			Briefs   []agentadmin.BriefReceipt `json:"briefs"`
+			Failures []map[string]any          `json:"write_failures"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(result), &rec); err != nil || len(rec.Items) != 1 || rec.Items[0].Writes != 1 || len(rec.Items[0].Failures) != 1 {
+	if err := json.Unmarshal([]byte(result), &rec); err != nil || len(rec.Items) != 1 || rec.Items[0].Writes != 2 || len(rec.Items[0].Failures) != 1 {
 		t.Fatal("partial write counts", result, err)
+	}
+	brief := agentadmin.BriefReceipt{Date: "2026-11-28", Version: 2}
+	if len(rec.Items[0].Briefs) != 1 || rec.Items[0].Briefs[0] != brief {
+		t.Fatal("missing saved brief receipt", result)
+	}
+	var chat struct {
+		Items []chatMessage `json:"items"`
+	}
+	history := call("GET", prefix+"messages?conversation="+a, "", "", 200)
+	if err := json.Unmarshal([]byte(history), &chat); err != nil || len(chat.Items) != 1 || len(chat.Items[0].Briefs) != 1 || chat.Items[0].Briefs[0] != brief {
+		t.Fatal("chat receipt mismatch", history, err)
 	}
 	f := rec.Items[0].Failures[0]
 	if len(f) != 3 || f["slot"] != float64(2) || f["status"] != float64(403) || f["tool"] != "task_update" || strings.Contains(result, "sensitive-hash") || strings.Contains(result, "private-") {

@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/uniquechao/OmniRelay/internal/routing"
 )
 
 var ErrConfiguration = errors.New("runtime rejected agent configuration")
@@ -118,4 +120,31 @@ func decode(resp *http.Response) (Result, error) {
 		err = errors.New("invalid runtime completion")
 	}
 	return r, err
+}
+
+func (c *Client) Plan(ctx context.Context, input routing.PlanRequest) (routing.Plan, error) {
+	var out routing.Plan
+	b, _ := json.Marshal(map[string]any{"request": input, "catalog": routing.PlanningCatalog(), "server_fields": routing.ServerFields()})
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/intent", bytes.NewReader(b))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return out, errors.New("semantic planner unavailable")
+	}
+	dec := json.NewDecoder(io.LimitReader(resp.Body, 96<<10))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&out) != nil || dec.Decode(&struct{}{}) != io.EOF {
+		return routing.Plan{}, errors.New("invalid structured runtime plan")
+	}
+	if err := out.Validate(input); err != nil {
+		return routing.Plan{}, err
+	}
+	return out, nil
 }

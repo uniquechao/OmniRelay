@@ -15,7 +15,6 @@ import (
 	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/project"
-	"github.com/uniquechao/OmniRelay/internal/routing"
 )
 
 type projectCall struct {
@@ -46,6 +45,10 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 	var refused error
 	err := s.Roles.WithOrganizationMutation(ctx, func(tx pgx.Tx) error {
 		w, err := s.boundWork(ctx, tx, c.ToolCall)
+		if errors.Is(err, access.ErrForbidden) && c.Slot > 0 {
+			result, err = s.replayPersonalConfirmation(ctx, tx, c)
+			return err
+		}
 		if err != nil {
 			return err
 		}
@@ -66,6 +69,42 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			if err != nil {
 				return err
 			}
+			// A pre-migration worker may have lost a successful callback response.
+			// Expose no new tool to its catalog; replay only its exact recorded slot.
+			if w.Plan.Mode == "" && c.Slot > 0 {
+				var name, stamp string
+				if err = tx.QueryRow(ctx, "SELECT tool,fingerprint,receipt FROM agent_project_tool_calls WHERE work_id=$1 AND slot=$2", w.Work, c.Slot).Scan(&name, &stamp, &result); errors.Is(err, pgx.ErrNoRows) {
+					return access.ErrForbidden
+				} else if err != nil {
+					return err
+				}
+				fp, e := toolDigest(c.Args)
+				if e != nil {
+					return e
+				}
+				if name != c.Name || fp != stamp {
+					return errSlot
+				}
+				if !w.toolConfigured(name) {
+					return access.ErrForbidden
+				}
+				if name == "delegate_project" && w.Role == "management-pm" {
+					result, err = s.managementTool(ctx, tx, w, c, fp)
+					return err
+				}
+				t, ok := pmtools.Lookup(name)
+				if !ok || !t.Write || w.Role != "project-pm" {
+					return access.ErrForbidden
+				}
+				allowed, e := s.Roles.CheckInOrganizationMutation(ctx, tx, w.Actor, t.Action, w.Scope.ProjectID)
+				if e != nil {
+					return e
+				}
+				if !allowed {
+					return access.ErrForbidden
+				}
+				return s.Projects.AuthorizeToolReceipt(ctx, tx, w.Actor, w.Scope.ProjectID, name, c.Args)
+			}
 			tools, err := s.allowedTools(ctx, tx, w)
 			if err != nil {
 				return err
@@ -77,6 +116,12 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			t := tools[i]
 			if err = t.Validate(c.Args); err != nil {
 				return err
+			}
+			if !t.Write {
+				c.Args, err = w.reportToolArgs(c.Name, c.Args)
+				if err != nil {
+					return err
+				}
 			}
 			fp, err := toolDigest(c.Args)
 			if err != nil {
@@ -156,6 +201,13 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 					return err
 				}
 			}
+			if t.Write && w.settlesPersonalWrite() {
+				if err := s.finishPersonalConfirmation(ctx, tx, w, c); err != nil {
+					return err
+				}
+				result, err = confirmationAcknowledgement(result)
+				return err
+			}
 			if t.Name == setPrimaryTool {
 				for _, read := range chatReads {
 					current, err := s.Projects.RefreshPrimaryChatRead(ctx, tx, w.Actor, w.Scope.ProjectID, read.Value)
@@ -172,7 +224,8 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 					}
 				}
 			}
-			if t.PrivateSource || w.Role == "query" {
+			personalRead := !t.Write && (w.Address.Mode == ProjectChat || w.Address.Mode == PrivateReply)
+			if t.PrivateSource || w.Role == "query" || personalRead || !t.Write && w.Plan.EvidencePeriod != nil {
 				reads, err := project.ToolReadRecords(t.Name, c.Args, val)
 				if err != nil {
 					return err
@@ -186,7 +239,7 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 					if err != nil {
 						return err
 					}
-					if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest,citations) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", w.Work, read.Name, fingerprint, read.Args, digest, evidenceCitations(c.Name, c.Args, result)); err != nil {
+					if _, err = tx.Exec(ctx, "INSERT INTO agent_project_tool_reads(work_id,tool,fingerprint,args,digest,citations,continuity_only) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", w.Work, read.Name, fingerprint, read.Args, digest, evidenceCitations(c.Name, c.Args, result), !t.PrivateSource && w.Role != "query"); err != nil {
 						return err
 					}
 				}
@@ -214,7 +267,17 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 	return result, err
 }
 func (s *Service) checkToolReads(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string) error {
+	if confirmed, err := s.authorizeConfirmedReceipt(ctx, tx, workID, actor, projectID); confirmed || err != nil {
+		return err
+	}
 	if err := s.verifyThreadContext(ctx, tx, workID, actor, projectID); err != nil {
+		return err
+	}
+	var sources []string
+	if err := tx.QueryRow(ctx, "SELECT personal_sources FROM agent_group_work WHERE id=$1", workID).Scan(&sources); err != nil {
+		return err
+	}
+	if err := s.checkPersonalSources(ctx, tx, sources, actor, projectID); err != nil {
 		return err
 	}
 	_, err := s.verifyToolReads(ctx, tx, workID, actor, projectID)
@@ -254,7 +317,11 @@ type checkedChatList struct {
 }
 
 func (s *Service) verifyToolReads(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string) ([]checkedChatList, error) {
-	rows, err := tx.Query(ctx, "SELECT tool,args,digest,fingerprint FROM agent_project_tool_reads WHERE work_id=$1 ORDER BY tool,fingerprint", workID)
+	return s.verifyWorkReads(ctx, tx, workID, actor, projectID, false)
+}
+
+func (s *Service) verifyWorkReads(ctx context.Context, tx pgx.Tx, workID string, actor identity.Principal, projectID string, inherited bool) ([]checkedChatList, error) {
+	rows, err := tx.Query(ctx, "SELECT tool,args,digest,fingerprint FROM agent_project_tool_reads WHERE work_id=$1 AND ($2 OR NOT continuity_only) ORDER BY tool,fingerprint", workID, inherited)
 	if err != nil {
 		return nil, err
 	}
@@ -307,10 +374,13 @@ func (s *Service) verifyToolReads(ctx context.Context, tx pgx.Tx, workID string,
 func (w work) chat() bool {
 	return w.Kind == "project_group_chat" || w.Kind == "project_chat" || w.Kind == "private_chat"
 }
+func (w work) toolConfigured(name string) bool {
+	return (w.Config.Tools == nil || slices.Contains(w.Config.Tools, name)) && (w.LiveTools == nil || slices.Contains(w.LiveTools, name))
+}
 func (s *Service) allowedTools(ctx context.Context, tx pgx.Tx, w work) ([]pmtools.Tool, error) {
 	tools := []pmtools.Tool{}
 	for _, t := range pmtools.RoleTools(w.Role) {
-		if w.Config.Tools != nil && !slices.Contains(w.Config.Tools, t.Name) || w.LiveTools != nil && !slices.Contains(w.LiveTools, t.Name) || t.Write && (!w.WriteRequested || len(routing.AuthorizedClauses(w.Address.Text, t.Name)) == 0) {
+		if !w.toolConfigured(t.Name) || t.Write && !w.Plan.Allows(t.Name) || w.Plan.EvidencePeriod != nil && unboundedReportSource(t.Name) {
 			continue
 		}
 		if t.Action != "" {

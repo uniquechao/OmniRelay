@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/project"
-	"github.com/uniquechao/OmniRelay/internal/routing"
 )
 
 func projectChoice(options []project.PortfolioProject) string {
@@ -35,16 +34,16 @@ func ResolvePrivateProject(ctx context.Context, tx pgx.Tx, e *Envelope) (string,
 		err := tx.QueryRow(ctx, `UPDATE agent_group_work w SET project_id=m.project_id,membership_generation=m.generation,choice_prompt=NULL,state='route',lease_until=NULL,
 		response_text=NULL,config_snapshot=NULL,agent_id=NULL,session_id=NULL,available_at=now(),platform_message_id=NULL,delivery_id=gen_random_uuid()
 		FROM project_members m,accounts a WHERE w.id=$1 AND (w.tenant_key,w.app_id,w.chat_id,w.account_id,w.channel)=($2,$3,$4,$5,$6)
-		AND w.mode='private_reply' AND w.state='awaiting_project' AND w.deadline>now() AND w.config_version=$8
+		AND w.mode='private_reply' AND w.state='awaiting_project' AND w.deadline>now() AND w.config_version=$8 AND w.thread_id=$9
 		AND (a.tenant_key,a.app_id,a.id)=(w.tenant_key,w.app_id,w.account_id) AND a.active AND a.permission_version=w.permission_version
 		AND (m.tenant_key,m.app_id,m.account_id)=(a.tenant_key,a.app_id,a.id) AND m.project_id=$7 AND m.role!='revoked' AND w.choice_grants->>m.project_id=m.generation RETURNING w.id`,
-			args[1], e.Tenant, e.App, e.Chat, e.Account, e.Channel, args[2], e.Config).Scan(&id)
+			args[1], e.Tenant, e.App, e.Chat, e.Account, e.Channel, args[2], e.Config, e.Thread).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = access.ErrForbidden
 		}
 		return id, err
 	}
-	e.Intent = routing.RequestIntent(e.Text, true)
+	// Project name/ID matching is a resource selector. Role selection happens in the worker.
 	if e.Intent == "admin" {
 		return "", nil
 	}

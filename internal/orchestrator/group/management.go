@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/uniquechao/OmniRelay/internal/access"
 	"github.com/uniquechao/OmniRelay/internal/agent/dsh"
+	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 	"github.com/uniquechao/OmniRelay/internal/project"
 	"github.com/uniquechao/OmniRelay/internal/routing"
@@ -81,21 +82,7 @@ func (s *Service) managementTool(ctx context.Context, tx pgx.Tx, w work, c proje
 		if err != nil {
 			return nil, err
 		}
-		explicit := false
-		counts := map[string]int{}
-		for _, p := range projects {
-			counts[p.Name]++
-		}
-		instruction := strings.Join(routing.AuthorizedClauses(w.Address.Text, c.Name), "；")
-		for _, p := range projects {
-			if p.ID == target && (namesID(instruction, p.ID) || counts[p.Name] == 1 && strings.Contains(instruction, p.Name)) {
-				if p.Status == "archived" {
-					return nil, access.ErrForbidden
-				}
-				explicit = true
-			}
-		}
-		if !explicit {
+		if !slices.ContainsFunc(projects, func(p project.PortfolioProject) bool { return p.ID == target && p.Status != "archived" }) {
 			return nil, access.ErrForbidden
 		}
 		var fp, name string
@@ -110,12 +97,38 @@ func (s *Service) managementTool(ctx context.Context, tx pgx.Tx, w work, c proje
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
+		if err = s.checkWriteTargets(ctx, tx, w, c); err != nil {
+			return nil, err
+		}
 		ch, ok := s.Channels["workbench"]
 		if !ok {
 			return nil, errors.New("workbench channel unavailable")
 		}
-		id, err := Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Account: w.Actor.AccountID, Mode: ProjectChat, Channel: "workbench", Chat: target, Project: target, Intent: "project", Message: "delegate:" + w.Work + ":" + target, Text: w.Address.Text, Parent: w.Work, Received: time.Now()})
+		var item int
+		if err = tx.QueryRow(ctx, "SELECT item FROM agent_action_grants_used WHERE work_id=$1 AND slot=$2", w.Work, c.Slot).Scan(&item); err != nil {
+			return nil, err
+		}
+		handoff := w.Plan.Actions[item-1]
+		childPlan := routing.Plan{Mode: "read", Intent: "project"}
+		if period := w.Plan.EvidencePeriod; period != nil {
+			scoped := *period
+			scoped.Timezone = ""
+			if scoped.Kind != "range" {
+				scoped.From, scoped.To = "", ""
+			}
+			childPlan.EvidencePeriod = &scoped
+		}
+		if len(handoff.ChildActions) > 0 {
+			childPlan.Mode = "execute"
+			childPlan.Actions = handoff.ChildActions
+		}
+		id, err := Accept(ctx, tx, ch, Envelope{Tenant: s.Tenant, App: s.App, Account: w.Actor.AccountID, Mode: ProjectChat, Channel: "workbench", Chat: target, Project: target, Intent: "project", Message: "delegate:" + w.Work + ":" + target, Text: handoff.Evidence, Parent: w.Work, Received: time.Now()})
 		if err != nil {
+			return nil, err
+		}
+		// The parent delegates only this target's grounded sub-plan; the child
+		// cannot reinterpret another project's part of the authenticated request.
+		if _, err = tx.Exec(ctx, "UPDATE agent_group_work SET needs_plan=false,semantic_plan=$2,write_requested=$3 WHERE id=$1 AND needs_plan", id, childPlan.JSON(), childPlan.Mode == "execute"); err != nil {
 			return nil, err
 		}
 		receipt, err = json.Marshal(map[string]string{"work_id": id, "project_id": target})
@@ -132,6 +145,12 @@ func (s *Service) verifiedAnswer(ctx context.Context, tx pgx.Tx, w work, result 
 	reconcile := result.Kind == "reconcile" && w.LegacyOutput
 	if result.Kind == "reconcile" && !reconcile {
 		return "", errSlot
+	}
+	if w.Plan.Mode == "clarify" && w.Plan.Clarification != "" && !reconcile {
+		if len(result.WriteSlots) > 0 || result.Kind == "writes" {
+			return "", errSlot
+		}
+		return w.Plan.Clarification, nil
 	}
 	if !w.WriteRequested && !reconcile {
 		if len(result.WriteSlots) > 0 || result.Kind == "writes" {
@@ -166,24 +185,66 @@ func (s *Service) verifiedAnswer(ctx context.Context, tx pgx.Tx, w work, result 
 	if err != nil {
 		return "", err
 	}
+	// A reply is a delivery receipt. Report each missing business operation
+	// separately, even when the model stopped after a successful first step.
+	accounted := map[string]int{}
+	for _, call := range calls {
+		accounted[call.Tool]++
+	}
+	for _, failure := range result.FailedWrites {
+		accounted[failure.Tool]++
+	}
+	var missing []string
+	for _, action := range w.Plan.Actions {
+		if accounted[action.Tool] > 0 {
+			accounted[action.Tool]--
+			continue
+		}
+		status := action.Tool + " 尚未提交。"
+		if action.Tool == "briefing_save" {
+			status = "简报尚未保存。"
+		}
+		switch {
+		case !w.toolConfigured(action.Tool):
+			status += "本轮 Agent 配置未启用该工具。"
+		default:
+			tool, ok := pmtools.Lookup(action.Tool)
+			if ok && tool.Action != "" {
+				allowed, err := s.Roles.CheckInOrganizationMutation(ctx, tx, w.Actor, tool.Action, w.Scope.ProjectID)
+				if err != nil {
+					return "", err
+				}
+				if !allowed {
+					status += "当前账号缺少办理这项操作的权限。"
+				}
+			}
+		}
+		missing = append(missing, status)
+	}
 	if len(calls) == 0 {
+		lines := []string{"本次没有已提交的业务操作。"}
+		lines = append(lines, failed...)
+		lines = append(lines, missing...)
 		var reason string
 		if err := tx.QueryRow(ctx, "SELECT reason FROM agent_group_work WHERE id=$1", w.Work).Scan(&reason); err != nil {
 			return "", err
 		}
 		if reason == "ambiguous_member" {
-			return "本次没有已提交的业务操作。存在同名成员，请在原交办中注明成员编号。", nil
+			lines = append(lines, "存在同名成员，请指明要分派给哪一位。")
 		}
-		if len(failed) > 0 {
-			return "本次没有已提交的业务操作。\n" + strings.Join(failed, "\n"), nil
-		}
-		if strings.HasSuffix(result.Answer, "？") && !strings.ContainsAny(result.Answer, "已成") {
-			return "尚未提交操作。" + result.Answer, nil
-		}
-		return "本次没有已提交的业务操作。请核对目标、所需权限及办理内容。", nil
+		return strings.Join(lines, "\n"), nil
 	}
 	var lines []string
 	for _, c := range calls {
+		if c.Tool == "briefing_save" {
+			date, dateOK := c.Receipt["business_date"].(string)
+			version, versionOK := c.Receipt["version"].(float64)
+			if _, err := time.Parse(time.DateOnly, date); err != nil || !dateOK || !versionOK || version < 1 || version != float64(int64(version)) {
+				return "", errSlot
+			}
+			lines = append(lines, fmt.Sprintf("已保存 %s 项目简报（版本 %d）。", date, int64(version)))
+			continue
+		}
 		line := fmt.Sprintf("操作 %d · %s · 已提交", c.Slot, c.Tool)
 		for _, key := range []string{"task_code", "task_id", "id", "work_id", "project_id", "chat_id", "version"} {
 			if value, ok := c.Receipt[key]; ok && value != nil {
@@ -192,5 +253,7 @@ func (s *Service) verifiedAnswer(ctx context.Context, tx pgx.Tx, w work, result 
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(append(lines, failed...), "\n"), nil
+	lines = append(lines, failed...)
+	lines = append(lines, missing...)
+	return strings.Join(lines, "\n"), nil
 }
