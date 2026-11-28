@@ -44,6 +44,7 @@ Web 容器随生产 Runtime StatefulSet 启动。两个入口使用同一个模�
 | `TestProjectPMToolMatrix` | 23 个目录项逐项验证业务结果和权限，缺少任一目录项的测试即失败 |
 | `TestProjectToolRecoveryGate` | 并发和跨代次重试仅写入一次；相同命令序号换参数、过期轮次和撤权重放被拒 |
 | `TestProjectToolHistoryGate` | 来源撤权后抑制交付与历史正文；后续模型会话与受限正文隔离 |
+| `TestLiveGroupBoardReply` / `TestLiveGroupReplySemantics` | 真实模型识别当前未完成任务及明确提醒意图。隔离群通道核对已关闭事项、原话题、负责人和重复事件。 |
 | `TestProjectToolAudienceImageGate` | 内部群请求经真实 DSH 镜像、双向 TLS 在正确项目建任务，原话题得到署名回执，个人工作台显示结果 |
 | `TestAgentRolesImageGate` | 在正式工作台查询获准的纪要正文和修订、区分仅标题结果、汇总允许的项目、按原用户委派给项目 PM 并查询子工作。原生 Runtime 回调后按正式任务记录与投递回执对账。 |
 

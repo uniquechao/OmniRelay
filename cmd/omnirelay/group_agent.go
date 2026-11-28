@@ -50,7 +50,7 @@ func groupWorker(pool *pgxpool.Pool, cfg configuration, roles *access.Service, s
 			case group.GroupNotice, group.PersonNotice:
 				r = source.Notify(ctx, e.Mode == group.PersonNotice, e.Recipient, bot, text, id)
 			case group.GroupReply:
-				r = source.ReplyTo(ctx, e.Chat, bot, e.Message, text, id)
+				r = source.ReplyTo(ctx, e.Chat, bot, e.Message, e.Thread, text, id, e.ReplyBody)
 			default:
 				return group.Receipt{State: "failed", Reason: "unknown_mode"}
 			}

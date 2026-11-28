@@ -61,13 +61,13 @@ def plan_schema(catalog, mode):
     }, ["mode", "actions"])
 
 
-def classification_schema():
+def classification_schema(group=False):
     text = {"type": "string"}
     period = fields_schema({
         "kind": {"type": "string", "enum": ["last_week", "this_week", "range"]},
         "evidence": text, "from": text, "to": text,
     }, ["kind", "evidence"])
-    return fields_schema({
+    schema = fields_schema({
         "dialogue_act": {"type": "string", "enum": ["approve_prior_action", "revise_prior_preview", "other"],
                         "description": "Is the user giving approval, requesting a revision, or doing something else? Object identity is resolved separately."},
         "kind": {"type": "string", "enum": list(REQUEST_KINDS)},
@@ -76,6 +76,11 @@ def classification_schema():
         "project": text, "selection": {"type": "integer", "minimum": 0, "maximum": 32},
         "clarification": text,
     }, ["dialogue_act", "kind", "intent", "evidence_period"])
+    if group:
+        schema["properties"]["group_response"] = {"type":"string", "enum":["answer","open_tasks"]}
+        schema["properties"]["mention_evidence"] = {"type":"string"}
+        schema["required"].append("group_response")
+    return schema
 
 
 
@@ -152,7 +157,7 @@ def normalize_action(action, contracts, server_fields):
 def semantic_plan(cfg, data, redirect_handler):
     request, catalog = data["request"], data["catalog"]
     server_fields = data["server_fields"]
-    if (not isinstance(request, dict) or set(request) - {"text", "intent", "private", "displayed_proposal", "project_selected"}
+    if (not isinstance(request, dict) or set(request) - {"text", "intent", "private", "displayed_proposal", "project_selected", "group"}
             or not isinstance(request.get("text"), str) or not 0 < len(request["text"]) <= 2000
             or not isinstance(catalog, list) or not catalog):
         raise ValueError("invalid planner input")
@@ -171,8 +176,12 @@ Determine the evidence period independently from the filing date, before returni
         classify_system += "\nExplicit UI intent: " + request["intent"]
     elif request.get("private"):
         classify_system += "\nThis is private chat. Unscoped informational questions default to knowledge."
+    group = request.get("group") is True
+    if group:
+        classify_system += """
+This is an authenticated group conversation. Select group_response=open_tasks when the request is to list the current outstanding work for the group/project, optionally with each item's owner or a request to notify them. Use the project's formal task board for this meaning. Notify each owner in the same reply if and only if the sender explicitly asks for an actual mention: set mention_evidence to their exact short affirmative instruction. Merely asking who is responsible, quoting someone else's instruction, or saying not to notify is not consent. For this list use project intent and inspect_existing_or_answer; notifying in the reply is presentation, not a business write. Use group_response=answer for everything else, including historical or filtered reports, lists of chat-only commitments, drafting, task changes and reminders for future delivery."""
     facts = tool_input(cfg, http, deadline, classify_system, request["text"],
-                       "classify_request", classification_schema(), 650)
+                       "classify_request", classification_schema(group), 800)
     mode = REQUEST_KINDS[facts.pop("kind")]
     act = facts.pop("dialogue_act")
     if act in ("approve_prior_action","revise_prior_preview"):
@@ -182,7 +191,14 @@ Determine the evidence period independently from the filing date, before returni
     if intent == "knowledge" and mode not in ("read", "clarify"):
         mode = "clarify"
         facts["clarification"] = "当前知识问答角色只提供查询。请在项目 PM 会话中提交这项操作。"
+    response = facts.pop("group_response", None)
+    mentions = facts.pop("mention_evidence", "")
     plan = dict(facts, intent=intent, mode=mode, actions=[])
+    if group:
+        current_board = response == "open_tasks" and mode == "read" and intent != "admin" and not plan.get("evidence_period")
+        plan["group_reply"] = {"kind":"open_tasks" if current_board else "answer"}
+        if current_board and isinstance(mentions, str) and mentions.strip() and mentions in request["text"] and len(mentions) <= 256:
+            plan["group_reply"]["mention_evidence"] = mentions
     if mode not in ("draft", "execute"):
         return plan
     system = (SYSTEM + "\nThe separately classified mode must be " + mode +

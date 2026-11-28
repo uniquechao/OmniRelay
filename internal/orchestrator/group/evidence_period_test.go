@@ -39,7 +39,7 @@ func TestSourcePeriodSurvivesRetryIndependentOfFilingDate(t *testing.T) {
 	g := newGate(t)
 	const question = "把此前一个自然周的所有会议结论存进本周简报，业务日期 2026-11-28。"
 	g.PlanIntent = func(context.Context, routing.PlanRequest) (routing.Plan, error) {
-		return routing.Plan{Intent: "project", Mode: "execute", EvidencePeriod: &routing.EvidencePeriod{Kind: "last_week", Evidence: "此前一个自然周"}, Actions: []routing.PlannedAction{{Tool: "briefing_save", Evidence: question, Fields: map[string]string{"business_date": "2026-11-28"}, Generate: []string{"title", "body"}}}}, nil
+		return routing.Plan{Intent: "project", Mode: "execute", GroupReply: &routing.GroupResponse{Kind: "answer"}, EvidencePeriod: &routing.EvidencePeriod{Kind: "last_week", Evidence: "此前一个自然周"}, Actions: []routing.PlannedAction{{Tool: "briefing_save", Evidence: question, Fields: map[string]string{"business_date": "2026-11-28"}, Generate: []string{"title", "body"}}}}, nil
 	}
 	id := g.projectMention("freeze-period", question)
 	w, err := g.claim(g.ctx)

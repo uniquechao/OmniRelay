@@ -31,6 +31,9 @@ type Envelope struct {
 	Config                                                     int64
 	Received                                                   time.Time
 	Mention                                                    bool
+
+	// ReplyBody is set only when delivering a frozen, server-generated group result.
+	ReplyBody *GroupReplyBody
 }
 type Assignment struct {
 	Project, Bot, Recipient string

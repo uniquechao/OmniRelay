@@ -15,6 +15,9 @@ func fixturePlan(_ context.Context, r routing.PlanRequest) (routing.Plan, error)
 		intent = "project"
 	}
 	p := routing.Plan{Intent: intent, Mode: "read"}
+	if r.Group {
+		p.GroupReply = &routing.GroupResponse{Kind: "answer"}
+	}
 	add := func(tool string, fields map[string]string, gen ...string) {
 		p.Mode = "execute"
 		p.Actions = append(p.Actions, routing.PlannedAction{Tool: tool, Evidence: r.Text, Fields: fields, Generate: gen})

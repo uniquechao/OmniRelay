@@ -86,20 +86,17 @@ func (s *ChatSource) Deliver(ctx context.Context, target, bot, kind, content, uu
 	return s.deliverPayload(ctx, target, bot, kind, "/messages?receive_id_type=chat_id", body)
 }
 
-// ReplyTo creates a reply under the verified inbound message, including in ordinary groups.
-func (s *ChatSource) ReplyTo(ctx context.Context, chatID, bot, messageID, text, uuid string) chat.DeliveryResult {
-	return s.replyTo(ctx, chatID, bot, messageID, text, uuid, true)
-}
 func (s *ChatSource) ReplyPrivate(ctx context.Context, chatID, bot, messageID, text, uuid string) chat.DeliveryResult {
-	return s.replyTo(ctx, chatID, bot, messageID, text, uuid, false)
-}
-func (s *ChatSource) replyTo(ctx context.Context, chatID, bot, messageID, text, uuid string, thread bool) chat.DeliveryResult {
 	if !validIMID(chatID, "oc_") || !validIMID(messageID, "om_") || text == "" || uuid == "" {
 		return chat.DeliveryResult{State: "failed", Reason: "invalid_target"}
 	}
 	content, _ := json.Marshal(map[string]string{"text": text})
-	body, _ := json.Marshal(map[string]any{"msg_type": "text", "content": string(content), "uuid": uuid, "reply_in_thread": thread})
-	return s.deliverPayload(ctx, chatID, bot, "text", "/messages/"+messageID+"/reply", body)
+	return s.replyPayload(ctx, chatID, bot, messageID, uuid, "text", string(content), false)
+}
+
+func (s *ChatSource) replyPayload(ctx context.Context, chatID, bot, messageID, uuid, kind, content string, thread bool) chat.DeliveryResult {
+	body, _ := json.Marshal(map[string]any{"msg_type": kind, "content": content, "uuid": uuid, "reply_in_thread": thread})
+	return s.deliverPayload(ctx, chatID, bot, kind, "/messages/"+messageID+"/reply", body)
 }
 
 // Notify creates a new message with an explicit recipient from the authorized work.

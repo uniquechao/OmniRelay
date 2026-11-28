@@ -101,31 +101,6 @@ func TestDeliveryFeishuCreateAndConfirm(t *testing.T) {
 	}
 }
 
-func TestGroupAgentReplyContract(t *testing.T) {
-	calls := 0
-	source := NewChatSource(NewBotCheck("cli_delivery", "fixture", chatTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.String() == tokenURL {
-			return deliveryResponse(200, `{"code":0,"access_token":"fixture-token"}`), nil
-		}
-		calls++
-		var body struct {
-			Thread  bool `json:"reply_in_thread"`
-			UUID    string
-			Content string
-			Kind    string `json:"msg_type"`
-		}
-		if r.Method != "POST" || r.URL.Path != "/open-apis/im/v1/messages/om_original/reply" || json.NewDecoder(r.Body).Decode(&body) != nil ||
-			!body.Thread || body.Kind != "text" || body.UUID != "stable-id" || body.Content != `{"text":"项目 PM · 北辰项目"}` {
-			t.Errorf("incorrect thread reply")
-		}
-		return deliveryResponse(200, `{"code":0,"data":{"message_id":"om_reply","chat_id":"oc_north","msg_type":"text","create_time":"1795242600000","body":{"content":"{}"},"sender":{"id":"cli_delivery","id_type":"app_id","sender_type":"app","tenant_key":"tenant"}}}`), nil
-	})), "tenant")
-	result := source.ReplyTo(t.Context(), "oc_north", "ou_bot", "om_original", "项目 PM · 北辰项目", "stable-id")
-	if calls != 1 || result.State != "success" || result.MessageID != "om_reply" {
-		t.Fatal(result, calls)
-	}
-}
-
 func TestDeliveryFeishuUploadAndMembership(t *testing.T) {
 	source := NewChatSource(NewBotCheck("cli_delivery", "test_secret", chatTransport(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.String() {

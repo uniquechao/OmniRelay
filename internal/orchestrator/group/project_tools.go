@@ -192,6 +192,12 @@ func (s *Service) projectTool(ctx context.Context, c projectCall) (json.RawMessa
 			if !live {
 				return access.ErrForbidden
 			}
+			if !t.Write && w.Plan.GroupReply != nil && !w.Plan.GroupReply.PrivateSources && !project.GroupVisibleRead(t.Name, c.Args, val, w.Address.Chat) {
+				// This mark commits with the read before anything is returned to the model.
+				if _, err = tx.Exec(ctx, "UPDATE agent_group_work SET semantic_plan=jsonb_set(semantic_plan,'{group_reply,private_sources}','true') WHERE id=$1", w.Work); err != nil {
+					return err
+				}
+			}
 			result, err = json.Marshal(val)
 			if err != nil {
 				return err

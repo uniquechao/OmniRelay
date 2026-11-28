@@ -14,6 +14,7 @@ import (
 // An input to the isolated planner has no transcript, sources, tools, persona,
 // project IDs or ambient credentials. Intent is an explicit UI role selector.
 type PlanRequest struct {
+	Group             bool   `json:"group,omitempty"`
 	DisplayedProposal bool   `json:"displayed_proposal,omitempty"`
 	ProjectSelected   bool   `json:"project_selected,omitempty"`
 	Text              string `json:"text"`
@@ -43,7 +44,16 @@ type EvidencePeriod struct {
 	To       string `json:"to,omitempty"`
 	Timezone string `json:"timezone,omitempty"`
 }
+
+// GroupResponse is classified from the authenticated group message alone.
+type GroupResponse struct {
+	// Set only by Gateway when a tool returns data outside the answering group.
+	PrivateSources  bool   `json:"private_sources,omitempty"`
+	Kind            string `json:"kind"`
+	MentionEvidence string `json:"mention_evidence,omitempty"`
+}
 type Plan struct {
+	GroupReply     *GroupResponse  `json:"group_reply,omitempty"`
 	PriorResult    string          `json:"prior_result,omitempty"`
 	EvidencePeriod *EvidencePeriod `json:"evidence_period,omitempty"`
 	Project        string          `json:"project,omitempty"`
@@ -123,6 +133,17 @@ func PlanningCatalog() []ActionContract {
 }
 func (p Plan) Validate(r PlanRequest) error {
 
+	if r.Group && p.GroupReply == nil {
+		return errors.New("invalid semantic plan: missing group response")
+	}
+	if g := p.GroupReply; g != nil {
+		if !r.Group || g.PrivateSources || (g.Kind != "answer" && g.Kind != "open_tasks") || g.Kind == "open_tasks" && (p.Mode != "read" || p.Intent == "admin" || p.EvidencePeriod != nil) {
+			return errors.New("invalid semantic plan: group response")
+		}
+		if g.MentionEvidence != "" && (g.Kind != "open_tasks" || strings.TrimSpace(g.MentionEvidence) == "" || len([]rune(g.MentionEvidence)) > 256 || !strings.Contains(r.Text, g.MentionEvidence)) {
+			return errors.New("invalid semantic plan: group mention evidence")
+		}
+	}
 	if p.PriorResult != "" && (p.Mode != "execute" || len([]rune(p.PriorResult)) > 512 || strings.TrimSpace(p.PriorResult) == "" || !strings.Contains(r.Text, p.PriorResult)) {
 		return errors.New("invalid semantic plan: prior_result.evidence")
 	}

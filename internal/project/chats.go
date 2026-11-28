@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/uniquechao/OmniRelay/internal/agent/pmtools"
 	"github.com/uniquechao/OmniRelay/internal/chat"
 	"github.com/uniquechao/OmniRelay/internal/identity"
 )
@@ -27,6 +28,20 @@ type projectGroups struct {
 type chatListCandidate struct {
 	Assignment chat.ProjectAssignment `json:"assignment"`
 	ID         string                 `json:"id"`
+}
+
+// GroupVisibleRead recognizes only results whose audience is the original group.
+func GroupVisibleRead(name string, args pmtools.Args, value any, groupID string) bool {
+	switch name {
+	case "task_business_time":
+		return true
+	case "chat_search_messages":
+		return groupID != "" && args.String("chat_id") == groupID
+	case "chat_list":
+		groups, ok := value.(projectGroups)
+		return ok && len(groups.Items) == 1 && groups.Items[0].ID == groupID
+	}
+	return false
 }
 
 // RefreshPrimaryChatRead refreshes the local assignment metadata changed by

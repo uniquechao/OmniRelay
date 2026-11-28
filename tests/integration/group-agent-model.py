@@ -35,9 +35,11 @@ class Model(BaseHTTPRequestHandler):
                 route = "admin" if any(mark in original for mark in ("ROLE_LIST_GATE","ROLE_PROGRESS_GATE","ROLE_DELEGATE_GATE","ROLE_DENIED_GATE")) else "project"
                 value = {"dialogue_act":"other","kind":"apply_business_change_now" if any(v in original for v in write_fixtures) else "inspect_existing_or_answer",
                          "intent":route, "evidence_period":None}
+                if "group_response" in declared[0]["input_schema"]["properties"]:
+                    value["group_response"]="answer"
             else:
                 source = json.loads(original)
-                if set(source) - {"text","intent","private","displayed_proposal","project_selected"}:
+                if set(source) - {"text","intent","private","displayed_proposal","project_selected","group"}:
                     return self.send_error(400,"unexpected planner context")
                 text, intent = source["text"], source.get("intent","project")
                 value = {"mode":"read","actions":[]}

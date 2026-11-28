@@ -344,7 +344,7 @@ func TestProjectToolAudienceImageGate(t *testing.T) {
 	if err := g.DB.QueryRow(g.ctx, "SELECT count(*) FROM project_tasks WHERE project_id='north' AND title='组内创建的验收任务' AND owner_member_id='a' AND created_by='alice'").Scan(&count); err != nil || count != 1 {
 		t.Fatal("actual runtime write", count, err)
 	}
-	if len(g.replies) != 1 || g.replies[0].Thread != "topic-tools" || g.replies[0].Message != "group-tool" || g.texts[0] != "项目 PM · 北辰项目\n请在本项目工作台的 Bot 对话中查看本次请求的结果。" {
+	if len(g.replies) != 1 || g.replies[0].Thread != "topic-tools" || g.replies[0].Message != "group-tool" || g.texts[0] != "项目 PM · 北辰项目\n本次已提交 1 项业务操作。" {
 		t.Fatal("public receipt", g.texts)
 	}
 	if !strings.Contains(history(), "task_create") {

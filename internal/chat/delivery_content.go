@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	maxAttachments = 5
-	maxFileBytes   = 30 * 1024 * 1024
-	maxImageBytes  = 10 * 1024 * 1024
+	MaxPostMentions = 20
+	maxAttachments  = 5
+	maxFileBytes    = 30 * 1024 * 1024
+	maxImageBytes   = 10 * 1024 * 1024
 )
 
 var errDeliveryInput = errors.New("invalid delivery input")
@@ -67,7 +68,7 @@ func (c DeliveryContent) parts() ([]deliveryPart, []string, error) {
 		}
 	}
 	if len(c.Paragraphs) != 0 {
-		body, ids, err := richDelivery(c.Paragraphs)
+		body, ids, err := RichPost(c.Paragraphs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -93,7 +94,8 @@ type postNode struct {
 	UserID string   `json:"user_id,omitempty"`
 }
 
-func richDelivery(paragraphs [][]DeliverySpan) (string, []string, error) {
+// RichPost encodes literal text and explicit open-ID mentions as native Feishu post nodes.
+func RichPost(paragraphs [][]DeliverySpan) (string, []string, error) {
 	content := make([][]postNode, 0, len(paragraphs))
 	var mentions []string
 	hasContent := false
@@ -136,7 +138,7 @@ func richDelivery(paragraphs [][]DeliverySpan) (string, []string, error) {
 		content = append(content, nodes)
 	}
 	body, _ := json.Marshal(map[string]any{"zh_cn": map[string]any{"content": content}})
-	if !hasContent || len(mentions) > 20 || len(body) > 25_000 {
+	if !hasContent || len(mentions) > MaxPostMentions || len(body) > 25_000 {
 		return "", nil, errDeliveryInput
 	}
 	return string(body), mentions, nil

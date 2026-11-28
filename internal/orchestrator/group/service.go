@@ -155,16 +155,19 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, id string) (work, er
 	}
 	if w.Address.Mode == GroupReply && w.Address.Text != "" {
 		w.Kind = "project_group_chat"
-		// Tool outputs belong to a private workbench result for this person, never to the original group.
+		// Bind each group request to its own session and track the audience of its sources.
 		fields, _ = json.Marshal([]string{w.Kind, id, w.Agent, p.AccountID, scope})
 		w.Prompt = w.Address.Text
 		// An unrestricted thread transcript may contain facts outside an explicitly
 		// requested reporting period. The scoped message search supplies dated evidence.
-		if w.Plan.EvidencePeriod == nil {
+		if w.Plan.EvidencePeriod == nil && !w.openTaskReply() {
 			if err := s.attachThreadContext(ctx, tx, &w); err != nil {
 				return w, err
 			}
 		}
+	}
+	if w.Kind == "project_group_chat" && w.Plan.GroupReply != nil && !w.openTaskReply() {
+		w.Prompt += "\n通过飞书回复当前群。此群的 chat_id 为 " + w.Address.Chat + "。查询本群消息时直接使用此群 ID。按实际取得的资料回答，说明查询范围。"
 	}
 	if w.Address.Mode == GroupNotice {
 		w.Scope.UserID = ""
@@ -257,7 +260,7 @@ func (s *Service) claimOne(ctx context.Context) (work, error) {
 				return err
 			}
 			return tx.QueryRow(ctx, `UPDATE agent_group_work SET lease_until=now()+interval '100 seconds',generation=generation+1 WHERE id=$1
-   RETURNING coalesce(question,group_question,direct_question),requested_intent,mode='private_reply',project_id<>'',generation`, id).Scan(&w.PlanRequest.Text, &w.PlanRequest.Intent, &w.PlanRequest.Private, &w.PlanRequest.ProjectSelected, &w.Generation)
+   RETURNING coalesce(question,group_question,direct_question),requested_intent,mode='private_reply',project_id<>'',mode='group_reply',generation`, id).Scan(&w.PlanRequest.Text, &w.PlanRequest.Intent, &w.PlanRequest.Private, &w.PlanRequest.ProjectSelected, &w.PlanRequest.Group, &w.Generation)
 		}
 		if state == "sending" {
 			_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='unknown',reason='missing_platform_receipt' WHERE id=$1", id)
@@ -304,6 +307,16 @@ func (s *Service) claimOne(ctx context.Context) (work, error) {
 				w = work{}
 				return err
 			}
+			if w.Kind == "project_group_chat" && w.Plan.GroupReply != nil {
+				if err := s.refreshGroupDelivery(ctx, tx, &w); err != nil {
+					if !errors.Is(err, access.ErrForbidden) && !errors.Is(err, errToolReadStale) {
+						return err
+					}
+					_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed',lease_until=NULL WHERE id=$1", id)
+					w = work{}
+					return err
+				}
+			}
 			w.State = "sending"
 		}
 		return tx.QueryRow(ctx, `UPDATE agent_group_work SET state=$2,agent_id=$3,session_id=$4,generation=generation+1,config_snapshot=coalesce(config_snapshot,$5::jsonb),
@@ -320,12 +333,15 @@ func (s *Service) Step(ctx context.Context) error {
 	if w.State == "sending" {
 		// A changed display name also invalidates a previously frozen receipt.
 		expected := w.publicReply()
-		if w.Kind == "private_chat" && w.Address.ChoicePrompt == "" {
+		if w.Kind == "project_group_chat" && w.Plan.GroupReply != nil || w.Kind == "private_chat" && w.Address.ChoicePrompt == "" {
 			expected = w.Text
 		}
 		if w.Text != expected {
 			_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='suppressed',reason='source_changed' WHERE id=$1 AND generation=$2", w.Work, w.Generation)
 			return err
+		}
+		if w.Address.ReplyBody != nil {
+			w.Text = w.Address.ReplyBody.PlainText()
 		}
 		result := s.Channels[w.Address.Channel].Reply(ctx, w.Address, w.Bot, w.Text, w.Delivery)
 		state := "unknown"
@@ -348,6 +364,9 @@ func (s *Service) Step(ctx context.Context) error {
 	if w.Address.ChoicePrompt != "" {
 		_, err = s.DB.Exec(ctx, "UPDATE agent_group_work SET state='ready',response_text=$3,lease_until=NULL WHERE id=$1 AND generation=$2", w.Work, w.Generation, w.publicReply())
 		return err
+	}
+	if w.openTaskReply() {
+		return s.prepareOpenGroupTasks(ctx, w)
 	}
 	result, err := s.Execute(ctx, w.Binding)
 	if w.settlesPersonalWrite() {
@@ -430,7 +449,11 @@ func (s *Service) Step(ctx context.Context) error {
 				return err
 			}
 			if w.Kind == "project_group_chat" {
-				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',group_answer=$2,response_text=$3,lease_until=NULL WHERE id=$1", w.Work, answer, current.publicReply())
+				public, err := s.groupReplyText(ctx, tx, current, answer)
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, "UPDATE agent_group_work SET state='ready',group_answer=$2,response_text=$3,lease_until=NULL WHERE id=$1", w.Work, answer, public)
 				return err
 			}
 			// Publication into the user's workbench and its receipt are the same database write.
